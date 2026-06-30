@@ -10,18 +10,40 @@ use App\Models\Site;
 use App\Models\SpecialOffer;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class SpecialOfferController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         /** @var Site $site */
         $site = app('current_site');
 
-        $data = SiteCache::remember($site->id, ['special-offers'], 'special-offers:index:site:' . $site->id, 3600, function () use ($site) {
-            $offers = $this->baseQuery($site)->orderBy('special_offers.sort_order')->get();
+        // Optional filters: ?category={slug} (offers whose casino is in that
+        // category) and ?limit={n}. Both feed the cache key so each variant is
+        // cached independently and busted together on any offer/casino change.
+        $category = $request->string('category')->trim()->value() ?: null;
+        $limit = $request->integer('limit');
+        $limit = $limit > 0 ? min($limit, 50) : null;
 
-            return SpecialOfferResource::collection($offers)->resolve();
+        $cacheKey = 'special-offers:index:site:' . $site->id
+            . ':cat:' . ($category ?? 'all')
+            . ':limit:' . ($limit ?? 'all');
+
+        $data = SiteCache::remember($site->id, ['special-offers'], $cacheKey, 3600, function () use ($site, $category, $limit) {
+            $query = $this->baseQuery($site)->orderBy('special_offers.sort_order');
+
+            if ($category !== null) {
+                $query->whereHas('casino.categories', function ($q) use ($category): void {
+                    $q->where('categories.slug', $category);
+                });
+            }
+
+            if ($limit !== null) {
+                $query->limit($limit);
+            }
+
+            return SpecialOfferResource::collection($query->get())->resolve();
         });
 
         return response()->json(['data' => $data]);

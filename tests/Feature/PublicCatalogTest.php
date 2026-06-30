@@ -128,6 +128,42 @@ class PublicCatalogTest extends TestCase
             ->assertOk()->assertJsonPath('data.slug', $mine->slug);
     }
 
+    public function test_special_offers_can_be_filtered_by_category(): void
+    {
+        [$site, $key] = $this->siteWithKey();
+        $category = Category::factory()->create(['slug' => 'high-roller']);
+
+        $inCat = $this->attachedCasino($site);
+        $inCat->categories()->attach($category->id);
+        $outCat = $this->attachedCasino($site); // on the site, but NOT in the category
+
+        SpecialOffer::factory()->create(['casino_id' => $inCat->id, 'title' => 'InCategory']);
+        SpecialOffer::factory()->create(['casino_id' => $outCat->id, 'title' => 'OutOfCategory']);
+
+        // Filtered: only offers whose casino is in the category.
+        $titles = collect(
+            $this->getJson($this->publicBase($site) . '/special-offers?category=high-roller', $this->siteHeaders($key))
+                ->assertOk()->json('data')
+        )->pluck('title');
+        $this->assertEqualsCanonicalizing(['InCategory'], $titles->all());
+
+        // Unfiltered: both.
+        $all = collect(
+            $this->getJson($this->publicBase($site) . '/special-offers', $this->siteHeaders($key))->json('data')
+        )->pluck('title');
+        $this->assertTrue($all->contains('InCategory') && $all->contains('OutOfCategory'));
+    }
+
+    public function test_special_offers_respects_the_limit_parameter(): void
+    {
+        [$site, $key] = $this->siteWithKey();
+        $casino = $this->attachedCasino($site);
+        SpecialOffer::factory()->count(5)->create(['casino_id' => $casino->id]);
+
+        $this->getJson($this->publicBase($site) . '/special-offers?limit=2', $this->siteHeaders($key))
+            ->assertOk()->assertJsonCount(2, 'data');
+    }
+
     // ── Newsletter subscribe ──────────────────────────────────────────────
 
     public function test_subscribe_queues_the_processing_job_on_the_high_priority_queue(): void
