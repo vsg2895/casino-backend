@@ -16,9 +16,9 @@ class SiteSeeder extends Seeder
         // These are the local dev ports; in production set them to the live domain.
         $sites = [
             [
-                'name'             => 'Crystal Dice',
-                'slug'             => 'crystaldice',
-                'domain'           => 'crystaldice.net',
+                'name'             => 'Idev Affiliation',
+                'slug'             => 'idevaffiliation',
+                'domain'           => 'idevaffiliation.com',
                 'revalidation_url' => 'http://localhost:3000/api/revalidate',
             ],
             [

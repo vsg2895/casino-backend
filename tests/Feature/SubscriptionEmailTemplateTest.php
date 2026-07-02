@@ -170,7 +170,7 @@ class SubscriptionEmailTemplateTest extends TestCase
     private function validPayload(array $overrides = []): array
     {
         return [
-            'from_name'         => 'Crystal Dice',
+            'from_name'         => 'Idev Affiliation',
             'from_email'        => 'offers@mail.test',
             'subject'           => 'Thanks for subscribing to {{site_name}} offers',
             'header_title'      => 'Subscription Confirmed',

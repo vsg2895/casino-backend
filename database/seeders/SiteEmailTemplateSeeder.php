@@ -18,7 +18,7 @@ class SiteEmailTemplateSeeder extends Seeder
     public function run(): void
     {
         $accents = [
-            'crystaldice' => '#4f46e5', // indigo — light crystal theme
+            'idevaffiliation' => '#4f46e5', // indigo — light crystal theme
             'fsozbet'     => '#b91c1c', // red — dark sportsbook theme
             'gamebling'   => '#c026d3', // fuchsia — candy arcade theme
         ];
