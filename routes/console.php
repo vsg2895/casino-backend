@@ -19,3 +19,4 @@ Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();
 
+Schedule::command('test:command')->everyMinute();
