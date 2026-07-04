@@ -6,9 +6,11 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\BulkNewsletterIdsRequest;
+use App\Http\Requests\Admin\ImportNewslettersRequest;
 use App\Http\Requests\Admin\StoreNewsletterRequest;
 use App\Http\Resources\NewsletterResource;
 use App\Models\Newsletter;
+use App\Services\NewsletterImportService;
 use App\Support\CsvExport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,6 +40,59 @@ class NewsletterController extends Controller
         ]);
 
         return new NewsletterResource($newsletter->load('site'));
+    }
+
+    /**
+     * Bulk-import subscribers from an uploaded .xlsx / .csv with an "Email"
+     * column. Existing (or previously-unsubscribed) addresses are kept/restored,
+     * not duplicated. Imported contacts are added silently — no welcome email is
+     * sent (this is a list import, not a public subscription).
+     */
+    public function import(ImportNewslettersRequest $request, NewsletterImportService $importer): JsonResponse
+    {
+        $siteId = $request->integer('site_id');
+        $file = $request->file('file');
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        $emails = $importer->emails($file->getRealPath(), $extension);
+
+        if ($emails === []) {
+            return response()->json([
+                'imported' => 0,
+                'skipped'  => 0,
+                'total'    => 0,
+                'message'  => 'No valid email addresses found. Make sure the file has an "Email" column.',
+            ], 422);
+        }
+
+        $imported = 0;
+        $skipped = 0;
+
+        foreach ($emails as $email) {
+            // withTrashed so the (site_id, email) unique index — which still
+            // covers soft-deleted rows — never trips on a re-import.
+            $newsletter = Newsletter::withTrashed()->firstOrCreate([
+                'site_id' => $siteId,
+                'email'   => $email,
+            ]);
+
+            if ($newsletter->wasRecentlyCreated) {
+                $imported++;
+            } elseif ($newsletter->trashed()) {
+                $newsletter->restore();
+                $imported++;
+            } else {
+                $skipped++; // already an active subscriber
+            }
+        }
+
+        return response()->json([
+            'imported' => $imported,
+            'skipped'  => $skipped,
+            'total'    => count($emails),
+            'message'  => "Imported {$imported} subscriber(s)"
+                . ($skipped > 0 ? ", skipped {$skipped} already on the list." : '.'),
+        ]);
     }
 
     public function export(Request $request): StreamedResponse

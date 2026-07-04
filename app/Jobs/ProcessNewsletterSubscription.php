@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Models\Newsletter;
+use App\Models\Unsubscribe;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -51,8 +52,15 @@ class ProcessNewsletterSubscription implements ShouldQueue
             $newsletter->restore();
         }
 
-        // Confirm genuinely new AND re-activated (previously unsubscribed) emails.
-        if ($newsletter->wasRecentlyCreated || $resubscribed) {
+        // Re-consent: subscribing again clears any prior subscription-stream
+        // opt-out so the welcome (and future subscription mail) can flow again.
+        $reactivated = Unsubscribe::where('site_id', $this->siteId)
+            ->where('email', $this->email)
+            ->where('type', Unsubscribe::TYPE_SUBSCRIPTION)
+            ->delete() > 0;
+
+        // Confirm genuinely new, re-subscribed (was trashed) OR reactivated emails.
+        if ($newsletter->wasRecentlyCreated || $resubscribed || $reactivated) {
             SendNewsletterWelcomeEmail::dispatch($this->siteId, $this->email);
         }
     }

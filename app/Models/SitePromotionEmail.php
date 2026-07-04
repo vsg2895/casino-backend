@@ -4,42 +4,53 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use Database\Factories\SiteEmailTemplateFactory;
+use Database\Factories\SitePromotionEmailFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 /**
- * Per-site subscription confirmation email template.
+ * Per-site promotion (marketing offer) email template.
  *
- * Holds every editable string for the "you're subscribed" email. The from
- * identity is per-site but always lands on the SendGrid-verified domain
- * (see config('services.sendgrid.from_domain')). Placeholders in any text are
- * resolved at send time via {@see self::render()}.
+ * Sibling of {@see SiteEmailTemplate} but for the promotional "welcome offer"
+ * blast: a dark, hero-image-led design with two CTA buttons pointing at the
+ * affiliate offer. Every editable string lives here; structured fields are
+ * rendered into the fixed mail.promotion.offer Blade layout via {@see render()}.
  */
-class SiteEmailTemplate extends Model
+class SitePromotionEmail extends Model
 {
-    /** @use HasFactory<SiteEmailTemplateFactory> */
+    /** @use HasFactory<SitePromotionEmailFactory> */
     use HasFactory;
 
     /** Body fields that support a light **bold** syntax when rendered to HTML. */
-    public const array RICH_FIELDS = ['intro_text', 'offer_text', 'spam_notice', 'footer_note'];
+    public const array RICH_FIELDS = ['intro_text', 'secondary_text', 'disclaimer_text'];
+
+    /**
+     * Plain text/URL fields: placeholders are substituted but no markup is
+     * allowed (Blade escapes them at render time).
+     */
+    private const array PLAIN_FIELDS = [
+        'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url',
+        'hero_url', 'top_button_text', 'heading', 'cta_button_text', 'unsubscribe_label',
+    ];
 
     protected $fillable = [
         'site_id',
         'from_name',
         'from_email',
         'subject',
-        'header_title',
-        'header_subtitle',
+        'preheader',
+        'hero_image_url',
+        'hero_url',
+        'top_button_text',
         'heading',
         'intro_text',
-        'offer_text',
-        'spam_notice',
-        'footer_note',
+        'secondary_text',
+        'cta_button_text',
+        'disclaimer_text',
         'unsubscribe_label',
-        'copyright_text',
+        'button_color',
         'accent_color',
         'active',
     ];
@@ -57,8 +68,8 @@ class SiteEmailTemplate extends Model
     }
 
     /**
-     * Default copy for a freshly-attached site. Mirrors the approved design
-     * (purple "Subscription Confirmed" band → body → unsubscribe footer).
+     * Default copy for a freshly-attached site. Mirrors the approved promotion
+     * design (dark hero → offer copy → green CTA → unsubscribe footer).
      *
      * @return array<string, mixed>
      */
@@ -69,17 +80,19 @@ class SiteEmailTemplate extends Model
         return [
             'from_name'         => $site->name,
             'from_email'        => 'offers@' . $domain,
-            'subject'           => 'Thanks for subscribing to {{site_name}} offers',
-            'header_title'      => 'Subscription Confirmed',
-            'header_subtitle'   => 'Thanks for joining — your custom offer is on the way.',
-            'heading'           => 'Thank you for subscribing!',
-            'intro_text'        => "You're all set. We'll deliver your custom offer within **24 hours**.",
-            'offer_text'        => 'Your offer will include a **No-Deposit Registration Bonus** for {{site_name}}.',
-            'spam_notice'       => "If you don't see the email, please check your spam or junk folder.",
-            'footer_note'       => 'You received this email because you subscribed at {{site_name}}.',
+            'subject'           => 'A special welcome offer from {{site_name}}',
+            'preheader'         => 'Your welcome package is ready at {{site_name}} — register today and claim it.',
+            'hero_image_url'    => 'https://cdn.mcauto-images-production.sendgrid.net/5b9fb463f9d4c1ad/a93f454a-209a-46af-aa6d-a264d7b2a7d1/1600x568.jpeg',
+            'hero_url'          => '{{site_url}}',
+            'top_button_text'   => 'View Details',
+            'heading'           => 'Welcome to {{site_name}}',
+            'intro_text'        => 'Join our platform and receive **100 FS** as part of your welcome package. **No deposit required** — just register and start playing.',
+            'secondary_text'    => 'A trusted, licensed platform built for players who value transparency, security, and seamless gameplay.',
+            'cta_button_text'   => 'Register Your Account',
+            'disclaimer_text'   => "This is a one-time invitation to join {{site_name}}. If you're not interested, you can simply disregard this message.",
             'unsubscribe_label' => 'Unsubscribe',
-            'copyright_text'    => '© {{year}} {{site_name}}. All rights reserved.',
-            'accent_color'      => '#4f1d96',
+            'button_color'      => '#75B636',
+            'accent_color'      => '#f3a333',
             'active'            => true,
         ];
     }
@@ -90,7 +103,7 @@ class SiteEmailTemplate extends Model
      * Placeholders ({{site_name}}, {{site_url}}, {{email}}, {{year}},
      * {{unsubscribe_url}}) are substituted everywhere; RICH_FIELDS additionally
      * get HTML-escaped and a minimal **bold** → <strong> conversion so admins
-     * cannot inject markup.
+     * cannot inject markup. Plain/URL fields are left for Blade to escape.
      *
      * @param  array<string, string>  $context
      * @return array<string, string>
@@ -108,7 +121,7 @@ class SiteEmailTemplate extends Model
 
         $out = [];
 
-        foreach (['from_name', 'from_email', 'subject', 'header_title', 'header_subtitle', 'heading', 'unsubscribe_label', 'copyright_text'] as $field) {
+        foreach (self::PLAIN_FIELDS as $field) {
             $out[$field] = $replace((string) $this->{$field});
         }
 
@@ -116,6 +129,7 @@ class SiteEmailTemplate extends Model
             $out[$field] = self::richToHtml($replace((string) $this->{$field}));
         }
 
+        $out['button_color'] = $this->button_color;
         $out['accent_color'] = $this->accent_color;
 
         return $out;

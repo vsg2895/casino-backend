@@ -15,10 +15,12 @@ class DatabaseSeeder extends Seeder
             AdminUserSeeder::class,
             SiteSeeder::class,
             SiteEmailTemplateSeeder::class,
+            SitePromotionEmailSeeder::class,
             CategorySeeder::class,
             CasinoSeeder::class,
             CasinoImageSeeder::class,
             NewsletterSeeder::class,
+            UnsubscribeSeeder::class,
             SocialLinkSeeder::class,
             CmsPageSeeder::class,
         ]);

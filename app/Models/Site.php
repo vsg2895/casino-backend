@@ -77,6 +77,25 @@ class Site extends Model
         return $this->hasMany(Newsletter::class);
     }
 
+    public function unsubscribes(): HasMany
+    {
+        return $this->hasMany(Unsubscribe::class);
+    }
+
+    /**
+     * Base URL of this site's public front-end, used to build email links
+     * (e.g. the unsubscribe page). Defaults to the registered domain over
+     * HTTPS, but a global override (UNSUBSCRIBE_BASE_URL) lets every link point
+     * at e.g. http://localhost:3000 for local development / testing.
+     */
+    public function frontendBaseUrl(): string
+    {
+        $override = config('services.unsubscribe.base_url');
+        $base = is_string($override) && $override !== '' ? $override : 'https://' . $this->domain;
+
+        return rtrim($base, '/');
+    }
+
     public function emailTemplate(): HasOne
     {
         return $this->hasOne(SiteEmailTemplate::class);
@@ -91,6 +110,23 @@ class Site extends Model
         return $this->emailTemplate()->firstOrCreate(
             [],
             SiteEmailTemplate::defaultsFor($this),
+        );
+    }
+
+    public function promotionEmail(): HasOne
+    {
+        return $this->hasOne(SitePromotionEmail::class);
+    }
+
+    /**
+     * The site's promotion email template, creating it with sensible defaults
+     * on first access so every site always has one.
+     */
+    public function promotionEmailOrDefault(): SitePromotionEmail
+    {
+        return $this->promotionEmail()->firstOrCreate(
+            [],
+            SitePromotionEmail::defaultsFor($this),
         );
     }
 }

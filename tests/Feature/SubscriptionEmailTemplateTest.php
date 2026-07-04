@@ -58,14 +58,27 @@ class SubscriptionEmailTemplateTest extends TestCase
         ]);
     }
 
-    public function test_from_email_must_use_the_sendgrid_domain(): void
+    public function test_from_email_accepts_any_valid_address(): void
+    {
+        // The from-domain lock was removed (SMTP era) so previews/saves no longer
+        // break when the configured domain drifts; any valid address is accepted.
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->putJson(
+            "/api/v1/admin/sites/{$site->id}/email-template",
+            $this->validPayload(['from_email' => 'offers@some-other-domain.com']),
+        )->assertOk()->assertJsonPath('data.from_email', 'offers@some-other-domain.com');
+    }
+
+    public function test_from_email_must_be_a_valid_email(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
         $this->putJson(
             "/api/v1/admin/sites/{$site->id}/email-template",
-            $this->validPayload(['from_email' => 'offers@gmail.com']),
+            $this->validPayload(['from_email' => 'not-an-email']),
         )->assertStatus(422)->assertJsonValidationErrorFor('from_email');
     }
 
@@ -136,7 +149,13 @@ class SubscriptionEmailTemplateTest extends TestCase
             $this->siteHeaders($key),
         )->assertOk()->assertJson(['ok' => true]);
 
-        $this->assertSoftDeleted('newsletters', ['id' => $newsletter->id]);
+        // Per-stream opt-out is recorded; the subscriber row is NOT deleted.
+        $this->assertDatabaseHas('unsubscribes', [
+            'site_id' => $site->id,
+            'email'   => 'bye@example.com',
+            'type'    => 'subscription',
+        ]);
+        $this->assertNotSoftDeleted('newsletters', ['id' => $newsletter->id]);
     }
 
     public function test_unsubscribe_is_idempotent_for_unknown_token(): void
@@ -148,6 +167,9 @@ class SubscriptionEmailTemplateTest extends TestCase
             ['token' => str_repeat('a', 64)],
             $this->siteHeaders($key),
         )->assertOk()->assertJson(['ok' => true]);
+
+        // Unknown token records nothing (never reveals list membership).
+        $this->assertDatabaseCount('unsubscribes', 0);
     }
 
     public function test_unsubscribe_token_is_scoped_to_its_site(): void
@@ -156,14 +178,14 @@ class SubscriptionEmailTemplateTest extends TestCase
         [$siteB, $keyB] = $this->siteWithKey();
         $newsletter = Newsletter::create(['site_id' => $siteA->id, 'email' => 'x@example.com']);
 
-        // Using site B's key with site A's token must not delete the row.
+        // Using site B's key with site A's token must not record an opt-out.
         $this->postJson(
             $this->publicBase($siteB) . '/newsletter/unsubscribe',
             ['token' => $newsletter->unsubscribe_token],
             $this->siteHeaders($keyB),
         )->assertOk();
 
-        $this->assertDatabaseHas('newsletters', ['id' => $newsletter->id, 'deleted_at' => null]);
+        $this->assertDatabaseCount('unsubscribes', 0);
     }
 
     /** @param array<string, mixed> $overrides @return array<string, mixed> */

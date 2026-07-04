@@ -6,12 +6,15 @@ use App\Http\Controllers\Api\Admin\CasinoController as AdminCasinoController;
 use App\Http\Controllers\Api\Admin\CasinoSiteAttachmentController;
 use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController;
 use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
+use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
+use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
+use App\Http\Controllers\Api\Admin\UnsubscribeController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
@@ -19,6 +22,7 @@ use App\Http\Controllers\Api\Public\CmsPageController as PublicCmsPageController
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
+use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -49,6 +53,12 @@ Route::prefix('v1')->group(function () {
         Route::post('sites/{site}/email-template/preview', [SiteEmailTemplateController::class, 'preview']);
         Route::post('sites/{site}/email-template/test', [SiteEmailTemplateController::class, 'sendTest']);
 
+        // Per-site promotion (marketing offer) email template
+        Route::get('sites/{site}/promotion-email', [SitePromotionEmailController::class, 'show']);
+        Route::put('sites/{site}/promotion-email', [SitePromotionEmailController::class, 'update']);
+        Route::post('sites/{site}/promotion-email/preview', [SitePromotionEmailController::class, 'preview']);
+        Route::post('sites/{site}/promotion-email/test', [SitePromotionEmailController::class, 'sendTest']);
+
         // Casinos ("Products")
         Route::apiResource('casinos', AdminCasinoController::class);
         Route::prefix('casinos/{casino}/sites')->group(function () {
@@ -70,6 +80,7 @@ Route::prefix('v1')->group(function () {
         // Newsletter
         Route::get('newsletters', [AdminNewsletterController::class, 'index']);
         Route::post('newsletters', [AdminNewsletterController::class, 'store']);
+        Route::post('newsletters/import', [AdminNewsletterController::class, 'import']);
         Route::get('newsletters/export', [AdminNewsletterController::class, 'export']);
         Route::post('newsletters/bulk-delete', [AdminNewsletterController::class, 'bulkDestroy']);
         Route::post('newsletters/delete-all', [AdminNewsletterController::class, 'destroyAll']);
@@ -79,6 +90,16 @@ Route::prefix('v1')->group(function () {
         Route::post('newsletters/{newsletter}/restore', [AdminNewsletterController::class, 'restore'])->withTrashed();
         Route::delete('newsletters/{newsletter}/force', [AdminNewsletterController::class, 'forceDestroy'])->withTrashed();
 
+        // Scheduled promotion campaigns
+        Route::apiResource('schedules', EmailScheduleController::class)
+            ->only(['index', 'store', 'update', 'destroy']);
+        Route::post('schedules/{schedule}/run', [EmailScheduleController::class, 'run']);
+
+        // Unsubscribes (per-stream opt-out log)
+        Route::get('unsubscribes', [UnsubscribeController::class, 'index']);
+        Route::get('unsubscribes/export', [UnsubscribeController::class, 'export']);
+        Route::delete('unsubscribes/{unsubscribe}', [UnsubscribeController::class, 'destroy']);
+
         // Social media links (per-site)
         Route::apiResource('social-links', AdminSocialLinkController::class)
             ->only(['index', 'store', 'update', 'destroy']);
@@ -86,6 +107,13 @@ Route::prefix('v1')->group(function () {
         // CMS / Legal pages (per-site content — authorized via CmsPagePolicy)
         Route::apiResource('pages', AdminCmsPageController::class);
     });
+
+    // ── One-click unsubscribe (RFC 8058) — keyless, token is the credential ──
+    // Target of the List-Unsubscribe-Post header. POST-only (GET links get
+    // prefetched → accidental unsubscribes). Not behind verify.site: providers
+    // send neither the site key nor the slug.
+    Route::post('unsubscribe/{token}', [PublicUnsubscribeController::class, 'oneClick'])
+        ->middleware('throttle:60,1');
 
     // ── Public (site-keyed) ──────────────────────────────────────────────
     Route::prefix('public/sites/{site}')->middleware('verify.site')->group(function () {

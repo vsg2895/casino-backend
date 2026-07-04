@@ -21,9 +21,13 @@ class NewsletterSeeder extends Seeder
                         'site_id' => $site->id,
                         'email'   => fake()->unique()->safeEmail(),
                     ],
-                    // Set the token explicitly: DatabaseSeeder mutes model events
-                    // (WithoutModelEvents), so the model's creating hook won't run.
-                    ['unsubscribe_token' => Newsletter::generateUnsubscribeToken()],
+                    // Set both stream tokens explicitly: DatabaseSeeder mutes
+                    // model events (WithoutModelEvents), so the model's creating
+                    // hook won't run to generate them.
+                    [
+                        'unsubscribe_token'           => Newsletter::generateUnsubscribeToken(),
+                        'promotion_unsubscribe_token' => Newsletter::generateUnsubscribeToken(),
+                    ],
                 );
             }
         }

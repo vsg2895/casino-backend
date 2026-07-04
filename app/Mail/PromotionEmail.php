@@ -13,15 +13,15 @@ use Illuminate\Mail\Mailables\Headers;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * Subscription confirmation email, fully driven by a site's editable template.
+ * Promotion (marketing offer) email, fully driven by a site's editable template.
  *
- * Every visible string (subject, header band, body, footer, unsubscribe label)
- * arrives pre-rendered in $template — placeholders already substituted and body
- * fields already HTML-safe (see SiteEmailTemplate::render()). The "from" address
- * is per-site but constrained to the SendGrid-verified domain. Dispatched from
- * SendNewsletterWelcomeEmail and sent through the shared `sendgrid` mailer.
+ * Every visible string (subject, hero, body, CTA labels, unsubscribe) arrives
+ * pre-rendered in $template — placeholders already substituted and body fields
+ * already HTML-safe (see SitePromotionEmail::render()). The "from" address is
+ * per-site but constrained to the SendGrid-verified domain. Sent through the
+ * shared `sendgrid` mailer.
  */
-class NewsletterSubscribedMail extends Mailable
+class PromotionEmail extends Mailable
 {
     use Queueable;
     use SerializesModels;
@@ -62,12 +62,13 @@ class NewsletterSubscribedMail extends Mailable
     public function content(): Content
     {
         return new Content(
-            view: 'mail.newsletter.subscribed',
+            view: 'mail.promotion.offer',
             with: [
                 't'              => $this->template,
                 'siteName'       => $this->siteName,
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
+                'buttonColor'    => $this->template['button_color'],
                 'accent'         => $this->template['accent_color'],
             ],
         );

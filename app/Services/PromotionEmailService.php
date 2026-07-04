@@ -4,20 +4,21 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Mail\NewsletterSubscribedMail;
+use App\Mail\PromotionEmail;
 use App\Models\Newsletter;
 use App\Models\Site;
-use App\Models\SiteEmailTemplate;
+use App\Models\SitePromotionEmail;
 use App\Models\Unsubscribe;
 use Illuminate\Support\Carbon;
 
 /**
- * Builds the subscription confirmation Mailable from a site's editable template.
+ * Builds the promotion offer Mailable from a site's editable template.
  *
- * Centralises placeholder context + rendering so the queued send, the admin
- * live preview and the "send test" action all produce identical output.
+ * Centralises placeholder context + rendering so the admin live preview and the
+ * "send test" action produce identical output. Mirrors SubscriptionEmailService
+ * but for the promotional blast rather than the subscription confirmation.
  */
-class SubscriptionEmailService
+class PromotionEmailService
 {
     /**
      * Placeholder values available to every template string.
@@ -35,16 +36,14 @@ class SubscriptionEmailService
         ];
     }
 
-    /** Mailable for a real, persisted subscriber (used by the queued send). */
-    public function mailForSubscriber(Site $site, Newsletter $newsletter): NewsletterSubscribedMail
+    /** Mailable for a real, persisted subscriber (unsubscribe link is theirs). */
+    public function mailForSubscriber(Site $site, SitePromotionEmail $template, Newsletter $newsletter): PromotionEmail
     {
-        $template = $site->emailTemplateOrDefault();
-
         return $this->build(
             $site,
             $template,
             $newsletter->email,
-            $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_SUBSCRIPTION),
+            $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_PROMOTION),
         );
     }
 
@@ -54,23 +53,23 @@ class SubscriptionEmailService
      */
     public function previewMail(
         Site $site,
-        SiteEmailTemplate $template,
+        SitePromotionEmail $template,
         string $sampleEmail = 'subscriber@example.com',
-    ): NewsletterSubscribedMail {
+    ): PromotionEmail {
         // A throwaway token keeps the preview unsubscribe link well-formed.
         return $this->build($site, $template, $sampleEmail, str_repeat('0', 64));
     }
 
     private function build(
         Site $site,
-        SiteEmailTemplate $template,
+        SitePromotionEmail $template,
         string $email,
         string $token,
-    ): NewsletterSubscribedMail {
+    ): PromotionEmail {
         $unsubscribeUrl = $template->unsubscribeUrl($site, $token);
         $context = $this->context($site, $email, $unsubscribeUrl);
 
-        return new NewsletterSubscribedMail(
+        return new PromotionEmail(
             template: $template->render($context),
             siteName: $site->name,
             siteUrl: $context['site_url'],

@@ -30,6 +30,14 @@ return [
         'from_domain' => env('SENDGRID_FROM_DOMAIN', 'example.com'),
     ],
 
+    'unsubscribe' => [
+        // Optional global override for the base URL of unsubscribe links. When
+        // set (e.g. http://localhost:3000) every site's unsubscribe link uses it
+        // — handy for opening/testing the flow locally. Leave empty in
+        // production so links resolve to each site's own https://{domain}.
+        'base_url' => env('UNSUBSCRIBE_BASE_URL'),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

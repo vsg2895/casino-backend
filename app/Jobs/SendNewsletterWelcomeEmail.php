@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Models\Newsletter;
 use App\Models\Site;
+use App\Models\Unsubscribe;
 use App\Services\SubscriptionEmailService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -54,6 +55,12 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
             return;
         }
 
+        // Respect a subscription-stream opt-out (defensive: normally cleared on
+        // subscribe, but the subscriber may have unsubscribed in between).
+        if (Unsubscribe::has($this->siteId, $this->email, Unsubscribe::TYPE_SUBSCRIPTION)) {
+            return;
+        }
+
         $newsletter = Newsletter::where('site_id', $this->siteId)
             ->where('email', $this->email)
             ->first();
@@ -62,7 +69,9 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
             return;
         }
 
-        Mail::mailer('sendgrid')
+        // Public subscriptions are delivered over SendGrid (config('mail.newsletter_mailer'));
+        // admin "send test" actions use the .env SMTP mailer instead.
+        Mail::mailer(config('mail.newsletter_mailer'))
             ->to($this->email)
             ->send($emails->mailForSubscriber($site, $newsletter));
     }

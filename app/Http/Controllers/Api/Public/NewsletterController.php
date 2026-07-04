@@ -10,6 +10,7 @@ use App\Http\Requests\Public\UnsubscribeNewsletterRequest;
 use App\Jobs\ProcessNewsletterSubscription;
 use App\Models\Newsletter;
 use App\Models\Site;
+use App\Models\Unsubscribe;
 use Illuminate\Http\JsonResponse;
 
 class NewsletterController extends Controller
@@ -29,22 +30,35 @@ class NewsletterController extends Controller
     }
 
     /**
-     * One-click unsubscribe via the subscriber's unguessable token.
+     * One-click unsubscribe via the subscriber's opaque per-stream token.
      *
-     * Scoped to the current site (the token must belong to it) and idempotent:
-     * an unknown/already-removed token still returns ok, never revealing whether
-     * an address is on the list.
+     * The token alone identifies both the subscriber AND which stream
+     * (subscription vs promotion) they are opting out of — no email, id or other
+     * personal data is ever sent in the URL. Scoped to the current site and
+     * idempotent: an unknown/already-removed token still returns ok, never
+     * revealing whether an address is on the list. Opting out of one stream
+     * leaves the subscriber (and the other stream) untouched.
      */
     public function unsubscribe(UnsubscribeNewsletterRequest $request): JsonResponse
     {
         /** @var Site $site */
         $site = app('current_site');
+        $token = $request->validated('token');
 
         $newsletter = Newsletter::where('site_id', $site->id)
-            ->where('unsubscribe_token', $request->validated('token'))
+            ->where(function ($query) use ($token): void {
+                $query->where('unsubscribe_token', $token)
+                    ->orWhere('promotion_unsubscribe_token', $token);
+            })
             ->first();
 
-        $newsletter?->delete();
+        if ($newsletter !== null) {
+            $type = hash_equals((string) $newsletter->unsubscribe_token, $token)
+                ? Unsubscribe::TYPE_SUBSCRIPTION
+                : Unsubscribe::TYPE_PROMOTION;
+
+            Unsubscribe::record($site->id, $newsletter->email, $type);
+        }
 
         return response()->json(['ok' => true]);
     }

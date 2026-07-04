@@ -18,15 +18,13 @@ class UpdateSiteEmailTemplateRequest extends FormRequest
     /** @return array<string, mixed> */
     public function rules(): array
     {
-        $fromDomain = (string) config('services.sendgrid.from_domain', 'example.com');
-
         return [
             'from_name'         => ['required', 'string', 'max:120'],
-            // Sender must live on the SendGrid-verified domain, e.g. offers@{domain}.
-            'from_email'        => [
-                'required', 'string', 'email', 'max:180',
-                'ends_with:@' . $fromDomain,
-            ],
+            // Any valid address. Deliverability (domain alignment with your mail
+            // provider) is an operational concern, not a hard validation rule —
+            // tying it to a config domain made previews/saves break whenever the
+            // env drifted, which is why it was removed.
+            'from_email'        => ['required', 'string', 'email', 'max:180'],
             'subject'           => ['required', 'string', 'max:200'],
             'header_title'      => ['required', 'string', 'max:150'],
             'header_subtitle'   => ['required', 'string', 'max:250'],
@@ -45,11 +43,8 @@ class UpdateSiteEmailTemplateRequest extends FormRequest
     /** @return array<string, string> */
     public function messages(): array
     {
-        $fromDomain = (string) config('services.sendgrid.from_domain', 'example.com');
-
         return [
-            'from_email.ends_with' => "The from address must use the SendGrid-verified domain (@{$fromDomain}).",
-            'accent_color.regex'   => 'The accent color must be a valid hex color (e.g. #4f1d96).',
+            'accent_color.regex' => 'The accent color must be a valid hex color (e.g. #4f1d96).',
         ];
     }
 }

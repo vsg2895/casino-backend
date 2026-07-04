@@ -18,6 +18,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Purpose-specific Mailers
+    |--------------------------------------------------------------------------
+    |
+    | The platform sends two very different kinds of mail and routes each
+    | through its own transport:
+    |
+    |  - "test_mailer"       Admin-panel "Send test" buttons (subscription &
+    |                        promotion emails). Routed through the .env MAIL_*
+    |                        SMTP config so admins can verify the layout via
+    |                        their own SMTP inbox. Defaults to the default
+    |                        mailer (MAIL_MAILER).
+    |
+    |  - "newsletter_mailer" Real confirmation emails sent when a visitor
+    |                        subscribes through a public site form. Routed
+    |                        through the shared SendGrid relay (SENDGRID_API_KEY)
+    |                        so production deliverability is handled by SendGrid.
+    |
+    */
+
+    'test_mailer' => env('MAIL_TEST_MAILER', env('MAIL_MAILER', 'smtp')),
+
+    'newsletter_mailer' => env('MAIL_NEWSLETTER_MAILER', 'sendgrid'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Mailer Configurations
     |--------------------------------------------------------------------------
     |
@@ -54,20 +79,16 @@ return [
         ],
 
         /*
-         * Dedicated SendGrid relay used for subscription/newsletter emails across
-         * ALL sites via one API key (SMTP relay: username is the literal "apikey",
-         * password is the SendGrid API key). Isolated from the default mailer so
-         * transactional admin mail is unaffected.
+         * Native SendGrid Web API transport (NOT the SMTP relay). Sends
+         * subscription/newsletter emails for ALL sites via the SendGrid HTTP API
+         * using the API key directly. The `sendgrid` transport is registered in
+         * AppServiceProvider::boot() via the symfony/sendgrid-mailer bridge.
+         * Isolated from the default mailer so admin "send test" mail (SMTP) is
+         * unaffected.
          */
         'sendgrid' => [
-            'transport' => 'smtp',
-            'host' => env('SENDGRID_HOST', 'smtp.sendgrid.net'),
-            'port' => env('SENDGRID_PORT', 587),
-            'encryption' => env('SENDGRID_ENCRYPTION', 'tls'),
-            'username' => env('SENDGRID_USERNAME', 'apikey'),
-            'password' => env('SENDGRID_API_KEY'),
-            'timeout' => null,
-            'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
+            'transport' => 'sendgrid',
+            'key' => env('SENDGRID_API_KEY'),
         ],
 
         'postmark' => [
