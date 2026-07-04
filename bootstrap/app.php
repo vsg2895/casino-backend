@@ -13,6 +13,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->trustProxies(at: '*');
         $middleware->alias([
             'verify.site' => \App\Http\Middleware\VerifySiteAccess::class,
             'auth'        => \App\Http\Middleware\Authenticate::class,
