@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController
 use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
+use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
@@ -94,6 +95,9 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('schedules', EmailScheduleController::class)
             ->only(['index', 'store', 'update', 'destroy']);
         Route::post('schedules/{schedule}/run', [EmailScheduleController::class, 'run']);
+
+        // Promotion delivery history (read-only; partitioned + prefix search)
+        Route::get('promotion-history', [PromotionEmailHistoryController::class, 'index']);
 
         // Unsubscribes (per-stream opt-out log)
         Route::get('unsubscribes', [UnsubscribeController::class, 'index']);

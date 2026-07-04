@@ -39,7 +39,7 @@ class PromotionEmailService
     /** Mailable for a real, persisted subscriber (unsubscribe link is theirs). */
     public function mailForSubscriber(Site $site, SitePromotionEmail $template, Newsletter $newsletter): PromotionEmail
     {
-        return $this->build(
+        return $this->mailFor(
             $site,
             $template,
             $newsletter->email,
@@ -57,10 +57,16 @@ class PromotionEmailService
         string $sampleEmail = 'subscriber@example.com',
     ): PromotionEmail {
         // A throwaway token keeps the preview unsubscribe link well-formed.
-        return $this->build($site, $template, $sampleEmail, str_repeat('0', 64));
+        return $this->mailFor($site, $template, $sampleEmail, str_repeat('0', 64));
     }
 
-    private function build(
+    /**
+     * Build the Mailable straight from primitives (email + that recipient's
+     * promotion unsubscribe token) — no Newsletter model or query required. The
+     * caller (e.g. a batch send job) loads the site + template ONCE and reuses
+     * them across the whole batch, so nothing here touches the database.
+     */
+    public function mailFor(
         Site $site,
         SitePromotionEmail $template,
         string $email,

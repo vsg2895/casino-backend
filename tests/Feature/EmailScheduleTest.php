@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\Jobs\SendPromotionToSubscriberJob;
+use App\Jobs\SendPromotionBatchJob;
 use App\Jobs\SendScheduledPromotionJob;
+use App\Mail\PromotionEmail;
+use App\Services\PromotionEmailService;
+use Illuminate\Support\Facades\Mail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
+use App\Models\PromotionEmailHistory;
 use App\Models\Site;
 use App\Models\Unsubscribe;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -143,11 +147,11 @@ class EmailScheduleTest extends TestCase
 
         (new SendScheduledPromotionJob($schedule->id))->handle();
 
-        // Only the in-window, non-opted-out subscriber is queued.
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, 1);
+        // One batch job holding only the in-window, non-opted-out subscriber.
+        Queue::assertPushed(SendPromotionBatchJob::class, 1);
         Queue::assertPushed(
-            SendPromotionToSubscriberJob::class,
-            fn (SendPromotionToSubscriberJob $job): bool => $job->email === 'in@example.com',
+            SendPromotionBatchJob::class,
+            fn (SendPromotionBatchJob $job): bool => $job->emails === ['in@example.com'],
         );
     }
 
@@ -166,19 +170,111 @@ class EmailScheduleTest extends TestCase
 
     // ── Per-recipient send routing ────────────────────────────────────────
 
-    public function test_recipient_job_sends_via_newsletter_mailer(): void
+    public function test_batch_job_sends_each_recipient_via_newsletter_mailer(): void
     {
-        \Illuminate\Support\Facades\Mail::fake();
+        Mail::fake();
         [$site] = $this->siteWithKey();
-        Newsletter::create(['site_id' => $site->id, 'email' => 'fan@example.com']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'a@example.com']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'b@example.com']);
 
-        (new SendPromotionToSubscriberJob($site->id, 'fan@example.com'))
-            ->handle(app(\App\Services\PromotionEmailService::class));
+        (new SendPromotionBatchJob($site->id, ['a@example.com', 'b@example.com']))
+            ->handle(app(PromotionEmailService::class));
 
-        \Illuminate\Support\Facades\Mail::assertSent(
-            \App\Mail\PromotionEmail::class,
-            fn ($mail): bool => $mail->hasTo('fan@example.com') && $mail->mailer === config('mail.newsletter_mailer'),
+        Mail::assertSent(PromotionEmail::class, 2);
+        Mail::assertSent(
+            PromotionEmail::class,
+            fn ($mail): bool => $mail->hasTo('a@example.com') && $mail->mailer === config('mail.newsletter_mailer'),
         );
+    }
+
+    public function test_batch_job_skips_recipients_who_opted_out_after_fan_out(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'stay@example.com']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'left@example.com']);
+        // Opted out between fan-out and batch send.
+        Unsubscribe::record($site->id, 'left@example.com', Unsubscribe::TYPE_PROMOTION);
+
+        (new SendPromotionBatchJob($site->id, ['stay@example.com', 'left@example.com']))
+            ->handle(app(PromotionEmailService::class));
+
+        Mail::assertSent(PromotionEmail::class, 1);
+        Mail::assertSent(PromotionEmail::class, fn ($mail): bool => $mail->hasTo('stay@example.com'));
+    }
+
+    // ── Failed-case handling: once per email per day, retry-safe ───────────
+
+    public function test_same_template_is_not_sent_to_an_email_twice_in_a_day(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'once@example.com']);
+        $service = app(PromotionEmailService::class);
+
+        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service);
+        // Same batch runs again the same day (e.g. duplicate schedule / re-run).
+        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service);
+
+        Mail::assertSent(PromotionEmail::class, 1); // delivered exactly once
+        $this->assertDatabaseCount('promotion_email_histories', 1);
+        $this->assertDatabaseHas('promotion_email_histories', [
+            'site_id'   => $site->id,
+            'email'     => 'once@example.com',
+            'sent_date' => now()->toDateString(),
+        ]);
+    }
+
+    public function test_retry_after_partial_delivery_skips_already_sent(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'delivered@example.com']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'pending@example.com']);
+        // Simulate: 'delivered' went out before a mid-batch failure; the retry
+        // re-runs the same batch.
+        PromotionEmailHistory::recordMany($site->id, ['delivered@example.com']);
+
+        (new SendPromotionBatchJob($site->id, ['delivered@example.com', 'pending@example.com']))
+            ->handle(app(PromotionEmailService::class));
+
+        Mail::assertSent(PromotionEmail::class, 1);
+        Mail::assertSent(PromotionEmail::class, fn ($m): bool => $m->hasTo('pending@example.com'));
+        Mail::assertNotSent(PromotionEmail::class, fn ($m): bool => $m->hasTo('delivered@example.com'));
+    }
+
+    public function test_a_single_failing_recipient_does_not_abort_the_batch(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        // 'bad' is created first so it is processed before 'good'.
+        Newsletter::create(['site_id' => $site->id, 'email' => 'bad@example.com']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'good@example.com']);
+
+        $real = app(PromotionEmailService::class);
+        $service = \Mockery::mock(PromotionEmailService::class);
+        $service->shouldReceive('mailFor')->andReturnUsing(
+            function ($site, $template, string $email, string $token) use ($real) {
+                if ($email === 'bad@example.com') {
+                    throw new \RuntimeException('boom');
+                }
+
+                return $real->mailFor($site, $template, $email, $token);
+            },
+        );
+
+        (new SendPromotionBatchJob($site->id, ['bad@example.com', 'good@example.com']))->handle($service);
+
+        // The good recipient still went out; only it is marked as delivered.
+        Mail::assertSent(PromotionEmail::class, 1);
+        Mail::assertSent(PromotionEmail::class, fn ($m): bool => $m->hasTo('good@example.com'));
+        $this->assertDatabaseHas('promotion_email_histories', ['site_id' => $site->id, 'email' => 'good@example.com']);
+        $this->assertDatabaseMissing('promotion_email_histories', ['site_id' => $site->id, 'email' => 'bad@example.com']);
+    }
+
+    public function test_batch_job_retries_once_on_failure(): void
+    {
+        $this->assertSame(2, (new SendPromotionBatchJob(1, ['a@example.com']))->tries);
     }
 
     // ── Admin CRUD ────────────────────────────────────────────────────────
@@ -271,11 +367,14 @@ class EmailScheduleTest extends TestCase
 
         (new SendScheduledPromotionJob($schedule->id))->handle();
 
-        // Only the two most-recent sign-ups, oldest excluded.
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, 2);
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, fn ($j): bool => $j->email === 'newest@example.com');
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, fn ($j): bool => $j->email === 'middle@example.com');
-        Queue::assertNotPushed(SendPromotionToSubscriberJob::class, fn ($j): bool => $j->email === 'oldest@example.com');
+        // One batch job with the two most-recent sign-ups, oldest excluded.
+        Queue::assertPushed(SendPromotionBatchJob::class, 1);
+        Queue::assertPushed(SendPromotionBatchJob::class, function (SendPromotionBatchJob $job): bool {
+            return count($job->emails) === 2
+                && in_array('newest@example.com', $job->emails, true)
+                && in_array('middle@example.com', $job->emails, true)
+                && ! in_array('oldest@example.com', $job->emails, true);
+        });
     }
 
     public function test_limit_case_still_excludes_promotion_opt_outs(): void
@@ -293,8 +392,8 @@ class EmailScheduleTest extends TestCase
 
         (new SendScheduledPromotionJob($schedule->id))->handle();
 
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, 1);
-        Queue::assertPushed(SendPromotionToSubscriberJob::class, fn ($j): bool => $j->email === 'ok@example.com');
+        Queue::assertPushed(SendPromotionBatchJob::class, 1);
+        Queue::assertPushed(SendPromotionBatchJob::class, fn (SendPromotionBatchJob $j): bool => $j->emails === ['ok@example.com']);
     }
 
     public function test_admin_can_create_a_limit_schedule(): void

@@ -33,8 +33,12 @@ return new class extends Migration
             $table->timestamps();
 
             // One opt-out per (site, email, stream); makes recording idempotent.
+            // This unique also covers (site_id, email) lookups, so no separate
+            // (site_id, email) index is needed.
             $table->unique(['site_id', 'email', 'type']);
-            $table->index(['site_id', 'email']);
+
+            // Admin listing: newest-first within a site + stream (type).
+            $table->index(['site_id', 'type', 'unsubscribed_at'], 'unsubscribes_site_type_time_index');
         });
     }
 

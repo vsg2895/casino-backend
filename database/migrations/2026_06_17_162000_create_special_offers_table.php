@@ -26,6 +26,10 @@ return new class extends Migration
 
             $table->timestamps();
             $table->softDeletes();
+
+            // Eager-loading a casino's offers in display order (public casino
+            // pages): WHERE casino_id IN (...) ORDER BY sort_order — no filesort.
+            $table->index(['casino_id', 'sort_order'], 'special_offers_casino_sort_index');
         });
     }
 

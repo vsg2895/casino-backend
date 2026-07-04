@@ -34,7 +34,7 @@ class NewsletterImportService
                     $headerHandled = true;
                     $emailColumn = $this->findEmailColumn($cells);
 
-                    // A recognised "Email" header row is metadata — skip it.
+                    // A recognized "Email" header row is metadata — skip it.
                     if ($emailColumn !== null) {
                         continue;
                     }

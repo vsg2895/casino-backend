@@ -15,12 +15,14 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * Fans a scheduled promotion campaign out to its recipients.
+ * Fans a scheduled promotion campaign out into recipient BATCHES.
  *
- * Resolves the schedule's subscriber window (newsletters.created_at within
- * {@see EmailSchedule::dateRange()}), excludes promotion-stream opt-outs, and
- * dispatches one {@see SendPromotionToSubscriberJob} per address (chunked, so a
- * huge list never loads into memory). Runs on the LOW queue.
+ * Resolves the schedule's audience (a sign-up date window OR the newest N by
+ * created_at), excludes promotion opt-outs in a single correlated NOT EXISTS,
+ * and dispatches ONE {@see SendPromotionBatchJob} per BATCH_SIZE addresses —
+ * not one job per email. The recipient scan never loads the whole list into
+ * memory (chunked / bounded by limit) and only selects the `email` column;
+ * per-recipient tokens are fetched inside each batch job. Runs on the LOW queue.
  */
 class SendScheduledPromotionJob implements ShouldQueue
 {
@@ -30,6 +32,9 @@ class SendScheduledPromotionJob implements ShouldQueue
     use SerializesModels;
 
     public const string ON_QUEUE = 'low';
+
+    /** Addresses per batch job. */
+    private const int BATCH_SIZE = 100;
 
     public function __construct(public readonly int $scheduleId)
     {
@@ -49,45 +54,38 @@ class SendScheduledPromotionJob implements ShouldQueue
             return;
         }
 
-        // Base recipient set for this site, excluding promotion opt-outs. The
-        // opt-out check is a single correlated NOT EXISTS (covered by the
-        // unsubscribes unique index) — no per-row lookups, no N+1.
+        $siteId = $schedule->site_id;
+
         $recipients = Newsletter::query()
-            ->where('site_id', $schedule->site_id)
-            ->whereNotExists(function (Builder $query) use ($schedule): void {
+            ->where('site_id', $siteId)
+            ->whereNotExists(function (Builder $query) use ($siteId): void {
                 $query->from('unsubscribes')
                     ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $schedule->site_id)
+                    ->where('unsubscribes.site_id', $siteId)
                     ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
             });
 
         if ($schedule->usesLimit()) {
-            // Newest N subscribers. Bounded by `limit`, index-covered by
-            // (site_id, created_at); pluck a single email column and fan out.
+            // Newest N (bounded by limit, index-covered by (site_id, created_at)).
             $recipients
                 ->orderByDesc('created_at')
                 ->limit((int) $schedule->limit)
                 ->pluck('email')
-                ->each(fn (string $email) => $this->queueOne($schedule->site_id, $email));
+                ->chunk(self::BATCH_SIZE)
+                ->each(fn ($emails) => SendPromotionBatchJob::dispatch($siteId, $emails->values()->all()));
 
             return;
         }
 
-        // Sign-up date window. Potentially unbounded → chunk by id (memory-safe).
+        // Sign-up date window: chunk the id cursor so a huge list never loads at
+        // once; each chunk becomes one batch job.
         [$start, $end] = $schedule->dateRange(now());
 
         $recipients
             ->whereBetween('created_at', [$start, $end])
             ->select(['id', 'email'])
-            ->chunkById(500, function ($rows) use ($schedule): void {
-                foreach ($rows as $row) {
-                    $this->queueOne($schedule->site_id, (string) $row->email);
-                }
+            ->chunkById(self::BATCH_SIZE, function ($rows) use ($siteId): void {
+                SendPromotionBatchJob::dispatch($siteId, $rows->pluck('email')->all());
             });
-    }
-
-    private function queueOne(int $siteId, string $email): void
-    {
-        SendPromotionToSubscriberJob::dispatch($siteId, $email);
     }
 }

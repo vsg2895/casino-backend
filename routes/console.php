@@ -14,3 +14,8 @@ Schedule::command('promotions:dispatch-due')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Provision upcoming monthly partitions for the promotion history table.
+Schedule::command('promotions:manage-history-partitions')
+    ->monthlyOn(1, '04:30')
+    ->withoutOverlapping();
+

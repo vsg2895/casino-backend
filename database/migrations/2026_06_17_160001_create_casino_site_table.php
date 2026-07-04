@@ -20,6 +20,10 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['casino_id', 'site_id']);
+
+            // Hottest public path: list a site's casinos filtered by active and
+            // read straight in position order (no filesort), then PK-join casinos.
+            $table->index(['site_id', 'active', 'position'], 'casino_site_site_active_position_index');
         });
     }
 
