@@ -7,8 +7,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreCasinoRequest;
 use App\Http\Requests\Admin\UpdateCasinoRequest;
-use App\Http\Resources\CasinoCollection;
-use App\Http\Resources\CasinoResource;
+use App\Http\Resources\{CasinoCollection, CasinoResource};
 use App\Models\Casino;
 use Illuminate\Http\JsonResponse;
 
