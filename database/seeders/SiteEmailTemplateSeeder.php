@@ -19,8 +19,7 @@ class SiteEmailTemplateSeeder extends Seeder
     {
         $accents = [
             'idevaffiliation' => '#4f46e5', // indigo — light crystal theme
-            'fsozbet'     => '#b91c1c', // red — dark sportsbook theme
-            'gamebling'   => '#c026d3', // fuchsia — candy arcade theme
+            'winpalack'       => '#059669', // emerald — responsible play theme
         ];
 
         Site::all()->each(function (Site $site) use ($accents): void {

@@ -22,16 +22,10 @@ class SiteSeeder extends Seeder
                 'revalidation_url' => 'http://localhost:3000/api/revalidate',
             ],
             [
-                'name'             => 'FSOZBet',
-                'slug'             => 'fsozbet',
-                'domain'           => 'fsozbet.com',
-                'revalidation_url' => 'http://localhost:3001/api/revalidate',
-            ],
-            [
-                'name'             => 'Gamebling',
-                'slug'             => 'gamebling',
-                'domain'           => 'gamebling.com',
-                'revalidation_url' => 'http://localhost:3002/api/revalidate',
+                'name'             => 'Winpalack',
+                'slug'             => 'winpalack',
+                'domain'           => 'winpalack.com',
+                'revalidation_url' => 'http://localhost:3003/api/revalidate',
             ],
         ];
 
