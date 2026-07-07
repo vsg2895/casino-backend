@@ -17,8 +17,11 @@ class DatabaseSeeder extends Seeder
             SiteEmailTemplateSeeder::class,
             SitePromotionEmailSeeder::class,
             CategorySeeder::class,
-            CasinoSeeder::class,
-            CasinoImageSeeder::class,
+            // Real casinos + offers scraped from crystaldice.net (replaces the
+            // old demo CasinoSeeder/CasinoImageSeeder). Casinos are attached to
+            // every site and mapped to categories; one featured offer per casino.
+            CasinoScrapeSeeder::class,
+            SpecialOfferScrapeSeeder::class,
             NewsletterSeeder::class,
             UnsubscribeSeeder::class,
             SocialLinkSeeder::class,

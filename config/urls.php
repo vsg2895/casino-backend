@@ -21,6 +21,6 @@ return [
     // Public sites, keyed by slug (dev ports match each site's PORT).
     'sites' => [
         'idevaffiliation' => $debug ? 'http://localhost:3000' : 'https://idevaffiliation.com',
-        'winpalack'       => $debug ? 'http://localhost:3002' : 'https://winpalack.com',
+        'winpalack'       => $debug ? 'http://localhost:3001' : 'https://winpalack.com',
     ],
 ];
