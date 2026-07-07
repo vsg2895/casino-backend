@@ -12,24 +12,19 @@ class SiteSeeder extends Seeder
 {
     public function run(): void
     {
-        // revalidation_url points at each site's Next.js /api/revalidate webhook.
-        // These are the local dev ports; in production set them to the live domain.
         $sites = [
-            [
-                'name'             => 'Idev Affiliation',
-                'slug'             => 'idevaffiliation',
-                'domain'           => 'idevaffiliation.com',
-                'revalidation_url' => 'http://localhost:3000/api/revalidate',
-            ],
-            [
-                'name'             => 'Winpalack',
-                'slug'             => 'winpalack',
-                'domain'           => 'winpalack.com',
-                'revalidation_url' => 'http://localhost:3003/api/revalidate',
-            ],
+            ['name' => 'Idev Affiliation', 'slug' => 'idevaffiliation', 'domain' => 'idevaffiliation.com'],
+            ['name' => 'Winpalack',        'slug' => 'winpalack',       'domain' => 'winpalack.com'],
         ];
 
         foreach ($sites as $attrs) {
+            // revalidation_url = the site's env-aware public URL (localhost when
+            // APP_DEBUG, the live domain otherwise) + the Next.js webhook path.
+            $attrs['revalidation_url'] = rtrim(
+                (string) config('urls.sites.' . $attrs['slug'], 'https://' . $attrs['domain']),
+                '/',
+            ) . '/api/revalidate';
+
             $plain = $this->keyFor($attrs['slug']);
 
             Site::updateOrCreate(

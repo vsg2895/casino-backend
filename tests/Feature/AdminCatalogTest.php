@@ -42,7 +42,7 @@ class AdminCatalogTest extends TestCase
 
     // ── Special offers ────────────────────────────────────────────────────
 
-    public function test_admin_can_create_and_update_a_special_offer_with_stable_slug(): void
+    public function test_special_offer_slug_regenerates_when_the_title_changes(): void
     {
         $this->actingAsAdmin();
         $casino = Casino::factory()->create();
@@ -53,12 +53,19 @@ class AdminCatalogTest extends TestCase
             'rating'    => 5,
         ])->assertCreated()->json('data.id');
 
-        $slug = SpecialOffer::find($id)->slug;
+        $original = SpecialOffer::find($id)->slug;
+        $this->assertMatchesRegularExpression('/^welcome_offer_[a-z]{6}$/', $original);
 
-        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Renamed Offer'])
-            ->assertOk()->assertJsonPath('data.title', 'Renamed Offer');
+        // Rename → slug regenerates from the new title (with a fresh letters suffix).
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Summer Bonus'])
+            ->assertOk()->assertJsonPath('data.title', 'Summer Bonus');
+        $renamed = SpecialOffer::find($id)->slug;
+        $this->assertMatchesRegularExpression('/^summer_bonus_[a-z]{6}$/', $renamed);
+        $this->assertNotSame($original, $renamed, 'slug must change when the title changes');
 
-        $this->assertSame($slug, SpecialOffer::find($id)->slug, 'slug must stay stable on rename');
+        // A non-title update leaves the slug untouched.
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['rating' => 4])->assertOk();
+        $this->assertSame($renamed, SpecialOffer::find($id)->slug, 'slug stays stable when title is unchanged');
     }
 
     public function test_special_offer_slug_is_name_based_with_a_unique_suffix(): void
@@ -77,12 +84,12 @@ class AdminCatalogTest extends TestCase
         $slugA = $make();
         $slugB = $make();
 
-        // Both are name-based...
-        $this->assertStringStartsWith('welcome-bonus-', $slugA);
-        $this->assertStringStartsWith('welcome-bonus-', $slugB);
-        // ...but each carries its own unique suffix (no collision "-1"/"-2").
+        // Both are title-based with underscores...
+        $this->assertStringStartsWith('welcome_bonus_', $slugA);
+        $this->assertStringStartsWith('welcome_bonus_', $slugB);
+        // ...but each carries its own unique letters-only suffix (no "-1"/"-2").
         $this->assertNotSame($slugA, $slugB);
-        $this->assertMatchesRegularExpression('/^welcome-bonus-[a-z0-9]{6}$/', $slugA);
+        $this->assertMatchesRegularExpression('/^welcome_bonus_[a-z]{6}$/', $slugA);
     }
 
     public function test_admin_can_duplicate_a_special_offer(): void

@@ -90,10 +90,13 @@ class Site extends Model
      */
     public function frontendBaseUrl(): string
     {
+        // Env-aware default (localhost when APP_DEBUG, live domain otherwise);
+        // UNSUBSCRIBE_BASE_URL still overrides everything when set.
         $override = config('services.unsubscribe.base_url');
-        $base = is_string($override) && $override !== '' ? $override : 'https://' . $this->domain;
+        $default = config('urls.sites.' . $this->slug, 'https://' . $this->domain);
+        $base = is_string($override) && $override !== '' ? $override : $default;
 
-        return rtrim($base, '/');
+        return rtrim((string) $base, '/');
     }
 
     public function emailTemplate(): HasOne

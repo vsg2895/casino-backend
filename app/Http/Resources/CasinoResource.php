@@ -39,9 +39,9 @@ class CasinoResource extends JsonResource
                 'site_name'     => $site->name,
                 'site_slug'     => $site->slug,
                 'site_domain'   => $site->domain,
-                // Public base URL for building shareable links. Derived from the
-                // site's Next.js revalidation_url origin (the local dev host while
-                // developing, the live host in prod); falls back to the domain.
+                // Public base URL for shareable links — ALWAYS the live domain
+                // (never the local dev host), so a copied "public link" is a real
+                // https://{domain} URL even while developing on localhost.
                 'site_url'      => self::publicBaseUrl($site),
                 'affiliate_url' => $site->pivot->affiliate_url,
                 'position'      => (int) $site->pivot->position,
@@ -53,18 +53,9 @@ class CasinoResource extends JsonResource
         ];
     }
 
-    /** Origin (scheme://host[:port]) of the site's Next.js app, or https://{domain}. */
+    /** Live public origin for shareable links — always https://{domain}. */
     private static function publicBaseUrl(Site $site): string
     {
-        $parts = $site->revalidation_url ? parse_url($site->revalidation_url) : false;
-
-        if ($parts === false || empty($parts['host'])) {
-            return 'https://' . $site->domain;
-        }
-
-        $scheme = $parts['scheme'] ?? 'https';
-        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
-
-        return "{$scheme}://{$parts['host']}{$port}";
+        return 'https://' . $site->domain;
     }
 }

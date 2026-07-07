@@ -9,13 +9,12 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Spatie\Sluggable\HasSlug;
-use Spatie\Sluggable\SlugOptions;
+use Illuminate\Support\Str;
 
 class SpecialOffer extends Model
 {
     /** @use HasFactory<SpecialOfferFactory> */
-    use HasFactory, HasSlug, SoftDeletes;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'casino_id',
@@ -40,27 +39,57 @@ class SpecialOffer extends Model
         ];
     }
 
-    public function getSlugOptions(): SlugOptions
+    /**
+     * Slug lifecycle: generated on create/duplicate and REGENERATED whenever the
+     * title changes; left untouched on any other update. Format is user-friendly
+     * and title-based — the title as lowercase words joined by "_", then a final
+     * "_" and a short letters-only unique token, e.g. "welcome_bonus_kmxopt".
+     */
+    protected static function booted(): void
     {
-        // Name-based slug + a short, SEO-friendly unique suffix, e.g.
-        // "welcome-bonus-k7m2p9". The suffix always starts with a letter (never
-        // numbers-only) so every offer gets its own readable URL even when titles
-        // repeat across casinos — no ugly "-1"/"-2" or all-digit suffixes.
-        return SlugOptions::create()
-            ->generateSlugsFrom(fn (SpecialOffer $offer): string => trim((string) $offer->title) . ' ' . self::slugToken())
-            ->saveSlugsTo('slug')
-            ->doNotGenerateSlugsOnUpdate(); // keep the public URL stable when an offer is renamed
+        static::saving(function (self $offer): void {
+            if (blank($offer->slug) || ($offer->exists && $offer->isDirty('title'))) {
+                $offer->slug = static::generateUniqueSlug((string) $offer->title, $offer->getKey());
+            }
+        });
     }
 
-    /** Short lowercase alphanumeric token that always begins with a letter. */
+    /**
+     * Build a unique title-based slug: {title_words_by_underscore}_{letters}.
+     * Retries the token until the slug is unique (excludes the given id / trashed).
+     */
+    public static function generateUniqueSlug(string $title, int|string|null $ignoreId = null): string
+    {
+        $base = static::slugBase($title);
+
+        do {
+            $slug = $base . '_' . static::slugToken();
+        } while (
+            static::withTrashed()
+                ->where('slug', $slug)
+                ->when($ignoreId !== null, fn ($q) => $q->whereKeyNot($ignoreId))
+                ->exists()
+        );
+
+        return $slug;
+    }
+
+    /** Title → lowercase ascii with non-alphanumerics collapsed to "_" ("offer" if empty). */
+    private static function slugBase(string $title): string
+    {
+        $base = trim((string) Str::of($title)->lower()->ascii()->replaceMatches('/[^a-z0-9]+/', '_'), '_');
+
+        return $base !== '' ? $base : 'offer';
+    }
+
+    /** Short lowercase LETTERS-ONLY token — the unique part after the last "_". */
     public static function slugToken(int $length = 6): string
     {
         $letters = 'abcdefghijklmnopqrstuvwxyz';
-        $alnum = $letters . '0123456789';
+        $token = '';
 
-        $token = $letters[random_int(0, 25)]; // first char is always a letter
-        for ($i = 1; $i < $length; $i++) {
-            $token .= $alnum[random_int(0, 35)];
+        for ($i = 0; $i < $length; $i++) {
+            $token .= $letters[random_int(0, 25)];
         }
 
         return $token;
