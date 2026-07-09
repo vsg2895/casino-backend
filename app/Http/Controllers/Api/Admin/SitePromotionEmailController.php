@@ -85,8 +85,9 @@ class SitePromotionEmailController extends Controller
         $newsletter = Newsletter::firstOrCreate(['site_id' => $site->id, 'email' => $to]);
 
         try {
-            $mailable = $this->emails->mailForSubscriber($site, $template, $newsletter)
-                ->from(config('mail.from.address'), config('mail.from.name'));
+            // Test sends use the template's own from_name + from_email (admin
+            // CRUD), delivered over the .env SMTP mailer (config('mail.test_mailer')).
+            $mailable = $this->emails->mailForSubscriber($site, $template, $newsletter);
 
             Mail::mailer(config('mail.test_mailer'))
                 ->to($to)

@@ -41,6 +41,12 @@ return [
 
     'newsletter_mailer' => env('MAIL_NEWSLETTER_MAILER', 'sendgrid'),
 
+    // Verified "From" address for ALL real (SendGrid) sends — public subscription
+    // confirmations AND promotion blasts. Must live on the SendGrid-verified
+    // domain (winpalack.com) so mail passes SPF/DKIM for every site. The per-site
+    // from_name (the site's name) is kept; only the address is forced to this.
+    'newsletter_from_address' => env('MAIL_NEWSLETTER_FROM_ADDRESS', 'info@winpalack.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

@@ -37,10 +37,17 @@ class NewsletterSubscribedMail extends Mailable
         public readonly string $oneClickUrl = '',
     ) {}
 
+    /**
+     * Sender-address override for real (SendGrid) sends: the SendGrid-verified
+     * address. When null (admin test sends) the template's own from_email is used.
+     * The display name always stays the template's per-site from_name.
+     */
+    public ?string $fromAddressOverride = null;
+
     public function envelope(): Envelope
     {
         return new Envelope(
-            from: new Address($this->template['from_email'], $this->template['from_name']),
+            from: new Address($this->fromAddressOverride ?? $this->template['from_email'], $this->template['from_name']),
             subject: $this->template['subject'],
         );
     }

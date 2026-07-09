@@ -8,7 +8,6 @@ use App\Jobs\SendNewsletterWelcomeEmail;
 use App\Mail\NewsletterSubscribedMail;
 use App\Mail\PromotionEmail;
 use App\Models\Newsletter;
-use App\Services\PromotionEmailService;
 use App\Services\SubscriptionEmailService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
@@ -16,92 +15,95 @@ use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
 
 /**
- * Guards the mail-routing split:
+ * Guards the mail routing + sender-identity split:
  *
  *  - Admin "Send test" (subscription + promotion) goes through the .env SMTP
- *    mailer (config('mail.test_mailer')) and overrides the sender to the global
- *    MAIL_FROM_ADDRESS so strict SMTP servers accept it.
- *  - Real public-form subscription confirmations go through SendGrid
- *    (config('mail.newsletter_mailer')) and keep the per-site template sender.
+ *    mailer (config('mail.test_mailer')) using the TEMPLATE's own from_name +
+ *    from_email (admin CRUD).
+ *  - Real public sends (subscription confirmations + promotion blasts) go through
+ *    SendGrid (config('mail.newsletter_mailer')) and force the verified sender
+ *    address (config('mail.newsletter_from_address')) while keeping the per-site
+ *    from_name — e.g. "Idev Affiliation <info@winpalack.com>".
  */
 class EmailSendRoutingTest extends TestCase
 {
     use InteractsWithSites;
     use RefreshDatabase;
 
-    private const string GLOBAL_FROM = 'no-reply@platform.test';
-    private const string GLOBAL_FROM_NAME = 'Platform Admin';
+    private const string VERIFIED_FROM = 'verified@mail.test';
 
     protected function setUp(): void
     {
         parent::setUp();
         config()->set('services.sendgrid.from_domain', 'mail.test');
-        // Deterministic transports + global sender for assertions.
         config()->set('mail.test_mailer', 'smtp');
         config()->set('mail.newsletter_mailer', 'sendgrid');
-        config()->set('mail.from.address', self::GLOBAL_FROM);
-        config()->set('mail.from.name', self::GLOBAL_FROM_NAME);
+        config()->set('mail.newsletter_from_address', self::VERIFIED_FROM);
     }
 
-    // ── Admin test sends → SMTP + global from ─────────────────────────────
+    // ── Admin test sends → SMTP + the template's own from (CRUD) ───────────
 
-    public function test_subscription_test_send_uses_smtp_mailer_and_global_from(): void
+    public function test_subscription_test_send_uses_smtp_mailer_and_template_from(): void
     {
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
-        $site->emailTemplateOrDefault();
+        $template = $site->emailTemplateOrDefault();
 
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/email-template/test",
             ['to' => 'admin@example.com'],
         )->assertOk()->assertJson(['ok' => true]);
 
-        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail): bool {
+        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($template): bool {
+            $from = $mail->envelope()->from;
             return $mail->hasTo('admin@example.com')
                 && $mail->mailer === 'smtp'
-                && $mail->hasFrom(self::GLOBAL_FROM, self::GLOBAL_FROM_NAME);
+                && $from?->address === $template->from_email
+                && $from?->name === $template->from_name;
         });
     }
 
-    public function test_promotion_test_send_uses_smtp_mailer_and_global_from(): void
+    public function test_promotion_test_send_uses_smtp_mailer_and_template_from(): void
     {
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
-        $site->promotionEmailOrDefault();
+        $template = $site->promotionEmailOrDefault();
 
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/promotion-email/test",
             ['to' => 'admin@example.com'],
         )->assertOk()->assertJson(['ok' => true]);
 
-        Mail::assertSent(PromotionEmail::class, function (PromotionEmail $mail): bool {
+        Mail::assertSent(PromotionEmail::class, function (PromotionEmail $mail) use ($template): bool {
+            $from = $mail->envelope()->from;
             return $mail->hasTo('admin@example.com')
                 && $mail->mailer === 'smtp'
-                && $mail->hasFrom(self::GLOBAL_FROM, self::GLOBAL_FROM_NAME);
+                && $from?->address === $template->from_email
+                && $from?->name === $template->from_name;
         });
     }
 
-    // ── Public subscription → SendGrid + per-site from ────────────────────
+    // ── Public subscription → SendGrid + verified address, per-site name ───
 
-    public function test_public_subscription_welcome_uses_sendgrid_and_per_site_from(): void
+    public function test_public_subscription_welcome_uses_sendgrid_and_verified_from(): void
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        $site->emailTemplateOrDefault(); // from_email => offers@mail.test
+        $fromName = $site->emailTemplateOrDefault()->from_name; // the site's name
         Newsletter::create(['site_id' => $site->id, 'email' => 'fan@example.com']);
 
         (new SendNewsletterWelcomeEmail($site->id, 'fan@example.com'))
             ->handle(app(SubscriptionEmailService::class));
 
-        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail): bool {
+        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($fromName): bool {
+            $from = $mail->envelope()->from;
             return $mail->hasTo('fan@example.com')
                 && $mail->mailer === 'sendgrid'
-                // Real subscriber mail is NOT overridden to the global from …
-                && ! $mail->hasFrom(self::GLOBAL_FROM)
-                // … it keeps the per-site template sender (set on the Envelope).
-                && $mail->envelope()->from?->address === 'offers@mail.test';
+                // Address forced to the verified sender; per-site display name kept.
+                && $from?->address === self::VERIFIED_FROM
+                && $from?->name === $fromName;
         });
     }
 

@@ -70,9 +70,14 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
         }
 
         // Public subscriptions are delivered over SendGrid (config('mail.newsletter_mailer'));
-        // admin "send test" actions use the .env SMTP mailer instead.
+        // admin "send test" actions use the .env SMTP mailer instead. From =
+        // the site's name (from_name) on the SendGrid-verified address, so every
+        // site's mail delivers (e.g. "Idev Affiliation <info@winpalack.com>").
+        $mailable = $emails->mailForSubscriber($site, $newsletter);
+        $mailable->fromAddressOverride = config('mail.newsletter_from_address');
+
         Mail::mailer(config('mail.newsletter_mailer'))
             ->to($this->email)
-            ->send($emails->mailForSubscriber($site, $newsletter));
+            ->send($mailable);
     }
 }

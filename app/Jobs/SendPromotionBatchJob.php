@@ -107,9 +107,11 @@ class SendPromotionBatchJob implements ShouldQueue
             }
 
             try {
-                $mailer->to($email)->send(
-                    $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token),
-                );
+                // From = the site's name (from_name) on the SendGrid-verified
+                // address, so promotion mail delivers for every site.
+                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token);
+                $mailable->fromAddressOverride = config('mail.newsletter_from_address');
+                $mailer->to($email)->send($mailable);
                 // Collected only after a successful send; written once, in bulk,
                 // by recordHistory() at the end of the batch (never per-recipient).
                 $delivered[] = $email;
