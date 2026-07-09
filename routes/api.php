@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
+use App\Http\Controllers\Api\Admin\SiteVerifyEmailController;
 use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
@@ -53,6 +54,12 @@ Route::prefix('v1')->group(function () {
         Route::put('sites/{site}/email-template', [SiteEmailTemplateController::class, 'update']);
         Route::post('sites/{site}/email-template/preview', [SiteEmailTemplateController::class, 'preview']);
         Route::post('sites/{site}/email-template/test', [SiteEmailTemplateController::class, 'sendTest']);
+
+        // Per-site "verify your email" template
+        Route::get('sites/{site}/verify-email', [SiteVerifyEmailController::class, 'show']);
+        Route::put('sites/{site}/verify-email', [SiteVerifyEmailController::class, 'update']);
+        Route::post('sites/{site}/verify-email/preview', [SiteVerifyEmailController::class, 'preview']);
+        Route::post('sites/{site}/verify-email/test', [SiteVerifyEmailController::class, 'sendTest']);
 
         // Per-site promotion (marketing offer) email template
         Route::get('sites/{site}/promotion-email', [SitePromotionEmailController::class, 'show']);

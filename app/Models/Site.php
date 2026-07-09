@@ -132,4 +132,21 @@ class Site extends Model
             SitePromotionEmail::defaultsFor($this),
         );
     }
+
+    public function verifyEmail(): HasOne
+    {
+        return $this->hasOne(SiteVerifyEmail::class);
+    }
+
+    /**
+     * The site's "verify your email" template, creating it with sensible
+     * defaults on first access so every site always has one.
+     */
+    public function verifyEmailOrDefault(): SiteVerifyEmail
+    {
+        return $this->verifyEmail()->firstOrCreate(
+            [],
+            SiteVerifyEmail::defaultsFor($this),
+        );
+    }
 }

@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
             AdminUserSeeder::class,
             SiteSeeder::class,
             SiteEmailTemplateSeeder::class,
+            SiteVerifyEmailSeeder::class,
             SitePromotionEmailSeeder::class,
             CategorySeeder::class,
             // Real casinos + offers scraped from crystaldice.net (replaces the
