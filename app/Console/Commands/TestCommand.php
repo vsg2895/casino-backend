@@ -17,5 +17,6 @@ class TestCommand extends Command
     public function handle()
     {
         Log::info('Command Work every minute ' . \Illuminate\Support\now()->format('Y-m-d H:i:s'));
+        $this->info('Command Work every minute ' . \Illuminate\Support\now()->format('Y-m-d H:i:s'));
     }
 }
