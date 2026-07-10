@@ -106,32 +106,33 @@ class SubscriptionEmailTemplateTest extends TestCase
 
     // ── Sending uses the per-site template ────────────────────────────────
 
-    public function test_welcome_job_sends_templated_email_via_sendgrid(): void
+    public function test_welcome_job_sends_verify_email_via_sendgrid(): void
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        $site->emailTemplateOrDefault();
+        $site->verifyEmailOrDefault();
 
         $newsletter = Newsletter::create(['site_id' => $site->id, 'email' => 'fan@example.com']);
 
         (new SendNewsletterWelcomeEmail($site->id, 'fan@example.com'))
-            ->handle(app(\App\Services\SubscriptionEmailService::class));
+            ->handle(app(\App\Services\VerifyEmailService::class));
 
-        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($newsletter): bool {
+        Mail::assertSent(\App\Mail\VerifyEmailMail::class, function (\App\Mail\VerifyEmailMail $mail) use ($newsletter): bool {
             return $mail->hasTo('fan@example.com')
-                && str_contains($mail->unsubscribeUrl, (string) $newsletter->unsubscribe_token);
+                // Verify link carries the subscriber's subscription token.
+                && str_contains($mail->verifyUrl, (string) $newsletter->unsubscribe_token);
         });
     }
 
-    public function test_welcome_email_is_skipped_when_template_inactive(): void
+    public function test_welcome_email_is_skipped_when_verify_template_inactive(): void
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        $site->emailTemplateOrDefault()->update(['active' => false]);
+        $site->verifyEmailOrDefault()->update(['active' => false]);
         Newsletter::create(['site_id' => $site->id, 'email' => 'fan@example.com']);
 
         (new SendNewsletterWelcomeEmail($site->id, 'fan@example.com'))
-            ->handle(app(\App\Services\SubscriptionEmailService::class));
+            ->handle(app(\App\Services\VerifyEmailService::class));
 
         Mail::assertNothingSent();
     }

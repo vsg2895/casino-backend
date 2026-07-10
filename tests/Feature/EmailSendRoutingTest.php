@@ -7,8 +7,10 @@ namespace Tests\Feature;
 use App\Jobs\SendNewsletterWelcomeEmail;
 use App\Mail\NewsletterSubscribedMail;
 use App\Mail\PromotionEmail;
+use App\Mail\VerifyEmailMail;
 use App\Models\Newsletter;
 use App\Services\SubscriptionEmailService;
+use App\Services\VerifyEmailService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Tests\Concerns\InteractsWithSites;
@@ -91,13 +93,13 @@ class EmailSendRoutingTest extends TestCase
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        $fromName = $site->emailTemplateOrDefault()->from_name; // the site's name
+        $fromName = $site->verifyEmailOrDefault()->from_name; // the site's name
         Newsletter::create(['site_id' => $site->id, 'email' => 'fan@example.com']);
 
         (new SendNewsletterWelcomeEmail($site->id, 'fan@example.com'))
-            ->handle(app(SubscriptionEmailService::class));
+            ->handle(app(VerifyEmailService::class));
 
-        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($fromName): bool {
+        Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($fromName): bool {
             $from = $mail->envelope()->from;
             return $mail->hasTo('fan@example.com')
                 && $mail->mailer === 'sendgrid'

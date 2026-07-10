@@ -146,12 +146,12 @@ class NewsletterUnsubscribeTest extends TestCase
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        $site->emailTemplateOrDefault();
+        $site->verifyEmailOrDefault();
         Newsletter::create(['site_id' => $site->id, 'email' => 'gone@example.com']);
         Unsubscribe::record($site->id, 'gone@example.com', Unsubscribe::TYPE_SUBSCRIPTION);
 
         (new SendNewsletterWelcomeEmail($site->id, 'gone@example.com'))
-            ->handle(app(SubscriptionEmailService::class));
+            ->handle(app(\App\Services\VerifyEmailService::class));
 
         Mail::assertNothingSent();
     }

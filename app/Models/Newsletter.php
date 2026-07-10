@@ -16,9 +16,18 @@ class Newsletter extends Model
     protected $fillable = [
         'site_id',
         'email',
+        'full_name',
+        'verified',
         'unsubscribe_token',
         'promotion_unsubscribe_token',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'verified' => 'boolean',
+        ];
+    }
 
     /** Unsubscribe tokens are secrets — never expose them in any response. */
     protected $hidden = [

@@ -7,7 +7,7 @@ namespace App\Jobs;
 use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
-use App\Services\SubscriptionEmailService;
+use App\Services\VerifyEmailService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -16,13 +16,16 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Sends the "successfully subscribed" confirmation email for a single
- * subscription. Runs on the HIGH-priority queue so confirmation emails go out
- * promptly. Delivered through the shared `sendgrid` mailer (one API key for all
- * sites); the per-site editable template supplies copy + sender identity.
+ * Sends the "verify your email" (double opt-in) email for a single
+ * subscription. Runs on the HIGH-priority queue so it goes out promptly.
+ * Delivered through the shared `sendgrid` mailer (one API key for all sites);
+ * the per-site editable VERIFY template supplies copy + sender identity, and a
+ * verify link lets the subscriber confirm their address.
  *
- * Dispatched by ProcessNewsletterSubscription only for brand-new (or
- * re-activated) subscriptions.
+ * Every site sends this verify email on subscribe (it replaced the old
+ * "successfully subscribed" confirmation). Dispatched by
+ * ProcessNewsletterSubscription only for brand-new (or re-activated)
+ * subscriptions.
  */
 class SendNewsletterWelcomeEmail implements ShouldQueue
 {
@@ -41,7 +44,7 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
         $this->onQueue(self::ON_QUEUE);
     }
 
-    public function handle(SubscriptionEmailService $emails): void
+    public function handle(VerifyEmailService $emails): void
     {
         $site = Site::find($this->siteId);
 
@@ -50,8 +53,9 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
             return;
         }
 
-        // Respect the per-site toggle: when disabled, persist only, don't email.
-        if (! $site->emailTemplateOrDefault()->active) {
+        // Respect the per-site toggle: when the verify template is disabled,
+        // persist only, don't email.
+        if (! $site->verifyEmailOrDefault()->active) {
             return;
         }
 

@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterCont
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
 use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
+use App\Http\Controllers\Api\Public\VerifyController as PublicVerifyController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -124,6 +125,13 @@ Route::prefix('v1')->group(function () {
     // prefetched → accidental unsubscribes). Not behind verify.site: providers
     // send neither the site key nor the slug.
     Route::post('unsubscribe/{token}', [PublicUnsubscribeController::class, 'oneClick'])
+        ->middleware('throttle:60,1');
+
+    // ── Double opt-in verify (keyless, token is the credential) ──────────────
+    // Target of the verify link in the verify email. POST-only for parity with
+    // one-click unsubscribe (GET links get prefetched). Not behind verify.site:
+    // the opaque subscription token resolves the subscriber across all sites.
+    Route::post('verify/{token}', [PublicVerifyController::class, 'verify'])
         ->middleware('throttle:60,1');
 
     // ── Public (site-keyed) ──────────────────────────────────────────────

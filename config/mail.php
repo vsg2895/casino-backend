@@ -47,6 +47,16 @@ return [
     // from_name (the site's name) is kept; only the address is forced to this.
     'newsletter_from_address' => env('MAIL_NEWSLETTER_FROM_ADDRESS', 'info@winpalack.com'),
 
+    // Double opt-in: slugs of sites that require the subscriber to click the
+    // verify link before they count as verified. Every site sends the verify
+    // email; sites NOT listed here auto-verify on subscribe (the link still
+    // works and lands on the congrats page), while listed sites (e.g. winpalack)
+    // stay unverified until the link is clicked. Comma-separated env override.
+    'verify_required_slugs' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('MAIL_VERIFY_REQUIRED_SLUGS', 'winpalack')),
+    ))),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

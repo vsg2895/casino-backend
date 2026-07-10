@@ -32,7 +32,9 @@ class VerifyEmailMail extends Mailable
         public readonly string $siteName,
         public readonly string $siteUrl,
         public readonly string $unsubscribeUrl,
+        public readonly string $verifyUrl = '',
         public readonly string $oneClickUrl = '',
+        public readonly string $greeting = '',
     ) {}
 
     /**
@@ -69,6 +71,8 @@ class VerifyEmailMail extends Mailable
                 'siteName'       => $this->siteName,
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
+                'verifyUrl'      => $this->verifyUrl,
+                'greeting'       => $this->greeting,
                 'accent'         => $this->template['accent_color'],
             ],
         );

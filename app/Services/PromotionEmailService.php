@@ -9,6 +9,7 @@ use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\SitePromotionEmail;
 use App\Models\Unsubscribe;
+use App\Support\EmailGreeting;
 use Illuminate\Support\Carbon;
 
 /**
@@ -44,20 +45,23 @@ class PromotionEmailService
             $template,
             $newsletter->email,
             $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_PROMOTION),
+            $newsletter->full_name,
         );
     }
 
     /**
      * Mailable for a (possibly unsaved) template — powers the admin preview and
      * "send test" with a sample subscriber so admins see edits before saving.
+     * An optional $sampleName drives the "Dear {name}," greeting in test sends.
      */
     public function previewMail(
         Site $site,
         SitePromotionEmail $template,
         string $sampleEmail = 'subscriber@example.com',
+        ?string $sampleName = null,
     ): PromotionEmail {
         // A throwaway token keeps the preview unsubscribe link well-formed.
-        return $this->mailFor($site, $template, $sampleEmail, str_repeat('0', 64));
+        return $this->mailFor($site, $template, $sampleEmail, str_repeat('0', 64), $sampleName);
     }
 
     /**
@@ -71,6 +75,7 @@ class PromotionEmailService
         SitePromotionEmail $template,
         string $email,
         string $token,
+        ?string $fullName = null,
     ): PromotionEmail {
         $unsubscribeUrl = $template->unsubscribeUrl($site, $token);
         $context = $this->context($site, $email, $unsubscribeUrl);
@@ -81,6 +86,7 @@ class PromotionEmailService
             siteUrl: $context['site_url'],
             unsubscribeUrl: $unsubscribeUrl,
             oneClickUrl: Unsubscribe::oneClickUrl($token),
+            greeting: EmailGreeting::line($fullName),
         );
     }
 }

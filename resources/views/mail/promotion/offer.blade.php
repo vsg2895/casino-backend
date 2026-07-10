@@ -50,6 +50,12 @@
                                 <h2 style="color:#ffffff; font-size:24px; font-weight:600; margin:0 0 20px; line-height:1.4;">
                                     {{ $t['heading'] }}
                                 </h2>
+                                @if (! empty($greeting))
+                                    {{-- Optional "Dear {name}," greeting — only when a name was captured. --}}
+                                    <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
+                                        {{ $greeting }}
+                                    </p>
+                                @endif
                                 <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
                                     {!! $t['intro_text'] !!}
                                 </p>

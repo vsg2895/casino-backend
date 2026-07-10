@@ -83,6 +83,10 @@ class SitePromotionEmailController extends Controller
         $template = $site->promotionEmailOrDefault();
         $to = $request->validated('to');
         $newsletter = Newsletter::firstOrCreate(['site_id' => $site->id, 'email' => $to]);
+        // The optional name from the test modal drives the "Dear {name}," greeting.
+        // Set in memory only (not saved) so testing never overwrites a real
+        // subscriber's stored name; a blank name yields no greeting.
+        $newsletter->full_name = $request->validated('name');
 
         try {
             // Test sends use the template's own from_name + from_email (admin

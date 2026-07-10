@@ -38,6 +38,13 @@
                                 {{ $t['heading'] }}
                             </h1>
 
+                            @if (! empty($greeting))
+                                {{-- Optional "Dear {name}," greeting — only when a name was captured. --}}
+                                <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
+                                    {{ $greeting }}
+                                </p>
+                            @endif
+
                             <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
                                 {!! $t['intro_text'] !!}
                             </p>
@@ -47,6 +54,24 @@
                             <p style="margin:0; font-size:14px; line-height:1.6; color:#6b7280;">
                                 {!! $t['spam_notice'] !!}
                             </p>
+
+                            @if (! empty($verifyUrl))
+                                {{-- Primary double opt-in call to action --}}
+                                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0 4px;">
+                                    <tr>
+                                        <td align="center" style="border-radius:10px; background-color:{{ $accent }};">
+                                            <a href="{{ $verifyUrl }}" target="_blank" rel="noopener"
+                                               style="display:inline-block; padding:13px 30px; font-size:15px; font-weight:700; color:#ffffff; text-decoration:none; border-radius:10px;">
+                                                Verify My Email
+                                            </a>
+                                        </td>
+                                    </tr>
+                                </table>
+                                <p style="margin:12px 0 0; font-size:12px; line-height:1.6; color:#9ca3af; word-break:break-all;">
+                                    Or paste this link into your browser:<br>
+                                    <a href="{{ $verifyUrl }}" style="color:{{ $accent }};">{{ $verifyUrl }}</a>
+                                </p>
+                            @endif
 
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;">
                                 <tr><td style="border-top:1px solid #e5e7eb; font-size:0; line-height:0;">&nbsp;</td></tr>

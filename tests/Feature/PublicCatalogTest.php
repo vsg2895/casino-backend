@@ -6,7 +6,7 @@ namespace Tests\Feature;
 
 use App\Jobs\ProcessNewsletterSubscription;
 use App\Jobs\SendNewsletterWelcomeEmail;
-use App\Mail\NewsletterSubscribedMail;
+use App\Mail\VerifyEmailMail;
 use App\Models\Casino;
 use App\Models\Category;
 use App\Models\Newsletter;
@@ -230,18 +230,18 @@ class PublicCatalogTest extends TestCase
         Queue::assertPushed(SendNewsletterWelcomeEmail::class, 1);
     }
 
-    public function test_welcome_email_job_sends_the_confirmation_to_the_subscriber(): void
+    public function test_welcome_email_job_sends_the_verify_email_to_the_subscriber(): void
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
-        // The confirmation email is built from the persisted subscriber (token + template).
+        // The verify email is built from the persisted subscriber (token + template).
         Newsletter::create(['site_id' => $site->id, 'email' => 'sub@example.test']);
 
         app()->call([new SendNewsletterWelcomeEmail($site->id, 'sub@example.test'), 'handle']);
 
         Mail::assertSent(
-            NewsletterSubscribedMail::class,
-            fn (NewsletterSubscribedMail $mail): bool => $mail->hasTo('sub@example.test') && $mail->siteName === $site->name,
+            VerifyEmailMail::class,
+            fn (VerifyEmailMail $mail): bool => $mail->hasTo('sub@example.test') && $mail->siteName === $site->name,
         );
     }
 

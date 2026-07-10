@@ -24,7 +24,11 @@ class NewsletterController extends Controller
         // public request returns instantly. The (site_id, email) unique index
         // keeps this idempotent; the confirmation email is sent only for new
         // subscriptions (see ProcessNewsletterSubscription).
-        ProcessNewsletterSubscription::dispatch($site->id, $request->validated('email'));
+        ProcessNewsletterSubscription::dispatch(
+            $site->id,
+            $request->validated('email'),
+            $request->validated('full_name'),
+        );
 
         return response()->json(['ok' => true], 202);
     }

@@ -17,7 +17,9 @@ class SendTestSiteEmailRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'to' => ['required', 'string', 'email', 'max:180'],
+            'to'   => ['required', 'string', 'email', 'max:180'],
+            // Optional — drives the "Dear {name}," greeting in the test email.
+            'name' => ['nullable', 'string', 'max:255'],
         ];
     }
 }

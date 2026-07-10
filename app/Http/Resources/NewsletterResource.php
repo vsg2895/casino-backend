@@ -17,6 +17,8 @@ class NewsletterResource extends JsonResource
             'site_id'    => $this->site_id,
             'site'       => new SiteResource($this->whenLoaded('site')),
             'email'      => $this->email,
+            'full_name'  => $this->full_name,
+            'verified'   => (bool) $this->verified,
             'created_at' => $this->created_at,
             'deleted_at' => $this->deleted_at,
         ];

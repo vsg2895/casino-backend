@@ -31,6 +31,8 @@ class SubscribeNewsletterRequest extends FormRequest
                     ->where('site_id', $siteId)
                     ->whereNull('deleted_at'),
             ],
+            // Optional display name captured by some subscribe forms (e.g. modal).
+            'full_name' => ['nullable', 'string', 'max:255'],
         ];
     }
 

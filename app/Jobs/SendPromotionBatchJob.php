@@ -82,7 +82,7 @@ class SendPromotionBatchJob implements ShouldQueue
                     ->where('unsubscribes.site_id', $this->siteId)
                     ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
             })
-            ->get(['email', 'promotion_unsubscribe_token']);
+            ->get(['email', 'full_name', 'promotion_unsubscribe_token']);
 
         // Idempotency: one query against the history for who already got today's
         // promotion, so a job retry after a mid-batch failure never re-sends a
@@ -109,7 +109,7 @@ class SendPromotionBatchJob implements ShouldQueue
             try {
                 // From = the site's name (from_name) on the SendGrid-verified
                 // address, so promotion mail delivers for every site.
-                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token);
+                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name);
                 $mailable->fromAddressOverride = config('mail.newsletter_from_address');
                 $mailer->to($email)->send($mailable);
                 // Collected only after a successful send; written once, in bulk,

@@ -123,4 +123,14 @@ class SiteVerifyEmail extends Model
     {
         return $site->frontendBaseUrl() . '/unsubscribe/' . Str::of($token)->trim();
     }
+
+    /**
+     * Absolute double opt-in verify URL for a subscriber on this site. Reuses the
+     * subscriber's opaque subscription token as the credential; clicking it lands
+     * on the public /verify/{token} page which marks them verified.
+     */
+    public function verifyUrl(Site $site, string $token): string
+    {
+        return $site->frontendBaseUrl() . '/verify/' . Str::of($token)->trim();
+    }
 }

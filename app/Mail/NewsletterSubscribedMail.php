@@ -35,6 +35,7 @@ class NewsletterSubscribedMail extends Mailable
         public readonly string $siteUrl,
         public readonly string $unsubscribeUrl,
         public readonly string $oneClickUrl = '',
+        public readonly string $greeting = '',
     ) {}
 
     /**
@@ -75,6 +76,7 @@ class NewsletterSubscribedMail extends Mailable
                 'siteName'       => $this->siteName,
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
+                'greeting'       => $this->greeting,
                 'accent'         => $this->template['accent_color'],
             ],
         );
