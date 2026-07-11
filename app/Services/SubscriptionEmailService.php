@@ -61,8 +61,9 @@ class SubscriptionEmailService
         string $sampleEmail = 'subscriber@example.com',
         ?string $sampleName = null,
     ): NewsletterSubscribedMail {
-        // A throwaway token keeps the preview unsubscribe link well-formed.
-        return $this->build($site, $template, $sampleEmail, str_repeat('0', 64), $sampleName);
+        // A realistic (random, well-formed) sample token so the preview's
+        // unsubscribe link looks like a real one — not a string of zeros.
+        return $this->build($site, $template, $sampleEmail, Newsletter::generateUnsubscribeToken(), $sampleName);
     }
 
     private function build(

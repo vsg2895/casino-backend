@@ -51,6 +51,8 @@ class NewsletterController extends Controller
     public function import(ImportNewslettersRequest $request, NewsletterImportService $importer): JsonResponse
     {
         $siteId = $request->integer('site_id');
+        // Admin's choice: import as already-verified, or (default) unverified.
+        $verified = $request->boolean('verified');
         $file = $request->file('file');
         $extension = strtolower($file->getClientOriginalExtension());
 
@@ -71,15 +73,22 @@ class NewsletterController extends Controller
         foreach ($emails as $email) {
             // withTrashed so the (site_id, email) unique index — which still
             // covers soft-deleted rows — never trips on a re-import.
-            $newsletter = Newsletter::withTrashed()->firstOrCreate([
-                'site_id' => $siteId,
-                'email'   => $email,
-            ]);
+            $newsletter = Newsletter::withTrashed()->firstOrCreate(
+                ['site_id' => $siteId, 'email' => $email],
+                ['verified' => $verified],
+            );
 
             if ($newsletter->wasRecentlyCreated) {
                 $imported++;
             } elseif ($newsletter->trashed()) {
+                // Re-importing a removed contact: restore it. Verification is
+                // upgrade-only — importing as verified promotes an unverified
+                // row, but importing as unverified never downgrades a subscriber
+                // who was already verified before removal.
                 $newsletter->restore();
+                if ($verified && ! $newsletter->verified) {
+                    $newsletter->forceFill(['verified' => true])->save();
+                }
                 $imported++;
             } else {
                 $skipped++; // already an active subscriber

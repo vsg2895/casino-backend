@@ -87,6 +87,27 @@ class EmailSendRoutingTest extends TestCase
         });
     }
 
+    public function test_verify_test_send_uses_smtp_mailer_and_template_from(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $template = $site->verifyEmailOrDefault();
+
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/verify-email/test",
+            ['to' => 'admin@example.com'],
+        )->assertOk()->assertJson(['ok' => true]);
+
+        Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($template): bool {
+            $from = $mail->envelope()->from;
+            return $mail->hasTo('admin@example.com')
+                && $mail->mailer === 'smtp'
+                && $from?->address === $template->from_email
+                && $from?->name === $template->from_name;
+        });
+    }
+
     // ── Public subscription → SendGrid + verified address, per-site name ───
 
     public function test_public_subscription_welcome_uses_sendgrid_and_verified_from(): void

@@ -65,11 +65,12 @@ class NewsletterImportTest extends TestCase
         return new UploadedFile($path, 'subscribers.csv', null, null, true);
     }
 
-    private function import(Site $site, UploadedFile $file): \Illuminate\Testing\TestResponse
+    /** @param array<string, mixed> $extra */
+    private function import(Site $site, UploadedFile $file, array $extra = []): \Illuminate\Testing\TestResponse
     {
         return $this->post(
             '/api/v1/admin/newsletters/import',
-            ['site_id' => $site->id, 'file' => $file],
+            ['site_id' => $site->id, 'file' => $file, ...$extra],
             ['Accept' => 'application/json'],
         );
     }
@@ -187,6 +188,63 @@ class NewsletterImportTest extends TestCase
         $this->import($site, $this->xlsx([['Email'], ['quiet@example.com']]))->assertOk();
 
         Queue::assertNothingPushed();
+    }
+
+    // ── Verified flag ─────────────────────────────────────────────────────
+
+    public function test_imports_are_unverified_by_default(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->import($site, $this->xlsx([['Email'], ['plain@example.com']]))->assertOk();
+
+        $this->assertDatabaseHas('newsletters', [
+            'site_id'  => $site->id,
+            'email'    => 'plain@example.com',
+            'verified' => false,
+        ]);
+    }
+
+    public function test_can_import_as_verified_when_requested(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->import($site, $this->xlsx([['Email'], ['trusted@example.com']]), ['verified' => '1'])->assertOk();
+
+        $this->assertDatabaseHas('newsletters', [
+            'site_id'  => $site->id,
+            'email'    => 'trusted@example.com',
+            'verified' => true,
+        ]);
+    }
+
+    public function test_reimport_never_downgrades_an_already_verified_subscriber(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $n = Newsletter::create(['site_id' => $site->id, 'email' => 'back@example.com', 'verified' => true]);
+        $n->delete();
+
+        // Re-import as unverified (default) → the restored row STAYS verified.
+        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]))->assertOk();
+
+        $this->assertNotSoftDeleted('newsletters', ['id' => $n->id]);
+        $this->assertDatabaseHas('newsletters', ['id' => $n->id, 'verified' => true]);
+    }
+
+    public function test_reimport_can_upgrade_an_unverified_removed_subscriber(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $n = Newsletter::create(['site_id' => $site->id, 'email' => 'back@example.com', 'verified' => false]);
+        $n->delete();
+
+        // Re-import as verified → the restored row is promoted.
+        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]), ['verified' => '1'])->assertOk();
+
+        $this->assertDatabaseHas('newsletters', ['id' => $n->id, 'verified' => true]);
     }
 
     // ── Validation ────────────────────────────────────────────────────────

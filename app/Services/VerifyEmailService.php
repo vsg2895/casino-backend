@@ -62,7 +62,9 @@ class VerifyEmailService
         string $sampleEmail = 'subscriber@example.com',
         ?string $sampleName = null,
     ): VerifyEmailMail {
-        return $this->build($site, $template, $sampleEmail, str_repeat('0', 64), $sampleName);
+        // A realistic (random, well-formed) sample token so the preview's verify
+        // and unsubscribe links look like real ones — not a string of zeros.
+        return $this->build($site, $template, $sampleEmail, Newsletter::generateUnsubscribeToken(), $sampleName);
     }
 
     private function build(

@@ -20,6 +20,9 @@ class ImportNewslettersRequest extends FormRequest
     {
         return [
             'site_id' => ['required', 'integer', 'exists:sites,id'],
+            // Whether to mark imported subscribers as already verified. Optional;
+            // defaults to false (unverified) when omitted.
+            'verified' => ['nullable', 'boolean'],
             // Validate by client extension: xlsx MIME detection is unreliable
             // (it is a zip under the hood), so a mimes rule would reject valid files.
             'file' => [
