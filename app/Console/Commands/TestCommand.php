@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\Test\ForHighPriorityJob;
+use App\Jobs\Test\ForLowPriorityJob;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -17,6 +19,8 @@ class TestCommand extends Command
     public function handle()
     {
         Log::info('Command Work every minute ' . \Illuminate\Support\now()->format('Y-m-d H:i:s'));
+        ForHighPriorityJob::dispatch();
+        ForLowPriorityJob::dispatch();
         $this->info('Command Work every minute ' . \Illuminate\Support\now()->format('Y-m-d H:i:s'));
     }
 }
