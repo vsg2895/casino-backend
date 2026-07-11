@@ -17,7 +17,7 @@ class ForHighPriorityJob implements ShouldQueue
      */
     public function __construct()
     {
-        //
+        $this->onQueue(self::ON_QUEUE);
     }
 
     /**
