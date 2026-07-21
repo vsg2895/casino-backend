@@ -147,8 +147,8 @@ class SitePromotionEmail extends Model
      * Build the absolute unsubscribe URL for a subscriber on this site.
      *
      * The URL carries only the opaque per-stream token — never the email or any
-     * other subscriber data. Base resolves to the site domain (or the
-     * UNSUBSCRIBE_BASE_URL override for local testing) via Site::frontendBaseUrl().
+     * other subscriber data. Base resolves to the site's real public https URL
+     * via Site::frontendBaseUrl().
      */
     public function unsubscribeUrl(Site $site, string $token): string
     {

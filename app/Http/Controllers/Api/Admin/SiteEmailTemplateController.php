@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateSiteEmailTemplateRequest;
@@ -14,20 +15,20 @@ use App\Models\SiteEmailTemplate;
 use App\Services\SubscriptionEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Mail;
-use Throwable;
 
 /**
  * Per-site subscription email template management for the admin panel.
  *
  * Each site owns one editable template (auto-created with defaults on first
  * access). Live preview renders edits without saving; "send test" delivers the
- * saved template through the .env SMTP mailer (config('mail.test_mailer')) so
+ * saved template through the .env SMTP mailer (config('mail.admin_mailer')) so
  * admins verify layout via their own inbox. Real subscriber confirmations go
  * out over SendGrid.
  */
 class SiteEmailTemplateController extends Controller
 {
+    use SendsAdminTestEmail;
+
     public function __construct(private readonly SubscriptionEmailService $emails) {}
 
     /** Return the site's template, creating defaults the first time. */
@@ -68,7 +69,7 @@ class SiteEmailTemplateController extends Controller
     /**
      * Send a one-off test of the saved template to an arbitrary address.
      *
-     * Delivered through the .env SMTP mailer (config('mail.test_mailer')) — not
+     * Delivered through the .env SMTP mailer (config('mail.admin_mailer')) — not
      * SendGrid — so admins verify layout via their own SMTP inbox. The "from" is
      * overridden to the global MAIL_FROM_ADDRESS (rather than the template's
      * per-site sender) so strict SMTP servers that enforce an authenticated
@@ -89,21 +90,7 @@ class SiteEmailTemplateController extends Controller
         // subscriber's stored name; a blank name yields no greeting.
         $newsletter->full_name = $request->validated('name');
 
-        try {
-            // Test sends use the template's own from_name + from_email (admin
-            // CRUD), delivered over the .env SMTP mailer (config('mail.test_mailer')).
-            $mailable = $this->emails->mailForSubscriber($site, $newsletter);
-
-            Mail::mailer(config('mail.test_mailer'))
-                ->to($to)
-                ->send($mailable);
-        } catch (Throwable $e) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Could not send test email: ' . $e->getMessage(),
-            ], 502);
-        }
-
-        return response()->json(['ok' => true, 'message' => "Test email sent to {$to}."]);
+        // Shared admin send path (SMTP, from the .env mailbox) — see the trait.
+        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to);
     }
 }

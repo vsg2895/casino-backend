@@ -108,24 +108,40 @@ class NewsletterUnsubscribeTest extends TestCase
         $this->assertDatabaseCount('unsubscribes', 1);
     }
 
-    // ── URL is opaque + supports localhost ────────────────────────────────
+    // ── URL is opaque + points at the site's real public domain ───────────
 
-    public function test_unsubscribe_url_leaks_no_personal_data(): void
+    public function test_unsubscribe_url_is_the_real_site_url_and_leaks_no_personal_data(): void
     {
-        config()->set('services.unsubscribe.base_url', 'http://localhost:3000');
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['domain' => 'idevaffiliation.com']);
         $site->emailTemplateOrDefault();
         $sub = Newsletter::create(['site_id' => $site->id, 'email' => 'secret@example.com']);
 
         $mail = app(SubscriptionEmailService::class)->mailForSubscriber($site, $sub);
 
-        // Exactly base + opaque token: no email, id or query string appended,
-        // and pointing at localhost for the test.
+        // Exactly base + opaque token: the site's real https domain, and no
+        // email, id or query string appended. Never localhost — the link is
+        // clicked from a real inbox.
+        $this->assertSame(
+            'https://idevaffiliation.com/unsubscribe/' . $sub->unsubscribe_token,
+            $mail->unsubscribeUrl,
+        );
+        $this->assertStringNotContainsString('secret@example.com', $mail->unsubscribeUrl);
+    }
+
+    public function test_unsubscribe_url_honours_a_per_site_override(): void
+    {
+        [$site] = $this->siteWithKey(['domain' => 'idevaffiliation.com']);
+        // A per-site override (SITE_URL_<SLUG>) may repoint one site's links,
+        // e.g. at a local dev server — without clobbering the other sites.
+        config()->set('urls.sites.' . $site->slug, 'http://localhost:3000');
+        $sub = Newsletter::create(['site_id' => $site->id, 'email' => 'dev@example.com']);
+
+        $mail = app(SubscriptionEmailService::class)->mailForSubscriber($site, $sub);
+
         $this->assertSame(
             'http://localhost:3000/unsubscribe/' . $sub->unsubscribe_token,
             $mail->unsubscribeUrl,
         );
-        $this->assertStringNotContainsString('secret@example.com', $mail->unsubscribeUrl);
     }
 
     public function test_promotion_email_uses_the_promotion_token(): void

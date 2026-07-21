@@ -83,18 +83,18 @@ class Site extends Model
     }
 
     /**
-     * Base URL of this site's public front-end, used to build email links
-     * (e.g. the unsubscribe page). Defaults to the registered domain over
-     * HTTPS, but a global override (UNSUBSCRIBE_BASE_URL) lets every link point
-     * at e.g. http://localhost:3000 for local development / testing.
+     * Base URL of this site's public front-end, used to build the links baked
+     * into emails (verify + unsubscribe pages). Resolved PER SITE so every link
+     * points at that site's own real domain — these travel to real inboxes, so
+     * they must be the live https URL, never localhost.
+     *
+     * Order: an explicit per-site override (config('urls.sites.{slug}'), i.e.
+     * SITE_URL_<SLUG>) → the site's registered domain over https. New sites not
+     * in the config map automatically get https://{domain}.
      */
     public function frontendBaseUrl(): string
     {
-        // Env-aware default (localhost when APP_DEBUG, live domain otherwise);
-        // UNSUBSCRIBE_BASE_URL still overrides everything when set.
-        $override = config('services.unsubscribe.base_url');
-        $default = config('urls.sites.' . $this->slug, 'https://' . $this->domain);
-        $base = is_string($override) && $override !== '' ? $override : $default;
+        $base = config('urls.sites.' . $this->slug, 'https://' . $this->domain);
 
         return rtrim((string) $base, '/');
     }

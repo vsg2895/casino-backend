@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Mail;
 
+use App\Mail\Concerns\HasSenderOverride;
+use App\Mail\Contracts\SenderOverridable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
@@ -21,8 +23,9 @@ use Illuminate\Queue\SerializesModels;
  * per-site but constrained to the SendGrid-verified domain. Sent through the
  * shared `sendgrid` mailer.
  */
-class PromotionEmail extends Mailable
+class PromotionEmail extends Mailable implements SenderOverridable
 {
+    use HasSenderOverride;
     use Queueable;
     use SerializesModels;
 
@@ -37,13 +40,6 @@ class PromotionEmail extends Mailable
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
     ) {}
-
-    /**
-     * Sender-address override for real (SendGrid) sends: the SendGrid-verified
-     * address. When null (admin test sends) the template's own from_email is used.
-     * The display name always stays the template's per-site from_name.
-     */
-    public ?string $fromAddressOverride = null;
 
     public function envelope(): Envelope
     {

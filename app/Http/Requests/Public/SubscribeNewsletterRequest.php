@@ -24,11 +24,14 @@ class SubscribeNewsletterRequest extends FormRequest
         return [
             'email' => [
                 'required', 'email', 'max:255',
-                // Already actively subscribed to THIS site → 422. Soft-deleted
-                // (previously unsubscribed) rows are excluded so re-subscribing
-                // is still allowed and restores the row.
+                // Block ONLY when this email is already VERIFIED on this site → 422
+                // "You are already subscribed." A pending (unverified) row does NOT
+                // block: re-submitting re-sends the verification email. Soft-deleted
+                // (previously unsubscribed) rows are excluded so re-subscribing is
+                // allowed and restores the row.
                 Rule::unique('newsletters', 'email')
                     ->where('site_id', $siteId)
+                    ->where('verified', true)
                     ->whereNull('deleted_at'),
             ],
             // Optional display name captured by some subscribe forms (e.g. modal).

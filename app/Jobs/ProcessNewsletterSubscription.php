@@ -17,10 +17,10 @@ use Illuminate\Queue\SerializesModels;
  * Persists a newsletter subscription for the given site and, when the email is
  * brand new for that site, queues the double opt-in verify email.
  *
- * Double opt-in: sites listed in config('mail.verify_required_slugs') (e.g.
- * winpalack) start unverified and become verified only when the emailed link is
- * clicked; every other site is auto-verified on subscribe (its verify email
- * still sends, and the link still lands on the congrats page).
+ * Double opt-in for EVERY site: a new subscriber is stored as unverified
+ * (pending) and only becomes verified when they click the emailed verify link.
+ * The opt-out list config('mail.auto_verify_slugs') (empty by default) lets a
+ * specific site skip the click and be auto-verified on subscribe.
  *
  * This is the "first" subscription job and runs on the HIGH-priority queue
  * (worker: --queue=high,low). The (site_id, email) unique index makes
@@ -74,13 +74,21 @@ class ProcessNewsletterSubscription implements ShouldQueue
             ->where('type', Unsubscribe::TYPE_SUBSCRIPTION)
             ->delete() > 0;
 
-        // Verify genuinely new, re-subscribed (was trashed) OR reactivated emails.
-        if ($newsletter->wasRecentlyCreated || $resubscribed || $reactivated) {
-            // Sites that require the click start (or reset to) unverified; all
-            // others are auto-verified on subscribe. Only touched here so a
-            // still-active subscriber re-submitting keeps their verified state.
-            $newsletter->forceFill(['verified' => ! $this->requiresVerification()])->save();
+        $isNewOrReactivated = $newsletter->wasRecentlyCreated || $resubscribed || $reactivated;
 
+        if ($isNewOrReactivated) {
+            // Double opt-in: a fresh/reactivated subscriber starts unverified
+            // (pending) and must click the emailed link — unless this site is in
+            // the auto-verify opt-out list. Only touched on this transition so a
+            // still-active subscriber re-submitting keeps their verified state.
+            $newsletter->forceFill(['verified' => $this->autoVerifies()])->save();
+        }
+
+        // Send the verify email for a new/reactivated subscriber, AND re-send it
+        // to an existing subscriber who is still pending (unverified) so they can
+        // finish confirming. A verified subscriber never reaches here (blocked at
+        // validation) — and the guard keeps it that way defensively.
+        if ($isNewOrReactivated || ! $newsletter->verified) {
             SendNewsletterWelcomeEmail::dispatch($this->siteId, $this->email);
         }
     }
@@ -93,12 +101,16 @@ class ProcessNewsletterSubscription implements ShouldQueue
         return $name === '' ? null : $name;
     }
 
-    /** Whether this site gates verification behind the emailed link. */
-    private function requiresVerification(): bool
+    /**
+     * Whether this site skips the verify-link step (auto-verify on subscribe).
+     * Default false — every site is double opt-in unless its slug is opted out
+     * via config('mail.auto_verify_slugs').
+     */
+    private function autoVerifies(): bool
     {
         $slug = Site::whereKey($this->siteId)->value('slug');
 
         return $slug !== null
-            && in_array($slug, (array) config('mail.verify_required_slugs', []), true);
+            && in_array($slug, (array) config('mail.auto_verify_slugs', []), true);
     }
 }

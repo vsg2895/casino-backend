@@ -170,7 +170,7 @@ class EmailScheduleTest extends TestCase
 
     // ── Per-recipient send routing ────────────────────────────────────────
 
-    public function test_batch_job_sends_each_recipient_via_newsletter_mailer(): void
+    public function test_batch_job_sends_each_recipient_via_admin_smtp_mailer(): void
     {
         Mail::fake();
         [$site] = $this->siteWithKey();
@@ -183,7 +183,8 @@ class EmailScheduleTest extends TestCase
         Mail::assertSent(PromotionEmail::class, 2);
         Mail::assertSent(
             PromotionEmail::class,
-            fn ($mail): bool => $mail->hasTo('a@example.com') && $mail->mailer === config('mail.newsletter_mailer'),
+            // Promotion campaigns are admin-operated mail → admin SMTP mailer.
+            fn ($mail): bool => $mail->hasTo('a@example.com') && $mail->mailer === config('mail.admin_mailer'),
         );
     }
 

@@ -91,7 +91,12 @@ class SendPromotionBatchJob implements ShouldQueue
             PromotionEmailHistory::sentTodayAmong($this->siteId, $recipients->pluck('email')->all()),
         );
 
-        $mailer = Mail::mailer(config('mail.newsletter_mailer'));
+        // Promotion campaigns are admin-operated mail: sent over the .env SMTP
+        // mailer (config('mail.admin_mailer')) FROM the authenticated mailbox,
+        // same as the admin "send test" buttons. (Public verification emails are
+        // the only mail that goes via SendGrid.)
+        $mailer = Mail::mailer(config('mail.admin_mailer'));
+        $fromAddress = config('mail.from.address') ?: null;
 
         // Addresses actually delivered in this batch — collected for ONE bulk
         // history insert at the end (never per-recipient). A caught failure is
@@ -107,10 +112,10 @@ class SendPromotionBatchJob implements ShouldQueue
             }
 
             try {
-                // From = the site's name (from_name) on the SendGrid-verified
-                // address, so promotion mail delivers for every site.
-                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name);
-                $mailable->fromAddressOverride = config('mail.newsletter_from_address');
+                // From = the authenticated .env mailbox with the template's
+                // from_name as display name, so the SMTP server accepts it.
+                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
+                    ->usingFromAddress($fromAddress);
                 $mailer->to($email)->send($mailable);
                 // Collected only after a successful send; written once, in bulk,
                 // by recordHistory() at the end of the batch (never per-recipient).

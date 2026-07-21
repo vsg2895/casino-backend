@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateSiteVerifyEmailRequest;
@@ -14,8 +15,6 @@ use App\Models\SiteVerifyEmail;
 use App\Services\VerifyEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Mail;
-use Throwable;
 
 /**
  * Per-site "verify your email" template management for the admin panel.
@@ -23,10 +22,12 @@ use Throwable;
  * Mirrors {@see SiteEmailTemplateController}: each site owns one editable
  * template (auto-created with defaults on first access), a live preview renders
  * edits without saving, and "send test" delivers the saved template through the
- * .env SMTP mailer (config('mail.test_mailer')).
+ * .env SMTP mailer (config('mail.admin_mailer')).
  */
 class SiteVerifyEmailController extends Controller
 {
+    use SendsAdminTestEmail;
+
     public function __construct(private readonly VerifyEmailService $emails) {}
 
     /** Return the site's template, creating defaults the first time. */
@@ -61,7 +62,7 @@ class SiteVerifyEmailController extends Controller
 
     /**
      * Send a one-off test of the saved template to an arbitrary address, over
-     * the .env SMTP mailer (config('mail.test_mailer')) using the template's own
+     * the .env SMTP mailer (config('mail.admin_mailer')) using the template's own
      * from_name + from_email.
      */
     public function sendTest(SendTestSiteEmailRequest $request, Site $site): JsonResponse
@@ -73,19 +74,8 @@ class SiteVerifyEmailController extends Controller
         // subscriber's stored name; a blank name yields no greeting.
         $newsletter->full_name = $request->validated('name');
 
-        try {
-            $mailable = $this->emails->mailForSubscriber($site, $newsletter);
-
-            Mail::mailer(config('mail.test_mailer'))
-                ->to($to)
-                ->send($mailable);
-        } catch (Throwable $e) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Could not send test email: ' . $e->getMessage(),
-            ], 502);
-        }
-
-        return response()->json(['ok' => true, 'message' => "Test email sent to {$to}."]);
+        // Identical send path to the subscription + promotion tests — only the
+        // template built into the mailable differs (that was the whole bug).
+        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to);
     }
 }

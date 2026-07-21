@@ -189,8 +189,13 @@ class PublicCatalogTest extends TestCase
 
         (new ProcessNewsletterSubscription($site->id, 'sub@example.test'))->handle();
 
-        // Stored and attached to the subscribing site.
-        $this->assertDatabaseHas('newsletters', ['site_id' => $site->id, 'email' => 'sub@example.test']);
+        // Stored, attached to the subscribing site, and — double opt-in for every
+        // site — UNVERIFIED (pending) until the emailed link is clicked.
+        $this->assertDatabaseHas('newsletters', [
+            'site_id'  => $site->id,
+            'email'    => 'sub@example.test',
+            'verified' => false,
+        ]);
 
         // Confirmation email is queued on the HIGH-priority queue.
         Queue::assertPushed(
@@ -201,7 +206,23 @@ class PublicCatalogTest extends TestCase
         );
     }
 
-    public function test_duplicate_subscription_is_idempotent_and_does_not_resend_email(): void
+    public function test_a_site_in_the_auto_verify_optout_skips_the_link(): void
+    {
+        Queue::fake();
+        [$site] = $this->siteWithKey();
+        config()->set('mail.auto_verify_slugs', [$site->slug]);
+
+        (new ProcessNewsletterSubscription($site->id, 'auto@example.test'))->handle();
+
+        // Opted out of double opt-in → verified immediately on subscribe.
+        $this->assertDatabaseHas('newsletters', [
+            'site_id'  => $site->id,
+            'email'    => 'auto@example.test',
+            'verified' => true,
+        ]);
+    }
+
+    public function test_resubmitting_a_pending_subscriber_is_row_idempotent_and_resends_the_verify_email(): void
     {
         Queue::fake();
         [$site] = $this->siteWithKey();
@@ -209,8 +230,24 @@ class PublicCatalogTest extends TestCase
         (new ProcessNewsletterSubscription($site->id, 'sub@example.test'))->handle();
         (new ProcessNewsletterSubscription($site->id, 'sub@example.test'))->handle();
 
+        // No duplicate row…
         $this->assertSame(1, Newsletter::where(['site_id' => $site->id, 'email' => 'sub@example.test'])->count());
-        Queue::assertPushed(SendNewsletterWelcomeEmail::class, 1);
+        // …but a still-pending subscriber gets the verify email re-sent each time
+        // so they can finish confirming.
+        Queue::assertPushed(SendNewsletterWelcomeEmail::class, 2);
+    }
+
+    public function test_resubmitting_a_verified_subscriber_does_not_resend(): void
+    {
+        Queue::fake();
+        [$site] = $this->siteWithKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'done@example.test', 'verified' => true]);
+
+        (new ProcessNewsletterSubscription($site->id, 'done@example.test'))->handle();
+
+        // Already verified → nothing re-sent. (The public request never gets here:
+        // validation returns 422 "already subscribed".)
+        Queue::assertNotPushed(SendNewsletterWelcomeEmail::class);
     }
 
     public function test_resubscribing_after_soft_delete_restores_the_row_and_reconfirms(): void
@@ -256,11 +293,11 @@ class PublicCatalogTest extends TestCase
         Bus::assertNotDispatched(ProcessNewsletterSubscription::class);
     }
 
-    public function test_subscribing_an_already_subscribed_email_returns_422(): void
+    public function test_subscribing_an_already_VERIFIED_email_returns_422(): void
     {
         Bus::fake();
         [$site, $key] = $this->siteWithKey();
-        Newsletter::create(['site_id' => $site->id, 'email' => 'dup@example.test']);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'dup@example.test', 'verified' => true]);
 
         $this->postJson($this->publicBase($site) . '/newsletter', ['email' => 'dup@example.test'], $this->siteHeaders($key))
             ->assertStatus(422)
@@ -268,6 +305,20 @@ class PublicCatalogTest extends TestCase
             ->assertJsonPath('errors.email.0', 'You are already subscribed.');
 
         Bus::assertNotDispatched(ProcessNewsletterSubscription::class);
+    }
+
+    public function test_resubscribing_a_PENDING_email_is_accepted_and_resends(): void
+    {
+        Bus::fake();
+        [$site, $key] = $this->siteWithKey();
+        // Pending (unverified) — never finished the double opt-in.
+        Newsletter::create(['site_id' => $site->id, 'email' => 'pending@example.test', 'verified' => false]);
+
+        // Not blocked: re-submitting lets them get the verify email again.
+        $this->postJson($this->publicBase($site) . '/newsletter', ['email' => 'pending@example.test'], $this->siteHeaders($key))
+            ->assertAccepted();
+
+        Bus::assertDispatched(ProcessNewsletterSubscription::class);
     }
 
     public function test_same_email_can_subscribe_on_a_different_site(): void

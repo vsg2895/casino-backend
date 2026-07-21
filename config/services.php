@@ -23,19 +23,11 @@ return [
     ],
 
     'sendgrid' => [
-        // One API key sends subscription emails for every site. Replace the
-        // placeholder in .env with the real key. The "from" address of every
-        // site's template must live on this verified sending domain.
+        // API key for the native SendGrid Web API transport (config('mail.public_mailer')).
+        // ONLY used for public verification emails when a visitor subscribes.
+        // Replace the placeholder in .env with the real key on the live server.
         'key' => env('SENDGRID_API_KEY'),
         'from_domain' => env('SENDGRID_FROM_DOMAIN', 'example.com'),
-    ],
-
-    'unsubscribe' => [
-        // Optional global override for the base URL of unsubscribe links. When
-        // set (e.g. http://localhost:3000) every site's unsubscribe link uses it
-        // — handy for opening/testing the flow locally. Leave empty in
-        // production so links resolve to each site's own https://{domain}.
-        'base_url' => env('UNSUBSCRIBE_BASE_URL'),
     ],
 
     'ses' => [

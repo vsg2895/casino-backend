@@ -8,6 +8,7 @@ use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
 use App\Services\VerifyEmailService;
+use App\Support\Mail\SiteSender;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -73,14 +74,15 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
             return;
         }
 
-        // Public subscriptions are delivered over SendGrid (config('mail.newsletter_mailer'));
-        // admin "send test" actions use the .env SMTP mailer instead. From =
-        // the site's name (from_name) on the SendGrid-verified address, so every
-        // site's mail delivers (e.g. "Idev Affiliation <info@winpalack.com>").
-        $mailable = $emails->mailForSubscriber($site, $newsletter);
-        $mailable->fromAddressOverride = config('mail.newsletter_from_address');
+        // Public verification emails go over the SendGrid Web API
+        // (config('mail.public_mailer')). The From DOMAIN is resolved per-site so
+        // each domain is authenticated in SendGrid independently — subscribe on
+        // idevaffiliation.com → from @idevaffiliation.com. The display name stays
+        // the template's from_name (the site name). Admin mail uses SMTP instead.
+        $mailable = $emails->mailForSubscriber($site, $newsletter)
+            ->usingFromAddress(SiteSender::verificationAddress($site));
 
-        Mail::mailer(config('mail.newsletter_mailer'))
+        Mail::mailer(config('mail.public_mailer'))
             ->to($this->email)
             ->send($mailable);
     }
