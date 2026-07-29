@@ -20,6 +20,7 @@ class SitePromotionEmailSeeder extends Seeder
         $buttons = [
             'idevaffiliation' => '#4f46e5', // indigo — light crystal theme
             'winpalack'       => '#059669', // emerald — responsible play theme
+            'roulettingo'     => '#b3382f', // crimson — warm editorial theme
         ];
 
         Site::all()->each(function (Site $site) use ($buttons): void {

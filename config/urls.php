@@ -26,5 +26,6 @@ return [
     'sites' => [
         'idevaffiliation' => env('SITE_URL_IDEVAFFILIATION', 'https://idevaffiliation.com'),
         'winpalack'       => env('SITE_URL_WINPALACK', 'https://winpalack.com'),
+        'roulettingo'     => env('SITE_URL_ROULETTINGO', 'https://roulettingo.com'),
     ],
 ];

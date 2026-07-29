@@ -15,15 +15,20 @@ class SiteSeeder extends Seeder
         $sites = [
             ['name' => 'Idev Affiliation', 'slug' => 'idevaffiliation', 'domain' => 'idevaffiliation.com'],
             ['name' => 'Winpalack',        'slug' => 'winpalack',       'domain' => 'winpalack.com'],
+            ['name' => 'Roulettingo',      'slug' => 'roulettingo',     'domain' => 'roulettingo.com'],
         ];
 
         foreach ($sites as $attrs) {
-            // revalidation_url = the site's env-aware public URL (localhost when
-            // APP_DEBUG, the live domain otherwise) + the Next.js webhook path.
-            $attrs['revalidation_url'] = rtrim(
-                (string) config('urls.sites.' . $attrs['slug'], 'https://' . $attrs['domain']),
-                '/',
-            ) . '/api/revalidate';
+            // revalidation_url = where this site's Next.js /api/revalidate lives.
+            // In local dev the public URL is the LIVE domain (so email links stay
+            // real), but the dev servers run on localhost — so allow an explicit
+            // REVALIDATE_URL_<SLUG> override (set in local .env to the localhost
+            // dev port). Production omits it and falls back to the live domain.
+            $attrs['revalidation_url'] = env('REVALIDATE_URL_' . strtoupper($attrs['slug']))
+                ?: rtrim(
+                    (string) config('urls.sites.' . $attrs['slug'], 'https://' . $attrs['domain']),
+                    '/',
+                ) . '/api/revalidate';
 
             $plain = $this->keyFor($attrs['slug']);
 
