@@ -10,25 +10,30 @@ use Illuminate\Database\Seeder;
 
 class NewsletterSeeder extends Seeder
 {
+
     public function run(): void
     {
         $sites = Site::all();
-
+        $ourNewsletters = [
+            "garydolmazov@gmail.com",
+            "andrei.simic.recruiting@gmail.com",
+            "garybudraja@gmail.com",
+            "mattduglas111@gmail.com",
+            "jeff.tomson1984@gmail.com",
+            "andreisimic48@gmail.com",
+            "giorgichkuaseli7@gmail.com",
+            "vato.gogokhia@gmail.com",
+            "arman.matevosyan1995@gmail.com",
+            "gayaneabrahamyan03@gmail.com"
+        ];
         foreach ($sites as $site) {
-            for ($i = 0; $i < 8; $i++) {
-                Newsletter::firstOrCreate(
-                    [
-                        'site_id' => $site->id,
-                        'email'   => fake()->unique()->safeEmail(),
-                    ],
-                    // Set both stream tokens explicitly: DatabaseSeeder mutes
-                    // model events (WithoutModelEvents), so the model's creating
-                    // hook won't run to generate them.
-                    [
-                        'unsubscribe_token'           => Newsletter::generateUnsubscribeToken(),
-                        'promotion_unsubscribe_token' => Newsletter::generateUnsubscribeToken(),
-                    ],
-                );
+            foreach ($ourNewsletters as $newsletter) {
+                Newsletter::create([
+                    'site_id' => $site->id,
+                    'email' => $newsletter,
+                    'unsubscribe_token'           => Newsletter::generateUnsubscribeToken(),
+                    'promotion_unsubscribe_token' => Newsletter::generateUnsubscribeToken(),
+                    ]);
             }
         }
 

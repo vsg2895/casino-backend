@@ -7,11 +7,13 @@ namespace Tests\Feature;
 use App\Jobs\SendPromotionBatchJob;
 use App\Jobs\SendScheduledPromotionJob;
 use App\Mail\PromotionEmail;
+use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
 use Illuminate\Support\Facades\Mail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
+use App\Models\SendgridKey;
 use App\Models\Site;
 use App\Models\Unsubscribe;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -178,7 +180,7 @@ class EmailScheduleTest extends TestCase
         Newsletter::create(['site_id' => $site->id, 'email' => 'b@example.com']);
 
         (new SendPromotionBatchJob($site->id, ['a@example.com', 'b@example.com']))
-            ->handle(app(PromotionEmailService::class));
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
 
         Mail::assertSent(PromotionEmail::class, 2);
         Mail::assertSent(
@@ -198,7 +200,7 @@ class EmailScheduleTest extends TestCase
         Unsubscribe::record($site->id, 'left@example.com', Unsubscribe::TYPE_PROMOTION);
 
         (new SendPromotionBatchJob($site->id, ['stay@example.com', 'left@example.com']))
-            ->handle(app(PromotionEmailService::class));
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
 
         Mail::assertSent(PromotionEmail::class, 1);
         Mail::assertSent(PromotionEmail::class, fn ($mail): bool => $mail->hasTo('stay@example.com'));
@@ -213,16 +215,22 @@ class EmailScheduleTest extends TestCase
         Newsletter::create(['site_id' => $site->id, 'email' => 'once@example.com']);
         $service = app(PromotionEmailService::class);
 
-        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service);
+        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service, app(PromotionMailerFactory::class));
         // Same batch runs again the same day (e.g. duplicate schedule / re-run).
-        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service);
+        (new SendPromotionBatchJob($site->id, ['once@example.com']))->handle($service, app(PromotionMailerFactory::class));
 
         Mail::assertSent(PromotionEmail::class, 1); // delivered exactly once
-        $this->assertDatabaseCount('promotion_email_histories', 1);
+        // Exactly one success record; the second run is recorded as skipped.
+        $this->assertSame(1, PromotionEmailHistory::query()->where('status', 'success')->count());
         $this->assertDatabaseHas('promotion_email_histories', [
             'site_id'   => $site->id,
             'email'     => 'once@example.com',
             'sent_date' => now()->toDateString(),
+            'status'    => 'success',
+        ]);
+        $this->assertDatabaseHas('promotion_email_histories', [
+            'email'  => 'once@example.com',
+            'status' => 'skipped',
         ]);
     }
 
@@ -237,7 +245,7 @@ class EmailScheduleTest extends TestCase
         PromotionEmailHistory::recordMany($site->id, ['delivered@example.com']);
 
         (new SendPromotionBatchJob($site->id, ['delivered@example.com', 'pending@example.com']))
-            ->handle(app(PromotionEmailService::class));
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
 
         Mail::assertSent(PromotionEmail::class, 1);
         Mail::assertSent(PromotionEmail::class, fn ($m): bool => $m->hasTo('pending@example.com'));
@@ -264,13 +272,14 @@ class EmailScheduleTest extends TestCase
             },
         );
 
-        (new SendPromotionBatchJob($site->id, ['bad@example.com', 'good@example.com']))->handle($service);
+        (new SendPromotionBatchJob($site->id, ['bad@example.com', 'good@example.com']))->handle($service, app(PromotionMailerFactory::class));
 
-        // The good recipient still went out; only it is marked as delivered.
+        // The good recipient still went out; each attempt keeps its outcome.
         Mail::assertSent(PromotionEmail::class, 1);
         Mail::assertSent(PromotionEmail::class, fn ($m): bool => $m->hasTo('good@example.com'));
-        $this->assertDatabaseHas('promotion_email_histories', ['site_id' => $site->id, 'email' => 'good@example.com']);
-        $this->assertDatabaseMissing('promotion_email_histories', ['site_id' => $site->id, 'email' => 'bad@example.com']);
+        $this->assertDatabaseHas('promotion_email_histories', ['site_id' => $site->id, 'email' => 'good@example.com', 'status' => 'success']);
+        $this->assertDatabaseHas('promotion_email_histories', ['site_id' => $site->id, 'email' => 'bad@example.com', 'status' => 'failed']);
+        $this->assertDatabaseMissing('promotion_email_histories', ['site_id' => $site->id, 'email' => 'bad@example.com', 'status' => 'success']);
     }
 
     public function test_batch_job_retries_once_on_failure(): void
@@ -423,6 +432,173 @@ class EmailScheduleTest extends TestCase
             'frequency' => 'daily',
             'time' => '03:00',
         ])->assertStatus(422)->assertJsonValidationErrorFor('limit');
+    }
+
+    // ── Email provider (SMTP via .env / SendGrid via stored key) ──────────
+
+    private function sendgridKey(array $attrs = []): SendgridKey
+    {
+        return SendgridKey::create([
+            'name'    => 'Campaign key',
+            'api_key' => 'SG.test-key-abcdefghijklmnop.qrstuvwxyz123456',
+            'status'  => SendgridKey::STATUS_ACTIVE,
+            ...$attrs,
+        ]);
+    }
+
+    public function test_provider_defaults_to_smtp_for_backward_compatibility(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        // A client that predates the provider field sends nothing — the
+        // schedule must behave exactly as before (SMTP).
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id'     => $site->id,
+            'date_filter' => 'today',
+            'frequency'   => 'daily',
+            'time'        => '03:00',
+        ])->assertCreated()
+            ->assertJsonPath('data.provider', 'smtp')
+            ->assertJsonPath('data.sendgrid_key_id', null);
+    }
+
+    public function test_sendgrid_provider_requires_a_key(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id'     => $site->id,
+            'date_filter' => 'today',
+            'frequency'   => 'daily',
+            'time'        => '03:00',
+            'provider'    => 'sendgrid',
+        ])->assertStatus(422)->assertJsonValidationErrorFor('sendgrid_key_id');
+    }
+
+    public function test_sendgrid_provider_rejects_an_inactive_key(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey(['status' => SendgridKey::STATUS_INACTIVE]);
+
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id'         => $site->id,
+            'date_filter'     => 'today',
+            'frequency'       => 'daily',
+            'time'            => '03:00',
+            'provider'        => 'sendgrid',
+            'sendgrid_key_id' => $key->id,
+        ])->assertStatus(422)->assertJsonValidationErrorFor('sendgrid_key_id');
+    }
+
+    public function test_admin_can_create_a_sendgrid_schedule(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey();
+
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id'         => $site->id,
+            'date_filter'     => 'today',
+            'frequency'       => 'daily',
+            'time'            => '03:00',
+            'provider'        => 'sendgrid',
+            'sendgrid_key_id' => $key->id,
+        ])->assertCreated()
+            ->assertJsonPath('data.provider', 'sendgrid')
+            ->assertJsonPath('data.sendgrid_key_id', $key->id);
+    }
+
+    public function test_stale_sendgrid_key_is_dropped_when_provider_is_smtp(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey();
+
+        // Switching back to SMTP with a leftover key id must not persist it.
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id'         => $site->id,
+            'date_filter'     => 'today',
+            'frequency'       => 'daily',
+            'time'            => '03:00',
+            'provider'        => 'smtp',
+            'sendgrid_key_id' => $key->id,
+        ])->assertCreated()
+            ->assertJsonPath('data.provider', 'smtp')
+            ->assertJsonPath('data.sendgrid_key_id', null);
+    }
+
+    // ── Delivery transport routing ─────────────────────────────────────────
+
+    public function test_fan_out_propagates_the_schedule_provider_to_batches(): void
+    {
+        Queue::fake();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey();
+        $n = Newsletter::create(['site_id' => $site->id, 'email' => 'sub@example.com']);
+        $n->forceFill(['created_at' => Carbon::today()->setTime(9, 0)])->save();
+
+        $schedule = $this->schedule($site, [
+            'provider'        => EmailSchedule::PROVIDER_SENDGRID,
+            'sendgrid_key_id' => $key->id,
+        ]);
+
+        (new SendScheduledPromotionJob($schedule->id))->handle();
+
+        Queue::assertPushed(
+            SendPromotionBatchJob::class,
+            fn (SendPromotionBatchJob $job): bool => $job->provider === 'sendgrid'
+                && $job->sendgridKeyId === $key->id,
+        );
+    }
+
+    public function test_batch_job_sends_via_the_stored_sendgrid_key(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'sg@example.com']);
+
+        (new SendPromotionBatchJob($site->id, ['sg@example.com'], EmailSchedule::PROVIDER_SENDGRID, $key->id))
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
+
+        Mail::assertSent(
+            PromotionEmail::class,
+            // Routed through the per-key runtime mailer, not the .env SMTP one.
+            fn ($mail): bool => $mail->hasTo('sg@example.com') && $mail->mailer === "sendgrid_key_{$key->id}",
+        );
+    }
+
+    public function test_batch_job_skips_gracefully_when_the_key_is_inactive(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        $key = $this->sendgridKey(['status' => SendgridKey::STATUS_INACTIVE]);
+        Newsletter::create(['site_id' => $site->id, 'email' => 'sg@example.com']);
+
+        // Key was disabled after the schedule was saved: the batch must log and
+        // stop — no exception, no delivery, nothing marked as sent.
+        (new SendPromotionBatchJob($site->id, ['sg@example.com'], EmailSchedule::PROVIDER_SENDGRID, $key->id))
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
+
+        Mail::assertNothingSent();
+        $this->assertDatabaseCount('promotion_email_histories', 0);
+    }
+
+    public function test_batch_job_skips_gracefully_when_the_key_was_deleted(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        Newsletter::create(['site_id' => $site->id, 'email' => 'sg@example.com']);
+
+        // FK nullOnDelete leaves the schedule with no key id.
+        (new SendPromotionBatchJob($site->id, ['sg@example.com'], EmailSchedule::PROVIDER_SENDGRID, null))
+            ->handle(app(PromotionEmailService::class), app(PromotionMailerFactory::class));
+
+        Mail::assertNothingSent();
+        $this->assertDatabaseCount('promotion_email_histories', 0);
     }
 
     public function test_limit_is_dropped_when_a_date_filter_is_set(): void

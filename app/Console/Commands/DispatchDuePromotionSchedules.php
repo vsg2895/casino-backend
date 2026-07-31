@@ -34,7 +34,6 @@ class DispatchDuePromotionSchedules extends Command
                 if (! $schedule->isDue($now) || $schedule->ranAt($now)) {
                     return;
                 }
-
                 SendScheduledPromotionJob::dispatch($schedule->id);
                 $schedule->forceFill(['last_run_at' => $now])->save();
                 $dispatched++;

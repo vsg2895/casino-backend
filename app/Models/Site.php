@@ -7,14 +7,11 @@ namespace App\Models;
 use Database\Factories\SiteFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\{BelongsToMany, HasOne, HasMany};
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Spatie\Sluggable\HasSlug;
-use Spatie\Sluggable\SlugOptions;
+use Spatie\Sluggable\{HasSlug, SlugOptions};
 
 class Site extends Model
 {
@@ -108,7 +105,7 @@ class Site extends Model
      * The site's subscription email template, creating it with sensible
      * defaults on first access so every site always has one.
      */
-    public function emailTemplateOrDefault(): SiteEmailTemplate
+    public function emailTemplateOrDefault(): Model
     {
         return $this->emailTemplate()->firstOrCreate(
             [],
@@ -125,7 +122,7 @@ class Site extends Model
      * The site's promotion email template, creating it with sensible defaults
      * on first access so every site always has one.
      */
-    public function promotionEmailOrDefault(): SitePromotionEmail
+    public function promotionEmailOrDefault(): Model
     {
         return $this->promotionEmail()->firstOrCreate(
             [],
@@ -142,7 +139,7 @@ class Site extends Model
      * The site's "verify your email" template, creating it with sensible
      * defaults on first access so every site always has one.
      */
-    public function verifyEmailOrDefault(): SiteVerifyEmail
+    public function verifyEmailOrDefault(): Model
     {
         return $this->verifyEmail()->firstOrCreate(
             [],

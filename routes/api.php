@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
+use App\Http\Controllers\Api\Admin\EmailTemplateTypeController;
+use App\Http\Controllers\Api\Admin\SendgridKeyController;
 use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
 use App\Http\Controllers\Api\Admin\SiteVerifyEmailController;
@@ -100,6 +102,16 @@ Route::prefix('v1')->group(function () {
         Route::delete('newsletters/{newsletter}/force', [AdminNewsletterController::class, 'forceDestroy'])->withTrashed();
 
         // Scheduled promotion campaigns
+        // SendGrid API keys — alternative transport for scheduled promotions.
+        Route::apiResource('sendgrid-keys', SendgridKeyController::class)
+            ->except(['show']);
+        Route::patch('sendgrid-keys/{sendgrid_key}/toggle', [SendgridKeyController::class, 'toggle']);
+        // Verify a stored key actually authenticates + delivers, by sending a
+        // real site template through it.
+        Route::post('sendgrid-keys/{sendgrid_key}/test', [SendgridKeyController::class, 'test']);
+        // Templates available to that test (drives the admin dropdown).
+        Route::get('email-template-types', [EmailTemplateTypeController::class, 'index']);
+
         Route::apiResource('schedules', EmailScheduleController::class)
             ->only(['index', 'store', 'update', 'destroy']);
         Route::post('schedules/{schedule}/run', [EmailScheduleController::class, 'run']);

@@ -21,27 +21,37 @@
             <td align="center" style="padding:0;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; background-color:#000000; border-collapse:collapse;">
 
-                    {{-- Hero image (optional), links to the offer --}}
-                    @if (!empty($t['hero_image_url']))
+                    {{-- Hero image — removed entirely when the admin clears it.
+                         Linked to the offer only when an offer URL is set. --}}
+                    @if (! empty($t['hero_image_url']))
                         <tr>
                             <td style="padding:0; background-color:#000000; text-align:center;">
-                                <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener">
+                                @if (! empty($t['hero_url']))
+                                    <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener">
+                                        <img src="{{ $t['hero_image_url'] }}" alt="{{ $t['heading'] }}" width="600"
+                                             style="display:block; width:100%; max-width:600px; height:auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;">
+                                    </a>
+                                @else
                                     <img src="{{ $t['hero_image_url'] }}" alt="{{ $t['heading'] }}" width="600"
                                          style="display:block; width:100%; max-width:600px; height:auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;">
-                                </a>
+                                @endif
                             </td>
                         </tr>
                     @endif
 
-                    {{-- Top CTA button --}}
-                    <tr>
-                        <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
-                            <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
-                               style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
-                                <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['top_button_text'] }}</span>
-                            </a>
-                        </td>
-                    </tr>
+                    {{-- Top CTA button — omitted (with its spacing) when the
+                         admin clears the label. A button with no link is
+                         pointless, so it also needs the offer URL. --}}
+                    @if (! empty($t['top_button_text']) && ! empty($t['hero_url']))
+                        <tr>
+                            <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
+                                <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
+                                   style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
+                                    <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['top_button_text'] }}</span>
+                                </a>
+                            </td>
+                        </tr>
+                    @endif
 
                     {{-- Body copy --}}
                     <tr>
@@ -66,15 +76,17 @@
                         </td>
                     </tr>
 
-                    {{-- Bottom CTA button --}}
-                    <tr>
-                        <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
-                            <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
-                               style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
-                                <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['cta_button_text'] }}</span>
-                            </a>
-                        </td>
-                    </tr>
+                    {{-- Bottom CTA button — same removal rule as the top one. --}}
+                    @if (! empty($t['cta_button_text']) && ! empty($t['hero_url']))
+                        <tr>
+                            <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
+                                <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
+                                   style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
+                                    <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['cta_button_text'] }}</span>
+                                </a>
+                            </td>
+                        </tr>
+                    @endif
 
                     {{-- Disclaimer --}}
                     <tr>

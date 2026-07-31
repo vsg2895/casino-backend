@@ -56,6 +56,12 @@ class SendScheduledPromotionJob implements ShouldQueue
 
         $siteId = $schedule->site_id;
 
+        // Delivery transport is per-schedule. Only the provider name + the key ID
+        // travel into the batch jobs — never the decrypted key (which is resolved
+        // and re-validated inside each batch job at send time).
+        $provider = $schedule->provider ?? EmailSchedule::PROVIDER_SMTP;
+        $sendgridKeyId = $schedule->sendgrid_key_id;
+
         $recipients = Newsletter::query()
             ->where('site_id', $siteId)
             ->whereNotExists(function (Builder $query) use ($siteId): void {
@@ -72,20 +78,28 @@ class SendScheduledPromotionJob implements ShouldQueue
                 ->limit((int) $schedule->limit)
                 ->pluck('email')
                 ->chunk(self::BATCH_SIZE)
-                ->each(fn ($emails) => SendPromotionBatchJob::dispatch($siteId, $emails->values()->all()));
+                ->each(fn ($emails) => SendPromotionBatchJob::dispatch(
+                    $siteId,
+                    $emails->values()->all(),
+                    $provider,
+                    $sendgridKeyId,
+                ));
 
             return;
         }
-
         // Sign-up date window: chunk the id cursor so a huge list never loads at
         // once; each chunk becomes one batch job.
         [$start, $end] = $schedule->dateRange(now());
-
         $recipients
             ->whereBetween('created_at', [$start, $end])
             ->select(['id', 'email'])
-            ->chunkById(self::BATCH_SIZE, function ($rows) use ($siteId): void {
-                SendPromotionBatchJob::dispatch($siteId, $rows->pluck('email')->all());
+            ->chunkById(self::BATCH_SIZE, function ($rows) use ($siteId, $provider, $sendgridKeyId): void {
+                SendPromotionBatchJob::dispatch(
+                    $siteId,
+                    $rows->pluck('email')->all(),
+                    $provider,
+                    $sendgridKeyId,
+                );
             });
     }
 }

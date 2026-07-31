@@ -40,6 +40,13 @@ class EmailSchedule extends Model
     /** @var list<string> */
     public const array FREQUENCIES = [self::FREQ_DAILY, self::FREQ_WEEKLY, self::FREQ_MONTHLY];
 
+    // Delivery transport.
+    public const string PROVIDER_SMTP = 'smtp';         // .env SMTP (default)
+    public const string PROVIDER_SENDGRID = 'sendgrid'; // stored SendGrid key
+
+    /** @var list<string> */
+    public const array PROVIDERS = [self::PROVIDER_SMTP, self::PROVIDER_SENDGRID];
+
     protected $fillable = [
         'site_id',
         'name',
@@ -50,6 +57,8 @@ class EmailSchedule extends Model
         'time',
         'day_of_week',
         'day_of_month',
+        'provider',
+        'sendgrid_key_id',
         'active',
     ];
 
@@ -58,16 +67,29 @@ class EmailSchedule extends Model
         return [
             'specific_date' => 'date',
             'limit'         => 'integer',
-            'day_of_week'   => 'integer',
-            'day_of_month'  => 'integer',
-            'active'        => 'boolean',
-            'last_run_at'   => 'datetime',
+            'day_of_week'     => 'integer',
+            'day_of_month'    => 'integer',
+            'sendgrid_key_id' => 'integer',
+            'active'          => 'boolean',
+            'last_run_at'     => 'datetime',
         ];
     }
 
     public function site(): BelongsTo
     {
         return $this->belongsTo(Site::class);
+    }
+
+    /** The stored SendGrid key this schedule sends through (provider=sendgrid). */
+    public function sendgridKey(): BelongsTo
+    {
+        return $this->belongsTo(SendgridKey::class);
+    }
+
+    /** Whether this schedule delivers via a stored SendGrid key rather than SMTP. */
+    public function usesSendgrid(): bool
+    {
+        return $this->provider === self::PROVIDER_SENDGRID;
     }
 
     /**

@@ -27,6 +27,10 @@
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
+        <!-- Test-run warnings/errors must never reach storage/logs/laravel.log:
+             that file is for real local activity, and test fixtures in it look
+             like live sends. -->
+        <env name="LOG_CHANNEL" value="null"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>

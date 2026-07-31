@@ -30,6 +30,10 @@ class PromotionEmailHistoryController extends Controller
             ->when($request->date('from'), fn ($q, $from) => $q->where('sent_date', '>=', $from->toDateString()))
             ->when($request->date('to'), fn ($q, $to) => $q->where('sent_date', '<=', $to->toDateString()))
             ->when(
+                $this->statusFilter($request),
+                fn ($q, $status) => $q->where('status', $status),
+            )
+            ->when(
                 $this->searchTerm($request),
                 fn ($q, $term) => $q->where('email', 'like', $term . '%'),
             )
@@ -37,6 +41,14 @@ class PromotionEmailHistoryController extends Controller
             ->orderByDesc('id');
 
         return PromotionEmailHistoryResource::collection($query->paginate(50)->withQueryString());
+    }
+
+    /** Optional outcome filter; anything but a known status is ignored. */
+    private function statusFilter(Request $request): ?string
+    {
+        $status = (string) $request->query('status');
+
+        return in_array($status, PromotionEmailHistory::STATUSES, true) ? $status : null;
     }
 
     /** Sanitised prefix search term (only the leading part is matched). */

@@ -46,7 +46,27 @@ class StoreEmailScheduleRequest extends FormRequest
                 'integer', 'between:1,31',
             ],
 
+            // Delivery transport. SMTP (default) uses the .env credentials as
+            // before; SendGrid requires an ACTIVE stored key — an inactive or
+            // missing key fails validation so a broken schedule can't be saved.
+            'provider'        => ['required', Rule::in(EmailSchedule::PROVIDERS)],
+            'sendgrid_key_id' => [
+                'nullable',
+                'required_if:provider,' . EmailSchedule::PROVIDER_SENDGRID,
+                'integer',
+                Rule::exists('sendgrid_keys', 'id')->where('status', 'active'),
+            ],
+
             'active'        => ['sometimes', 'boolean'],
+        ];
+    }
+
+    /** @return array<string, string> */
+    public function messages(): array
+    {
+        return [
+            'sendgrid_key_id.required_if' => 'Select a SendGrid key to send through.',
+            'sendgrid_key_id.exists'      => 'The selected SendGrid key is not available (inactive or removed).',
         ];
     }
 
@@ -58,12 +78,20 @@ class StoreEmailScheduleRequest extends FormRequest
         // Null out fields irrelevant to the chosen audience / cadence so stale
         // values from the UI don't linger. date_filter and limit are mutually
         // exclusive: keep the limit only when there is no date filter.
+        // Default the provider to SMTP for back-compat with any client that
+        // doesn't send it, and drop a stale sendgrid_key_id when on SMTP.
+        $provider = in_array($this->provider, EmailSchedule::PROVIDERS, true)
+            ? $this->provider
+            : EmailSchedule::PROVIDER_SMTP;
+
         $this->merge([
-            'date_filter'   => $dateFilter,
-            'specific_date' => $dateFilter === EmailSchedule::FILTER_SPECIFIC ? $this->specific_date : null,
-            'limit'         => $dateFilter === null ? $this->limit : null,
-            'day_of_week'   => $this->frequency === EmailSchedule::FREQ_WEEKLY ? $this->day_of_week : null,
-            'day_of_month'  => $this->frequency === EmailSchedule::FREQ_MONTHLY ? $this->day_of_month : null,
+            'date_filter'     => $dateFilter,
+            'specific_date'   => $dateFilter === EmailSchedule::FILTER_SPECIFIC ? $this->specific_date : null,
+            'limit'           => $dateFilter === null ? $this->limit : null,
+            'day_of_week'     => $this->frequency === EmailSchedule::FREQ_WEEKLY ? $this->day_of_week : null,
+            'day_of_month'    => $this->frequency === EmailSchedule::FREQ_MONTHLY ? $this->day_of_month : null,
+            'provider'        => $provider,
+            'sendgrid_key_id' => $provider === EmailSchedule::PROVIDER_SENDGRID ? $this->sendgrid_key_id : null,
         ]);
     }
 }

@@ -99,6 +99,101 @@ class PromotionEmailTest extends TestCase
         )->assertOk()->assertJsonPath('data.hero_image_url', null);
     }
 
+    // ── Removable elements: images + buttons ──────────────────────────────
+
+    public function test_admin_can_remove_the_image_and_both_buttons(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->putJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email",
+            $this->validPayload([
+                'hero_image_url'  => null,
+                'top_button_text' => null,
+                'cta_button_text' => null,
+                'hero_url'        => null,
+            ]),
+        )->assertOk()
+            ->assertJsonPath('data.hero_image_url', null)
+            ->assertJsonPath('data.top_button_text', null)
+            ->assertJsonPath('data.cta_button_text', null);
+
+        $this->assertDatabaseHas('site_promotion_emails', [
+            'site_id'         => $site->id,
+            'hero_image_url'  => null,
+            'top_button_text' => null,
+            'cta_button_text' => null,
+        ]);
+    }
+
+    public function test_removed_elements_disappear_from_the_rendered_email(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        // Baseline: everything present renders.
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
+            $this->validPayload(['top_button_text' => 'TOP CTA', 'cta_button_text' => 'BOTTOM CTA']),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'TOP CTA')
+            && str_contains($html, 'BOTTOM CTA')
+            && str_contains($html, 'cdn.example.com/hero.jpg'));
+
+        // Cleared: the elements are gone from the markup entirely — no empty
+        // button shell, no broken <img>.
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
+            $this->validPayload([
+                'hero_image_url'  => null,
+                'top_button_text' => null,
+                'cta_button_text' => null,
+            ]),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => ! str_contains($html, 'TOP CTA')
+            && ! str_contains($html, 'BOTTOM CTA')
+            && ! str_contains($html, 'cdn.example.com/hero.jpg')
+            && ! str_contains($html, '<img'));
+    }
+
+    public function test_one_button_can_be_removed_while_the_other_stays(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
+            $this->validPayload(['top_button_text' => null, 'cta_button_text' => 'STILL HERE']),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'STILL HERE'));
+    }
+
+    public function test_the_offer_link_is_required_while_any_element_uses_it(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        // A button with nothing to link to is not a valid state.
+        $this->putJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email",
+            $this->validPayload([
+                'hero_url'        => null,
+                'hero_image_url'  => null,
+                'cta_button_text' => null,
+                'top_button_text' => 'Click me',
+            ]),
+        )->assertStatus(422)->assertJsonValidationErrorFor('hero_url');
+
+        // …but once every linked element is removed, it may go too.
+        $this->putJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email",
+            $this->validPayload([
+                'hero_url'        => null,
+                'hero_image_url'  => null,
+                'top_button_text' => null,
+                'cta_button_text' => null,
+            ]),
+        )->assertOk();
+    }
+
     public function test_preview_renders_html_without_persisting(): void
     {
         $this->actingAsAdmin();
