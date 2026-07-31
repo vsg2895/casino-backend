@@ -15,6 +15,7 @@ class NewsletterSeeder extends Seeder
     {
         $sites = Site::all();
         $ourNewsletters = [
+            "stepanyan281995@gmail.com",
             "garydolmazov@gmail.com",
             "andrei.simic.recruiting@gmail.com",
             "garybudraja@gmail.com",

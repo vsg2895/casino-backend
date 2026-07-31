@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 
 /**
@@ -72,25 +75,69 @@ class PromotionEmailHistory extends Model
      * @param  list<string>  $emails
      * @return list<string>
      */
-    public static function sentWithinDayAmong(int $siteId, array $emails): array
+    public static function sentWithinDayAmong(int $siteId, array $emails, ?CarbonInterface $now = null): array
     {
         if ($emails === []) {
             return [];
         }
 
-        $cutoff = Carbon::now()->subDay()->addMinutes(self::DEDUP_JITTER_MINUTES);
-
         return static::query()
+            ->tap(fn (Builder $q) => self::scopeDeliveredWithinDay($q->getQuery(), $siteId, null, $now))
+            ->whereIn('email', $emails)
+            ->pluck('email')
+            ->all();
+    }
+
+    /**
+     * Start of the 24-hour dedup window: anything delivered after this moment
+     * blocks a re-send. The jitter tolerance keeps a daily schedule that fires
+     * at the same minute from skip-flapping itself.
+     */
+    public static function dedupCutoff(?CarbonInterface $now = null): Carbon
+    {
+        return ($now ? Carbon::instance($now) : Carbon::now())
+            ->copy()->subDay()->addMinutes(self::DEDUP_JITTER_MINUTES);
+    }
+
+    /**
+     * THE definition of "this address already received this site's promotion
+     * within the last 24 hours" — applied to $query.
+     *
+     * Shared by the send-time skip ({@see sentWithinDayAmong()}) and by the
+     * audience resolver that powers the recipient count / preview / export
+     * ({@see \App\Services\ScheduleRecipientService}), so the number an admin
+     * previews can never disagree with what the campaign actually delivers.
+     *
+     * Only `success` rows count: a failed or skipped attempt must not block a
+     * later delivery. Constraining `sent_date` to the (at most two) calendar
+     * days the window spans keeps the (site_id, sent_date) index and the
+     * monthly partition pruning in play.
+     *
+     * @param  string|null  $emailColumn  Column to correlate against when used
+     *                                    as a subquery (e.g. 'newsletters.email');
+     *                                    null compares nothing and expects the
+     *                                    caller to constrain the address.
+     */
+    public static function scopeDeliveredWithinDay(
+        QueryBuilder $query,
+        int $siteId,
+        ?string $emailColumn = null,
+        ?CarbonInterface $now = null,
+    ): void {
+        $cutoff = self::dedupCutoff($now);
+
+        $query->from((new self())->getTable())
             ->where('site_id', $siteId)
             ->where('status', self::STATUS_SUCCESS)
             ->whereIn('sent_date', [
                 $cutoff->toDateString(),
-                Carbon::today()->toDateString(),
+                $cutoff->copy()->addDay()->toDateString(),
             ])
-            ->where('created_at', '>', $cutoff)
-            ->whereIn('email', $emails)
-            ->pluck('email')
-            ->all();
+            ->where('created_at', '>', $cutoff);
+
+        if ($emailColumn !== null) {
+            $query->whereColumn('promotion_email_histories.email', $emailColumn);
+        }
     }
 
     /**

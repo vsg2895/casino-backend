@@ -8,6 +8,7 @@ use App\Jobs\SendPromotionBatchJob;
 use App\Jobs\SendScheduledPromotionJob;
 use App\Mail\PromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Services\ScheduleRecipientService;
 use App\Services\PromotionEmailService;
 use Illuminate\Support\Facades\Mail;
 use App\Models\EmailSchedule;
@@ -147,7 +148,7 @@ class EmailScheduleTest extends TestCase
 
         $schedule = $this->schedule($site, ['date_filter' => 'today']);
 
-        (new SendScheduledPromotionJob($schedule->id))->handle();
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
         // One batch job holding only the in-window, non-opted-out subscriber.
         Queue::assertPushed(SendPromotionBatchJob::class, 1);
@@ -165,7 +166,7 @@ class EmailScheduleTest extends TestCase
         $n = Newsletter::create(['site_id' => $site->id, 'email' => 'x@example.com']);
         $n->forceFill(['created_at' => Carbon::today()->setTime(9, 0)])->save();
 
-        (new SendScheduledPromotionJob($this->schedule($site)->id))->handle();
+        (new SendScheduledPromotionJob($this->schedule($site)->id))->handle(app(ScheduleRecipientService::class));
 
         Queue::assertNothingPushed();
     }
@@ -287,6 +288,269 @@ class EmailScheduleTest extends TestCase
         $this->assertSame(2, (new SendPromotionBatchJob(1, ['a@example.com']))->tries);
     }
 
+    // ── Recipient preview / count / export ────────────────────────────────
+
+    /** Create $count subscribers for $site, signed up at $when. */
+    private function subscribers(Site $site, int $count, ?Carbon $when = null, string $prefix = 'sub'): void
+    {
+        $when ??= Carbon::today()->setTime(9, 0);
+
+        for ($i = 0; $i < $count; $i++) {
+            $n = Newsletter::create(['site_id' => $site->id, 'email' => "{$prefix}{$i}@example.com"]);
+            $n->forceFill(['created_at' => $when])->save();
+        }
+    }
+
+    public function test_preview_count_matches_what_the_send_would_dispatch(): void
+    {
+        Queue::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->subscribers($site, 7);
+        $this->subscribers($site, 3, Carbon::today()->subDays(5), 'old');   // outside the window
+        Unsubscribe::record($site->id, 'sub0@example.com', Unsubscribe::TYPE_PROMOTION); // opted out
+
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+
+        // What the admin previews…
+        $previewed = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()
+            ->json('data.count');
+
+        // …must equal what the campaign actually fans out.
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
+        $dispatched = collect(Queue::pushed(SendPromotionBatchJob::class))
+            ->sum(fn (SendPromotionBatchJob $j): int => count($j->emails));
+
+        $this->assertSame(6, $previewed); // 7 in window − 1 opt-out
+        $this->assertSame($previewed, $dispatched);
+    }
+
+    public function test_preview_count_respects_the_newest_n_limit(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 10);
+
+        $schedule = EmailSchedule::create([
+            'site_id' => $site->id, 'date_filter' => null, 'limit' => 4,
+            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
+        ]);
+
+        // The cap must be applied — not the full audience size.
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()
+            ->assertJsonPath('data.count', 4)
+            ->assertJsonCount(4, 'data.sample');
+    }
+
+    public function test_preview_returns_a_bounded_live_sample(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 30);
+        $schedule = $this->schedule($site);
+
+        $response = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients?sample=5")
+            ->assertOk()
+            ->assertJsonPath('data.count', 30)
+            ->assertJsonCount(5, 'data.sample')
+            ->assertJsonStructure(['data' => ['count', 'sample' => [['email', 'created_at']], 'generated_at']]);
+
+        // Live data: a new sign-up is reflected on the next call, uncached.
+        $this->subscribers($site, 1, null, 'fresh');
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 31);
+
+        $this->assertNotEmpty($response->json('data.sample.0.email'));
+    }
+
+    public function test_export_contains_exactly_the_recipients_and_only_two_columns(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 4);
+        $this->subscribers($site, 2, Carbon::today()->subDays(9), 'old');
+        Unsubscribe::record($site->id, 'sub1@example.com', Unsubscribe::TYPE_PROMOTION);
+
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+
+        $csv = $this->get("/api/v1/admin/schedules/{$schedule->id}/recipients/export")
+            ->assertOk()
+            ->assertHeader('Content-Type', 'text/csv; charset=UTF-8')
+            ->streamedContent();
+
+        $rows = array_values(array_filter(explode("\n", trim($csv))));
+        $header = str_getcsv(ltrim($rows[0], "\xEF\xBB\xBF"));
+
+        // Only the two requested columns.
+        $this->assertSame(['email', 'created_at'], $header);
+        // One line per recipient — opt-out and out-of-window rows absent.
+        $this->assertCount(3 + 1, $rows);
+        $this->assertStringContainsString('sub0@example.com', $csv);
+        $this->assertStringNotContainsString('sub1@example.com', $csv); // opted out
+        $this->assertStringNotContainsString('old0@example.com', $csv); // outside window
+    }
+
+    public function test_export_row_count_equals_the_preview_count(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 12);
+        $schedule = EmailSchedule::create([
+            'site_id' => $site->id, 'date_filter' => null, 'limit' => 5,
+            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
+        ]);
+
+        $count = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->json('data.count');
+        $csv = $this->get("/api/v1/admin/schedules/{$schedule->id}/recipients/export")->streamedContent();
+        $dataRows = count(array_filter(explode("\n", trim($csv)))) - 1; // minus header
+
+        $this->assertSame(5, $count);
+        $this->assertSame($count, $dataRows);
+    }
+
+    // ── 24h dedup is reflected in the count ───────────────────────────────
+
+    public function test_count_excludes_subscribers_already_mailed_within_24h(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 10);
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 10);
+
+        // Four of them already received today's promotion.
+        PromotionEmailHistory::recordMany($site->id, [
+            'sub0@example.com', 'sub1@example.com', 'sub2@example.com', 'sub3@example.com',
+        ]);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()
+            ->assertJsonPath('data.count', 6)
+            ->assertJsonMissing(['email' => 'sub0@example.com']);
+    }
+
+    public function test_a_second_run_resolves_to_zero_recipients(): void
+    {
+        Queue::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 5);
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $service = app(ScheduleRecipientService::class);
+
+        // First run delivers to all five.
+        PromotionEmailHistory::recordMany($site->id, array_map(
+            fn (int $i): string => "sub{$i}@example.com",
+            range(0, 4),
+        ));
+
+        // Second run: nothing left to send, and the preview says so.
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 0);
+
+        (new SendScheduledPromotionJob($schedule->id))->handle($service);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_newest_n_does_not_reach_deeper_after_a_send(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        // 10 subscribers, schedule targets the newest 4.
+        $this->subscribers($site, 10);
+        $schedule = EmailSchedule::create([
+            'site_id' => $site->id, 'date_filter' => null, 'limit' => 4,
+            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
+        ]);
+
+        $newest = app(ScheduleRecipientService::class)->sample($schedule, 4)->pluck('email')->all();
+        $this->assertCount(4, $newest);
+
+        // Those four have now been mailed.
+        PromotionEmailHistory::recordMany($site->id, $newest);
+
+        // The cap must NOT slide down to the next four — the audience is still
+        // "the newest 4", and all of them are done.
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 0);
+    }
+
+    public function test_failed_and_skipped_attempts_do_not_reduce_the_count(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 3);
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+
+        // Only successful deliveries suppress a re-send.
+        PromotionEmailHistory::recordAttempts($site->id, [
+            'sub0@example.com' => PromotionEmailHistory::STATUS_FAILED,
+            'sub1@example.com' => PromotionEmailHistory::STATUS_SKIPPED,
+        ]);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 3);
+    }
+
+    public function test_a_delivery_older_than_24h_counts_again(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 2);
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+
+        // Delivered 25 hours ago — outside the window, so eligible again.
+        $old = now()->subHours(25);
+        PromotionEmailHistory::insert([
+            'site_id'    => $site->id,
+            'email'      => 'sub0@example.com',
+            'sent_date'  => $old->toDateString(),
+            'status'     => PromotionEmailHistory::STATUS_SUCCESS,
+            'created_at' => $old,
+        ]);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
+            ->assertOk()->assertJsonPath('data.count', 2);
+    }
+
+    public function test_export_and_send_also_honour_the_24h_window(): void
+    {
+        Queue::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 6);
+        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        PromotionEmailHistory::recordMany($site->id, ['sub0@example.com', 'sub1@example.com']);
+
+        $count = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->json('data.count');
+
+        $csv = $this->get("/api/v1/admin/schedules/{$schedule->id}/recipients/export")->streamedContent();
+        $dataRows = count(array_filter(explode("\n", trim($csv)))) - 1;
+
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
+        $fanned = collect(Queue::pushed(SendPromotionBatchJob::class))
+            ->sum(fn (SendPromotionBatchJob $j): int => count($j->emails));
+
+        $this->assertSame(4, $count);
+        $this->assertSame($count, $dataRows);
+        $this->assertSame($count, $fanned);
+        $this->assertStringNotContainsString('sub0@example.com', $csv);
+    }
+
+    public function test_recipient_endpoints_require_auth(): void
+    {
+        [$site] = $this->siteWithKey();
+        $schedule = $this->schedule($site);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->assertUnauthorized();
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients/export")->assertUnauthorized();
+    }
+
     // ── Admin CRUD ────────────────────────────────────────────────────────
 
     public function test_admin_can_create_a_schedule(): void
@@ -375,7 +639,7 @@ class EmailScheduleTest extends TestCase
             'active' => true,
         ]);
 
-        (new SendScheduledPromotionJob($schedule->id))->handle();
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
         // One batch job with the two most-recent sign-ups, oldest excluded.
         Queue::assertPushed(SendPromotionBatchJob::class, 1);
@@ -400,7 +664,7 @@ class EmailScheduleTest extends TestCase
             'frequency' => 'daily', 'time' => '03:00', 'active' => true,
         ]);
 
-        (new SendScheduledPromotionJob($schedule->id))->handle();
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
         Queue::assertPushed(SendPromotionBatchJob::class, 1);
         Queue::assertPushed(SendPromotionBatchJob::class, fn (SendPromotionBatchJob $j): bool => $j->emails === ['ok@example.com']);
@@ -545,7 +809,7 @@ class EmailScheduleTest extends TestCase
             'sendgrid_key_id' => $key->id,
         ]);
 
-        (new SendScheduledPromotionJob($schedule->id))->handle();
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
         Queue::assertPushed(
             SendPromotionBatchJob::class,

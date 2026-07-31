@@ -142,6 +142,7 @@ class SendPromotionBatchJob implements ShouldQueue
             try {
                 // From = the authenticated .env mailbox with the template's
                 // from_name as display name, so the SMTP server accepts it.
+                Log::info('Sending email to - ' . $email . ' Via site ' . $site->name);
                 $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
                     ->usingFromAddress($fromAddress);
                 $mailer->to($email)->send($mailable);

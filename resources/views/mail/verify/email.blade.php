@@ -10,33 +10,43 @@
      in SiteVerifyEmail::render(), so they are emitted with {!! !!}. All other
      strings come through {{ }} and are escaped by Blade. --}}
 <body style="margin:0; padding:0; background-color:#f3f4f6; -webkit-font-smoothing:antialiased; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-    <span style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; color:transparent;">
-        {{ $t['header_subtitle'] }}
-    </span>
+    @if (! empty($t['header_subtitle']))
+        <span style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; color:transparent;">
+            {{ $t['header_subtitle'] }}
+        </span>
+    @endif
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;">
         <tr>
             <td align="center" style="padding:32px 16px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px; background-color:#ffffff; border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
 
-                    {{-- Header band --}}
-                    <tr>
-                        <td style="background-color:{{ $accent }}; padding:28px 32px;">
-                            <p style="margin:0; font-size:18px; font-weight:700; color:#ffffff;">
-                                {{ $t['header_title'] }}
-                            </p>
-                            <p style="margin:6px 0 0; font-size:13px; color:rgba(255,255,255,0.82);">
-                                {{ $t['header_subtitle'] }}
-                            </p>
-                        </td>
-                    </tr>
+                    {{-- Header band — dropped when both strings are cleared --}}
+                    @if (! empty($t['header_title']) || ! empty($t['header_subtitle']))
+                        <tr>
+                            <td style="background-color:{{ $accent }}; padding:28px 32px;">
+                                @if (! empty($t['header_title']))
+                                    <p style="margin:0; font-size:18px; font-weight:700; color:#ffffff;">
+                                        {{ $t['header_title'] }}
+                                    </p>
+                                @endif
+                                @if (! empty($t['header_subtitle']))
+                                    <p style="margin:6px 0 0; font-size:13px; color:rgba(255,255,255,0.82);">
+                                        {{ $t['header_subtitle'] }}
+                                    </p>
+                                @endif
+                            </td>
+                        </tr>
+                    @endif
 
                     {{-- Body --}}
                     <tr>
                         <td style="padding:32px;">
-                            <h1 style="margin:0 0 18px; font-size:22px; font-weight:700; color:#111827;">
-                                {{ $t['heading'] }}
-                            </h1>
+                            @if (! empty($t['heading']))
+                                <h1 style="margin:0 0 18px; font-size:22px; font-weight:700; color:#111827;">
+                                    {{ $t['heading'] }}
+                                </h1>
+                            @endif
 
                             @if (! empty($greeting))
                                 {{-- Optional "Dear {name}," greeting — only when a name was captured. --}}
@@ -45,15 +55,21 @@
                                 </p>
                             @endif
 
-                            <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
-                                {!! $t['intro_text'] !!}
-                            </p>
-                            <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
-                                {!! $t['offer_text'] !!}
-                            </p>
-                            <p style="margin:0; font-size:14px; line-height:1.6; color:#6b7280;">
-                                {!! $t['spam_notice'] !!}
-                            </p>
+                            @if (! empty($t['intro_text']))
+                                <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
+                                    {!! $t['intro_text'] !!}
+                                </p>
+                            @endif
+                            @if (! empty($t['offer_text']))
+                                <p style="margin:0 0 14px; font-size:15px; line-height:1.6; color:#374151;">
+                                    {!! $t['offer_text'] !!}
+                                </p>
+                            @endif
+                            @if (! empty($t['spam_notice']))
+                                <p style="margin:0; font-size:14px; line-height:1.6; color:#6b7280;">
+                                    {!! $t['spam_notice'] !!}
+                                </p>
+                            @endif
 
                             @if (! empty($verifyUrl))
                                 {{-- Primary double opt-in call to action --}}
@@ -78,9 +94,11 @@
                             </table>
 
                             {{-- Footer note + unsubscribe --}}
-                            <p style="margin:24px 0 8px; font-size:12px; line-height:1.6; color:#9ca3af;">
-                                {!! $t['footer_note'] !!}
-                            </p>
+                            @if (! empty($t['footer_note']))
+                                <p style="margin:24px 0 8px; font-size:12px; line-height:1.6; color:#9ca3af;">
+                                    {!! $t['footer_note'] !!}
+                                </p>
+                            @endif
                             <p style="margin:0; font-size:12px;">
                                 <a href="{{ $unsubscribeUrl }}" style="color:{{ $accent }}; text-decoration:underline;">
                                     {{ $t['unsubscribe_label'] }}
@@ -89,14 +107,18 @@
                         </td>
                     </tr>
 
-                    {{-- Copyright --}}
-                    <tr>
-                        <td style="padding:18px 32px; background-color:#f9fafb; border-top:1px solid #f0f1f3;">
-                            <p style="margin:0; font-size:11px; color:#9ca3af; text-align:center;">
-                                {{ $t['copyright_text'] }}
-                            </p>
-                        </td>
-                    </tr>
+                    {{-- Copyright — removable --}}
+                    @if (! empty($t['copyright_text']))
+                        <tr>
+                            <td style="padding:18px 32px; background-color:#f9fafb; border-top:1px solid #f0f1f3;">
+                                @if (! empty($t['copyright_text']))
+                                    <p style="margin:0; font-size:11px; color:#9ca3af; text-align:center;">
+                                        {{ $t['copyright_text'] }}
+                                    </p>
+                                @endif
+                            </td>
+                        </tr>
+                    @endif
                 </table>
             </td>
         </tr>

@@ -11,10 +11,12 @@
      **bold** converted in SitePromotionEmail::render(), so they are emitted with
      {!! !!}. All other strings come through {{ }} and are escaped by Blade. --}}
 <body style="margin:0; padding:0; background-color:#f1f1f1; -webkit-font-smoothing:antialiased; font-family:'DM Sans',-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-    {{-- Hidden preview (preheader) text --}}
-    <span style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; color:transparent;">
-        {{ $t['preheader'] }}
-    </span>
+    {{-- Hidden preview (preheader) text — removable --}}
+    @if (! empty($t['preheader']))
+        <span style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; color:transparent;">
+            {{ $t['preheader'] }}
+        </span>
+    @endif
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f1f1;">
         <tr>
@@ -40,60 +42,79 @@
                     @endif
 
                     {{-- Top CTA button — omitted (with its spacing) when the
-                         admin clears the label. A button with no link is
-                         pointless, so it also needs the offer URL. --}}
-                    @if (! empty($t['top_button_text']) && ! empty($t['hero_url']))
+                         admin clears the label. Independent of the offer link:
+                         without one it renders as an unlinked button. --}}
+                    @if (! empty($t['top_button_text']))
                         <tr>
                             <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
-                                <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
-                                   style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
-                                    <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['top_button_text'] }}</span>
-                                </a>
+                                @if (! empty($t['hero_url']))
+                                    <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
+                                       style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
+                                        <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['top_button_text'] }}</span>
+                                    </a>
+                                @else
+                                    <span style="display:inline-block; background-color:{{ $buttonColor }}; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff; -webkit-text-fill-color:#ffffff;">{{ $t['top_button_text'] }}</span>
+                                @endif
                             </td>
                         </tr>
                     @endif
 
-                    {{-- Body copy --}}
-                    <tr>
-                        <td style="background-color:#000000; color:#ffffff;">
-                            <div style="text-align:center; padding:30px 20px;">
-                                <h2 style="color:#ffffff; font-size:24px; font-weight:600; margin:0 0 20px; line-height:1.4;">
-                                    {{ $t['heading'] }}
-                                </h2>
-                                @if (! empty($greeting))
-                                    {{-- Optional "Dear {name}," greeting — only when a name was captured. --}}
-                                    <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
-                                        {{ $greeting }}
-                                    </p>
-                                @endif
-                                <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
-                                    {!! $t['intro_text'] !!}
-                                </p>
-                                <p style="color:rgba(255,255,255,0.85); font-size:16px; margin:0; line-height:1.6;">
-                                    {!! $t['secondary_text'] !!}
-                                </p>
-                            </div>
-                        </td>
-                    </tr>
+                    {{-- Body copy — heading and both paragraphs are individually
+                         removable; the whole block disappears if all are gone. --}}
+                    @if (! empty($t['heading']) || ! empty($greeting) || ! empty($t['intro_text']) || ! empty($t['secondary_text']))
+                        <tr>
+                            <td style="background-color:#000000; color:#ffffff;">
+                                <div style="text-align:center; padding:30px 20px;">
+                                    @if (! empty($t['heading']))
+                                        <h2 style="color:#ffffff; font-size:24px; font-weight:600; margin:0 0 20px; line-height:1.4;">
+                                            {{ $t['heading'] }}
+                                        </h2>
+                                    @endif
+                                    @if (! empty($greeting))
+                                        {{-- Optional "Dear {name}," greeting — only when a name was captured. --}}
+                                        <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
+                                            {{ $greeting }}
+                                        </p>
+                                    @endif
+                                    @if (! empty($t['intro_text']))
+                                        <p style="color:#ffffff; font-size:17px; margin:0 0 20px; line-height:1.6;">
+                                            {!! $t['intro_text'] !!}
+                                        </p>
+                                    @endif
+                                    @if (! empty($t['secondary_text']))
+                                        <p style="color:rgba(255,255,255,0.85); font-size:16px; margin:0; line-height:1.6;">
+                                            {!! $t['secondary_text'] !!}
+                                        </p>
+                                    @endif
+                                </div>
+                            </td>
+                        </tr>
+                    @endif
 
                     {{-- Bottom CTA button — same removal rule as the top one. --}}
-                    @if (! empty($t['cta_button_text']) && ! empty($t['hero_url']))
+                    @if (! empty($t['cta_button_text']))
                         <tr>
                             <td style="padding:20px 20px 40px; background-color:#000000; text-align:center;">
-                                <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
-                                   style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
-                                    <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['cta_button_text'] }}</span>
-                                </a>
+                                @if (! empty($t['hero_url']))
+                                    <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"
+                                       style="display:inline-block; background-color:{{ $buttonColor }}; text-decoration:none; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff;">
+                                        <span style="color:#ffffff; -webkit-text-fill-color:#ffffff; display:inline-block;">{{ $t['cta_button_text'] }}</span>
+                                    </a>
+                                @else
+                                    <span style="display:inline-block; background-color:{{ $buttonColor }}; padding:14px 48px; border-radius:8px; font-size:18px; font-weight:600; color:#ffffff; -webkit-text-fill-color:#ffffff;">{{ $t['cta_button_text'] }}</span>
+                                @endif
                             </td>
                         </tr>
                     @endif
 
-                    {{-- Disclaimer --}}
-                    <tr>
-                        <td style="background-color:#000000; color:rgba(255,255,255,0.7); text-align:center; padding:30px 20px 10px; font-size:13px; line-height:1.6;">
-                            {!! $t['disclaimer_text'] !!}
-                        </td>
-                    </tr>
+                    {{-- Disclaimer — removable --}}
+                    @if (! empty($t['disclaimer_text']))
+                        <tr>
+                            <td style="background-color:#000000; color:rgba(255,255,255,0.7); text-align:center; padding:30px 20px 10px; font-size:13px; line-height:1.6;">
+                                {!! $t['disclaimer_text'] !!}
+                            </td>
+                        </tr>
+                    @endif
 
                     {{-- Unsubscribe --}}
                     <tr>

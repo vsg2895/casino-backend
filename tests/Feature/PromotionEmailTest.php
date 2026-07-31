@@ -166,32 +166,92 @@ class PromotionEmailTest extends TestCase
         )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'STILL HERE'));
     }
 
-    public function test_the_offer_link_is_required_while_any_element_uses_it(): void
+    public function test_the_image_and_link_can_be_removed_while_buttons_remain(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        // A button with nothing to link to is not a valid state.
+        // The exact combination that used to be rejected: image + offer link
+        // cleared while both buttons still have labels. No field requires any
+        // other, so this must save.
         $this->putJson(
             "/api/v1/admin/sites/{$site->id}/promotion-email",
             $this->validPayload([
-                'hero_url'        => null,
                 'hero_image_url'  => null,
-                'cta_button_text' => null,
-                'top_button_text' => 'Click me',
+                'hero_url'        => null,
+                'top_button_text' => 'View Details',
+                'cta_button_text' => 'Register Your Account',
             ]),
-        )->assertStatus(422)->assertJsonValidationErrorFor('hero_url');
+        )->assertOk()
+            ->assertJsonPath('data.hero_url', null)
+            ->assertJsonPath('data.top_button_text', 'View Details');
+    }
 
-        // …but once every linked element is removed, it may go too.
-        $this->putJson(
-            "/api/v1/admin/sites/{$site->id}/promotion-email",
+    public function test_a_button_without_a_link_still_renders_unlinked(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
             $this->validPayload([
                 'hero_url'        => null,
                 'hero_image_url'  => null,
-                'top_button_text' => null,
+                'top_button_text' => 'UNLINKED BUTTON',
                 'cta_button_text' => null,
             ]),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'UNLINKED BUTTON')
+            // Rendered, but not as a link: no empty href, and the only anchor
+            // left in the email is the mandatory unsubscribe link.
+            && ! str_contains($html, 'href=""')
+            && substr_count($html, '<a href') === 1
+            && str_contains($html, 'Unsubscribe'));
+    }
+
+    public function test_every_content_block_is_independently_removable(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $blocks = [
+            'preheader', 'hero_image_url', 'hero_url', 'top_button_text',
+            'heading', 'intro_text', 'secondary_text', 'cta_button_text', 'disclaimer_text',
+        ];
+
+        // Each one on its own.
+        foreach ($blocks as $block) {
+            $this->putJson(
+                "/api/v1/admin/sites/{$site->id}/promotion-email",
+                $this->validPayload([$block => null]),
+            )->assertOk()->assertJsonPath("data.{$block}", null);
+        }
+
+        // …and all of them at once: a valid email remains.
+        $this->putJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email",
+            $this->validPayload(array_fill_keys($blocks, null)),
         )->assertOk();
+
+        $this->postJson(
+            "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
+            $this->validPayload(array_fill_keys($blocks, null)),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'Unsubscribe')
+            && ! str_contains($html, '<img'));
+    }
+
+    public function test_structural_fields_stay_required(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        // Sender, subject and the legally-required opt-out label are not
+        // content blocks and must never be removable.
+        foreach (['from_name', 'from_email', 'subject', 'unsubscribe_label'] as $field) {
+            $this->putJson(
+                "/api/v1/admin/sites/{$site->id}/promotion-email",
+                $this->validPayload([$field => null]),
+            )->assertStatus(422)->assertJsonValidationErrorFor($field);
+        }
     }
 
     public function test_preview_renders_html_without_persisting(): void

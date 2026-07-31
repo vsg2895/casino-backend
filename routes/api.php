@@ -115,6 +115,9 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('schedules', EmailScheduleController::class)
             ->only(['index', 'store', 'update', 'destroy']);
         Route::post('schedules/{schedule}/run', [EmailScheduleController::class, 'run']);
+        // Who would receive this campaign right now (same query as the send).
+        Route::get('schedules/{schedule}/recipients', [EmailScheduleController::class, 'recipients']);
+        Route::get('schedules/{schedule}/recipients/export', [EmailScheduleController::class, 'exportRecipients']);
 
         // Promotion delivery history (read-only; partitioned + prefix search)
         Route::get('promotion-history', [PromotionEmailHistoryController::class, 'index']);

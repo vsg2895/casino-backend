@@ -31,9 +31,9 @@ class DispatchDuePromotionSchedules extends Command
             ->where('active', true)
             ->get()
             ->each(function (EmailSchedule $schedule) use ($now, &$dispatched): void {
-                if (! $schedule->isDue($now) || $schedule->ranAt($now)) {
-                    return;
-                }
+//                if (! $schedule->isDue($now) || $schedule->ranAt($now)) {
+//                    return;
+//                }
                 SendScheduledPromotionJob::dispatch($schedule->id);
                 $schedule->forceFill(['last_run_at' => $now])->save();
                 $dispatched++;
