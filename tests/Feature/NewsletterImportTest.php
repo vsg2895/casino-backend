@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Jobs\ImportNewslettersJob;
 use App\Jobs\ProcessNewsletterSubscription;
 use App\Jobs\SendNewsletterWelcomeEmail;
 use App\Models\Newsletter;
+use App\Models\NewsletterImport;
 use App\Models\Site;
+use App\Services\NewsletterImportService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use OpenSpout\Common\Entity\Row;
 use OpenSpout\Writer\CSV\Writer as CsvWriter;
 use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
@@ -89,7 +93,7 @@ class NewsletterImportTest extends TestCase
         ]);
 
         $this->import($site, $file)
-            ->assertOk()
+            ->assertAccepted()
             ->assertJson(['imported' => 2, 'skipped' => 0, 'total' => 2]);
 
         $this->assertDatabaseHas('newsletters', ['site_id' => $site->id, 'email' => 'alice@example.com']);
@@ -102,7 +106,7 @@ class NewsletterImportTest extends TestCase
         [$site] = $this->siteWithKey();
 
         $this->import($site, $this->csv([['Email'], ['csv@example.com']]))
-            ->assertOk()
+            ->assertAccepted()
             ->assertJson(['imported' => 1]);
 
         $this->assertDatabaseHas('newsletters', ['site_id' => $site->id, 'email' => 'csv@example.com']);
@@ -119,7 +123,7 @@ class NewsletterImportTest extends TestCase
             ['real@example.com', 'ignored@example.com'],
         ]);
 
-        $this->import($site, $file)->assertOk()->assertJson(['imported' => 1]);
+        $this->import($site, $file)->assertAccepted()->assertJson(['imported' => 1]);
         $this->assertDatabaseHas('newsletters', ['email' => 'real@example.com']);
         $this->assertDatabaseMissing('newsletters', ['email' => 'ignored@example.com']);
     }
@@ -138,7 +142,7 @@ class NewsletterImportTest extends TestCase
             ['fresh@example.com'],
         ]);
 
-        $this->import($site, $file)->assertOk()->assertJson(['imported' => 2, 'total' => 2]);
+        $this->import($site, $file)->assertAccepted()->assertJson(['imported' => 2, 'total' => 2]);
         $this->assertDatabaseHas('newsletters', ['email' => 'dup@example.com']);
         $this->assertSame(2, Newsletter::where('site_id', $site->id)->count());
     }
@@ -150,7 +154,7 @@ class NewsletterImportTest extends TestCase
 
         // No "Email" header — a plain one-column list.
         $this->import($site, $this->xlsx([['a@example.com'], ['b@example.com']]))
-            ->assertOk()
+            ->assertAccepted()
             ->assertJson(['imported' => 2]);
     }
 
@@ -161,7 +165,7 @@ class NewsletterImportTest extends TestCase
         Newsletter::create(['site_id' => $site->id, 'email' => 'existing@example.com']);
 
         $this->import($site, $this->xlsx([['Email'], ['existing@example.com'], ['new@example.com']]))
-            ->assertOk()
+            ->assertAccepted()
             ->assertJson(['imported' => 1, 'skipped' => 1]);
     }
 
@@ -173,21 +177,51 @@ class NewsletterImportTest extends TestCase
         $n->delete(); // soft-deleted
 
         $this->import($site, $this->xlsx([['Email'], ['back@example.com']]))
-            ->assertOk()
+            ->assertAccepted()
             ->assertJson(['imported' => 1]);
 
         $this->assertNotSoftDeleted('newsletters', ['id' => $n->id]);
     }
 
-    public function test_import_does_not_send_welcome_emails(): void
+    public function test_import_is_queued_on_the_high_priority_queue(): void
     {
         Queue::fake();
+        Storage::fake('local'); // the job never runs here — don't leave the upload behind
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        $this->import($site, $this->xlsx([['Email'], ['quiet@example.com']]))->assertOk();
+        $this->import($site, $this->xlsx([['Email'], ['queued@example.com']]))
+            ->assertStatus(202)
+            ->assertJsonPath('status', 'queued')
+            ->assertJsonPath('finished', false);
 
-        Queue::assertNothingPushed();
+        Queue::assertPushed(
+            ImportNewslettersJob::class,
+            fn (ImportNewslettersJob $job): bool => $job->queue === ImportNewslettersJob::ON_QUEUE,
+        );
+
+        // The row exists and the upload is staged for the worker to read.
+        $this->assertDatabaseHas('newsletter_imports', [
+            'site_id'  => $site->id,
+            'filename' => 'subscribers.xlsx',
+            'status'   => 'queued',
+        ]);
+    }
+
+    public function test_import_does_not_send_welcome_emails(): void
+    {
+        Queue::fake();
+        Storage::fake('local');
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $this->import($site, $this->xlsx([['Email'], ['quiet@example.com']]))->assertStatus(202);
+
+        // The import job itself is expected; the subscription/welcome pipeline
+        // must stay untouched — a list import is not a public subscription.
+        Queue::assertPushed(ImportNewslettersJob::class);
+        Queue::assertNotPushed(ProcessNewsletterSubscription::class);
+        Queue::assertNotPushed(SendNewsletterWelcomeEmail::class);
     }
 
     // ── Verified flag ─────────────────────────────────────────────────────
@@ -197,7 +231,7 @@ class NewsletterImportTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        $this->import($site, $this->xlsx([['Email'], ['plain@example.com']]))->assertOk();
+        $this->import($site, $this->xlsx([['Email'], ['plain@example.com']]))->assertAccepted();
 
         $this->assertDatabaseHas('newsletters', [
             'site_id'  => $site->id,
@@ -211,7 +245,7 @@ class NewsletterImportTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        $this->import($site, $this->xlsx([['Email'], ['trusted@example.com']]), ['verified' => '1'])->assertOk();
+        $this->import($site, $this->xlsx([['Email'], ['trusted@example.com']]), ['verified' => '1'])->assertAccepted();
 
         $this->assertDatabaseHas('newsletters', [
             'site_id'  => $site->id,
@@ -228,7 +262,7 @@ class NewsletterImportTest extends TestCase
         $n->delete();
 
         // Re-import as unverified (default) → the restored row STAYS verified.
-        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]))->assertOk();
+        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]))->assertAccepted();
 
         $this->assertNotSoftDeleted('newsletters', ['id' => $n->id]);
         $this->assertDatabaseHas('newsletters', ['id' => $n->id, 'verified' => true]);
@@ -242,7 +276,7 @@ class NewsletterImportTest extends TestCase
         $n->delete();
 
         // Re-import as verified → the restored row is promoted.
-        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]), ['verified' => '1'])->assertOk();
+        $this->import($site, $this->xlsx([['Email'], ['back@example.com']]), ['verified' => '1'])->assertAccepted();
 
         $this->assertDatabaseHas('newsletters', ['id' => $n->id, 'verified' => true]);
     }
@@ -281,13 +315,36 @@ class NewsletterImportTest extends TestCase
             ->assertUnauthorized();
     }
 
-    public function test_file_with_no_emails_returns_422_with_hint(): void
+    public function test_file_with_no_emails_completes_with_a_hint(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
+        // The upload is accepted (it is well-formed); the JOB reports that it
+        // found nothing usable, since parsing no longer happens in the request.
         $this->import($site, $this->xlsx([['Email'], ['nope'], ['also-bad']]))
-            ->assertStatus(422)
-            ->assertJsonPath('imported', 0);
+            ->assertStatus(202)
+            ->assertJsonPath('imported', 0)
+            ->assertJsonPath('total', 0)
+            ->assertJsonPath('status', 'completed')
+            ->assertJsonPath('message', 'No valid email addresses found. Make sure the file has an "Email" column.');
+    }
+
+    public function test_a_failed_import_is_recorded_with_its_reason(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $import = NewsletterImport::create([
+            'site_id'  => $site->id,
+            'filename' => 'gone.csv',
+            'path'     => 'newsletter-imports/does-not-exist.csv',
+            'status'   => NewsletterImport::STATUS_QUEUED,
+        ]);
+
+        (new ImportNewslettersJob($import->id))->handle(app(NewsletterImportService::class));
+
+        $this->assertSame(NewsletterImport::STATUS_FAILED, $import->fresh()->status);
+        $this->assertNotNull($import->fresh()->error);
     }
 }

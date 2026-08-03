@@ -28,7 +28,11 @@ class ImportNewslettersRequest extends FormRequest
             'file' => [
                 'required',
                 'file',
-                'max:5120', // 5 MB
+                // 20 MB — a 5 MB cap rejected lists of a few hundred thousand
+                // addresses, which the batched importer handles fine. PHP's
+                // upload_max_filesize / post_max_size and the web server's
+                // client_max_body_size must allow at least as much.
+                'max:20480',
                 function (string $attribute, mixed $value, callable $fail): void {
                     $ext = $value instanceof UploadedFile
                         ? strtolower($value->getClientOriginalExtension())

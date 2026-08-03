@@ -92,6 +92,8 @@ Route::prefix('v1')->group(function () {
         Route::get('newsletters', [AdminNewsletterController::class, 'index']);
         Route::post('newsletters', [AdminNewsletterController::class, 'store']);
         Route::post('newsletters/import', [AdminNewsletterController::class, 'import']);
+        // Progress of a queued import — polled by the admin panel until finished.
+        Route::get('newsletters/imports/{import}', [AdminNewsletterController::class, 'importStatus']);
         Route::get('newsletters/export', [AdminNewsletterController::class, 'export']);
         Route::post('newsletters/bulk-delete', [AdminNewsletterController::class, 'bulkDestroy']);
         Route::post('newsletters/delete-all', [AdminNewsletterController::class, 'destroyAll']);

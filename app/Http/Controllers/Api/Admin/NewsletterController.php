@@ -9,12 +9,14 @@ use App\Http\Requests\Admin\BulkNewsletterIdsRequest;
 use App\Http\Requests\Admin\ImportNewslettersRequest;
 use App\Http\Requests\Admin\StoreNewsletterRequest;
 use App\Http\Resources\NewsletterResource;
+use App\Jobs\ImportNewslettersJob;
 use App\Models\Newsletter;
-use App\Services\NewsletterImportService;
+use App\Models\NewsletterImport;
 use App\Support\CsvExport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class NewsletterController extends Controller
@@ -43,65 +45,61 @@ class NewsletterController extends Controller
     }
 
     /**
-     * Bulk-import subscribers from an uploaded .xlsx / .csv with an "Email"
-     * column. Existing (or previously-unsubscribed) addresses are kept/restored,
-     * not duplicated. Imported contacts are added silently — no welcome email is
-     * sent (this is a list import, not a public subscription).
+     * Queue a bulk import of subscribers from an uploaded .xlsx / .csv with an
+     * "Email" column. Existing (or previously-unsubscribed) addresses are
+     * kept/restored, not duplicated. Imported contacts are added silently — no
+     * welcome email is sent (this is a list import, not a public subscription).
+     *
+     * The request only STAGES the file and returns; parsing and writing happen
+     * in {@see ImportNewslettersJob} on the high-priority queue. A large list
+     * must never be processed inside an HTTP request, where it would burn a
+     * php-fpm worker and eventually hit max_execution_time.
+     *
+     * Responds 202 with the import record; poll {@see importStatus()} for
+     * progress and the final counts.
      */
-    public function import(ImportNewslettersRequest $request, NewsletterImportService $importer): JsonResponse
+    public function import(ImportNewslettersRequest $request): JsonResponse
     {
-        $siteId = $request->integer('site_id');
-        // Admin's choice: import as already-verified, or (default) unverified.
-        $verified = $request->boolean('verified');
         $file = $request->file('file');
-        $extension = strtolower($file->getClientOriginalExtension());
 
-        $emails = $importer->emails($file->getRealPath(), $extension);
-
-        if ($emails === []) {
-            return response()->json([
-                'imported' => 0,
-                'skipped'  => 0,
-                'total'    => 0,
-                'message'  => 'No valid email addresses found. Make sure the file has an "Email" column.',
-            ], 422);
-        }
-
-        $imported = 0;
-        $skipped = 0;
-
-        foreach ($emails as $email) {
-            // withTrashed so the (site_id, email) unique index — which still
-            // covers soft-deleted rows — never trips on a re-import.
-            $newsletter = Newsletter::withTrashed()->firstOrCreate(
-                ['site_id' => $siteId, 'email' => $email],
-                ['verified' => $verified],
-            );
-
-            if ($newsletter->wasRecentlyCreated) {
-                $imported++;
-            } elseif ($newsletter->trashed()) {
-                // Re-importing a removed contact: restore it. Verification is
-                // upgrade-only — importing as verified promotes an unverified
-                // row, but importing as unverified never downgrades a subscriber
-                // who was already verified before removal.
-                $newsletter->restore();
-                if ($verified && ! $newsletter->verified) {
-                    $newsletter->forceFill(['verified' => true])->save();
-                }
-                $imported++;
-            } else {
-                $skipped++; // already an active subscriber
-            }
-        }
-
-        return response()->json([
-            'imported' => $imported,
-            'skipped'  => $skipped,
-            'total'    => count($emails),
-            'message'  => "Imported {$imported} subscriber(s)"
-                . ($skipped > 0 ? ", skipped {$skipped} already on the list." : '.'),
+        $import = NewsletterImport::create([
+            'site_id'  => $request->integer('site_id'),
+            'user_id'  => $request->user()?->id,
+            'filename' => $file->getClientOriginalName(),
+            // Staged on the local disk; the job reads it and deletes it. The
+            // worker must therefore share this filesystem with the web process.
+            'path'     => $file->store('newsletter-imports', 'local'),
+            // Admin's choice: import as already-verified, or (default) unverified.
+            'verified' => $request->boolean('verified'),
+            'status'   => NewsletterImport::STATUS_QUEUED,
         ]);
+
+        ImportNewslettersJob::dispatch($import->id);
+
+        // Under a synchronous queue the job has already run by now, so report
+        // whatever state it reached rather than a stale "queued".
+        return $this->importPayload($import->refresh(), Response::HTTP_ACCEPTED);
+    }
+
+    /** Progress + outcome of a queued import, polled by the admin panel. */
+    public function importStatus(NewsletterImport $import): JsonResponse
+    {
+        return $this->importPayload($import);
+    }
+
+    /** The flat import payload both endpoints answer with. */
+    private function importPayload(NewsletterImport $import, int $status = Response::HTTP_OK): JsonResponse
+    {
+        return response()->json([
+            'import_id' => $import->id,
+            'status'    => $import->status,
+            'finished'  => $import->isFinished(),
+            'imported'  => $import->imported,
+            'skipped'   => $import->skipped,
+            'total'     => $import->total,
+            'error'     => $import->error,
+            'message'   => $import->summary(),
+        ], $status);
     }
 
     public function export(Request $request): StreamedResponse
