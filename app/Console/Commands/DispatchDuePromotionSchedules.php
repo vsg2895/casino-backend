@@ -9,6 +9,7 @@ use App\Models\EmailSchedule;
 use Carbon\CarbonInterface;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -52,10 +53,33 @@ class DispatchDuePromotionSchedules extends Command
                     return;
                 }
 
+                // The SAME lock the admin's "Run now" takes, so the two triggers
+                // can never fan out one schedule concurrently. Without it, an
+                // admin clicking Run now in the minute the cron fires would send
+                // the whole audience twice: the 24h dedup only suppresses a
+                // re-send once the first delivery is written to history, which
+                // has not happened yet while both fan-outs are in flight.
+                $lock = Cache::lock(
+                    SendScheduledPromotionJob::runLockKey($schedule->id),
+                    (int) config('promotions.fan_out_timeout', 900),
+                );
+
+                if (! $lock->get()) {
+                    Log::warning('Promotion schedule skipped: a campaign for it is already running', [
+                        'schedule_id' => $schedule->id,
+                        'minute'      => $minute->toDateTimeString(),
+                    ]);
+
+                    return;
+                }
+
                 try {
-                    SendScheduledPromotionJob::dispatch($schedule->id);
+                    // The job releases the lock when the fan-out ends.
+                    SendScheduledPromotionJob::dispatch($schedule->id, $lock->owner());
                     $dispatched++;
                 } catch (Throwable $e) {
+                    $lock->release();
+
                     // The minute is already claimed, so this campaign is skipped
                     // rather than retried — deliberately. A missed run is
                     // recoverable from the admin's "Run now"; a double run means

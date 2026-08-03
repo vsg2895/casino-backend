@@ -47,4 +47,20 @@ return [
     // slowest realistic per-message time, and stay under `retry_after`.
     'batch_timeout' => (int) env('PROMOTION_BATCH_TIMEOUT', 240),
 
+    // Log one progress line per this many successful sends, counted across all
+    // the batch jobs of a site's campaign. Set to 0 to turn the milestones off.
+    'progress_log_every' => (int) env('PROMOTION_PROGRESS_LOG_EVERY', 500),
+
+    // Tolerance subtracted from the 24h "already delivered" window, in minutes.
+    // MUST exceed how long a campaign takes to send end to end: a run that
+    // outlasts this value leaves the next day's run looking at deliveries still
+    // inside the window, and it skips its entire audience. 180 covers a ~3h
+    // campaign. Clamped to < 1440 (24h), beyond which nothing could ever be
+    // deduped.
+    //
+    // Deliberately a literal, not an env() lookup: this is a correctness
+    // constraint tied to how long a send takes, not a per-environment setting.
+    // Change it here and deploy if a campaign ever runs longer than 3 hours.
+    'dedup_jitter_minutes' => 180,
+
 ];

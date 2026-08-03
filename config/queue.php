@@ -68,7 +68,25 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            /*
+             * Raised from Laravel's 90s default.
+             *
+             * `retry_after` is how long the queue waits before assuming a
+             * reserved job died and handing it to ANOTHER worker. It must
+             * exceed the timeout of the longest-running job on this connection,
+             * or a job that is merely slow gets executed twice concurrently:
+             *
+             *   SendScheduledPromotionJob  900s  (config/promotions.php)
+             *   ImportNewslettersJob       900s  (config/newsletters.php)
+             *   SendPromotionBatchJob      240s  (config/promotions.php)
+             *
+             * At 90s a batch mid-send would be re-dispatched while still
+             * sending — duplicate emails to real subscribers, and a duplicated
+             * subscriber import. 1200 leaves headroom above the 900s ceiling.
+             *
+             * If you ever raise one of those job timeouts, raise this first.
+             */
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 1200),
             'block_for' => null,
             'after_commit' => false,
         ],

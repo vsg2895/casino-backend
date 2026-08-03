@@ -19,6 +19,8 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -215,6 +217,8 @@ class SendPromotionBatchJob implements ShouldQueue
             'failed'  => $failed,
             'total'   => count($this->emails),
         ]);
+
+        $this->logProgressMilestone($sent);
     }
 
     /**
@@ -238,6 +242,54 @@ class SendPromotionBatchJob implements ShouldQueue
         $created = $site->promotionEmailOrDefault();
 
         return $created;
+    }
+
+    /**
+     * Log one line every N successful sends for this site's campaign.
+     *
+     * A batch job only ever sees its own ~100 addresses, so the running total
+     * lives in the cache and is incremented atomically — several workers send
+     * concurrently, and each must see a true cumulative figure. The counter is
+     * keyed per site and day, matching the 24h dedup window, and expires on its
+     * own; nothing has to clean it up.
+     *
+     * Best-effort by design: a cache hiccup must never fail a batch whose emails
+     * have already gone out.
+     */
+    private function logProgressMilestone(int $sent): void
+    {
+        $every = (int) config('promotions.progress_log_every', 500);
+
+        if ($sent <= 0 || $every <= 0) {
+            return;
+        }
+
+        try {
+            $key = 'promotion-progress:' . $this->siteId . ':' . Carbon::now()->toDateString();
+
+            // add() is atomic and, unlike a bare increment, seeds the TTL — so
+            // the key cannot linger forever if a campaign is interrupted.
+            Cache::add($key, 0, Carbon::now()->addDay());
+
+            $total = (int) Cache::increment($key, $sent);
+            $before = $total - $sent;
+
+            // Only log when this batch pushed the total past a milestone.
+            if (intdiv($total, $every) <= intdiv($before, $every)) {
+                return;
+            }
+
+            Log::info('Promotion campaign progress', [
+                'site_id'   => $this->siteId,
+                'sent_total' => intdiv($total, $every) * $every,
+                'message'   => sprintf('%d emails sent successfully', intdiv($total, $every) * $every),
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('Could not record promotion progress', [
+                'site_id' => $this->siteId,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 
     /** Attempts buffered before a history flush; always at least one. */

@@ -31,11 +31,21 @@ class PromotionEmailHistory extends Model
     public const array STATUSES = [self::STATUS_SUCCESS, self::STATUS_FAILED, self::STATUS_SKIPPED];
 
     /**
-     * Tolerance subtracted from the 24h dedup window so a daily schedule that
-     * fires at the same minute every day is never skip-flapped by a few seconds
-     * of scheduler/queue jitter (yesterday 03:00:05 must not block today 03:00:02).
+     * Default tolerance subtracted from the 24h dedup window.
+     *
+     * Two things need it. The small one: a daily schedule firing at the same
+     * minute must not skip-flap on a few seconds of scheduler jitter (yesterday
+     * 03:00:05 must not block today 03:00:02). The large one: a campaign takes
+     * as long as it takes to send. A 50k list over one transport runs for hours,
+     * so by the time the next day's run starts, most of yesterday's deliveries
+     * are still inside a strict 24h window and the whole campaign silently
+     * skips itself. The tolerance must therefore comfortably exceed the longest
+     * expected campaign duration — hence 3 hours rather than 5 minutes.
+     *
+     * The live value is the literal in config/promotions.php; this constant is
+     * only the fallback if that file is ever missing.
      */
-    private const int DEDUP_JITTER_MINUTES = 5;
+    private const int DEFAULT_DEDUP_JITTER_MINUTES = 180;
 
     /**
      * Cap on the stored failure message. Transport errors can carry very long
@@ -96,7 +106,21 @@ class PromotionEmailHistory extends Model
     public static function dedupCutoff(?CarbonInterface $now = null): Carbon
     {
         return ($now ? Carbon::instance($now) : Carbon::now())
-            ->copy()->subDay()->addMinutes(self::DEDUP_JITTER_MINUTES);
+            ->copy()->subDay()->addMinutes(self::dedupJitterMinutes());
+    }
+
+    /**
+     * The configured tolerance, clamped to stay inside the 24h window.
+     *
+     * At 1440+ the cutoff would move past "now" and nothing could ever be
+     * deduped — every campaign would re-mail everyone. The clamp makes that
+     * unreachable by configuration alone.
+     */
+    private static function dedupJitterMinutes(): int
+    {
+        $minutes = (int) config('promotions.dedup_jitter_minutes', self::DEFAULT_DEDUP_JITTER_MINUTES);
+
+        return max(0, min($minutes, 1439));
     }
 
     /**
