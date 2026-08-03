@@ -17,8 +17,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 /**
  * Admin CRUD for scheduled promotion campaigns, plus an on-demand "run now"
@@ -102,15 +104,85 @@ class EmailScheduleController extends Controller
         return CsvExport::download($filename, ['email', 'created_at'], $recipients->exportRows($schedule));
     }
 
-    /** Queue this campaign immediately, regardless of its cadence. */
+    /**
+     * Queue this campaign immediately, regardless of its cadence.
+     *
+     * Guarded three ways, because this button can mean 50k emails:
+     *  - the conditions the fan-out would silently return on (paused schedule,
+     *    promotion template switched off) are reported here instead, so the
+     *    admin is never told "queued" when nothing will be sent;
+     *  - a lock keeps one campaign in flight per schedule, so a double-click or
+     *    two admins on the same screen cannot fan out the same audience twice.
+     *    The fan-out releases it when it finishes;
+     *  - `last_run_at` is stamped, so the scheduler will not also fire this
+     *    schedule during the same minute.
+     */
     public function run(EmailSchedule $schedule): JsonResponse
     {
-        SendScheduledPromotionJob::dispatch($schedule->id);
+        if (! $schedule->active) {
+            return $this->refuse('This schedule is paused. Activate it before running the campaign.');
+        }
+
+        $site = $schedule->site;
+
+        if ($site === null) {
+            return $this->refuse('This schedule has no site attached.');
+        }
+
+        if (! $site->promotionEmailOrDefault()->active) {
+            return $this->refuse("The promotion email for {$site->name} is switched off, so nothing would be sent.");
+        }
+
+        // Held for the fan-out's lifetime; the job releases it on completion or
+        // failure, and the TTL covers a worker that dies outright.
+        $lock = Cache::lock(
+            SendScheduledPromotionJob::runLockKey($schedule->id),
+            (int) config('promotions.fan_out_timeout', 900),
+        );
+
+        if (! $lock->get()) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'This campaign is already running. Wait for it to finish before starting another.',
+            ], Response::HTTP_CONFLICT);
+        }
+
+        // Stamp first: if the dispatch throws, the scheduler must not pick the
+        // same minute up and send a second time.
         $schedule->forceFill(['last_run_at' => now()])->save();
+
+        try {
+            SendScheduledPromotionJob::dispatch($schedule->id, $lock->owner());
+        } catch (Throwable $e) {
+            $lock->release();
+
+            Log::error('Manual promotion run could not be queued', [
+                'schedule_id' => $schedule->id,
+                'admin_id'    => auth()->id(),
+                'error'       => $e->getMessage(),
+            ]);
+
+            return $this->refuse('The campaign could not be queued. Check the queue connection and try again.');
+        }
+
+        Log::info('Promotion campaign queued manually', [
+            'schedule_id' => $schedule->id,
+            'site_id'     => $schedule->site_id,
+            'admin_id'    => auth()->id(),
+        ]);
 
         return response()->json([
             'ok'      => true,
-            'message' => 'Campaign queued for ' . ($schedule->site?->name ?? 'the selected site') . '.',
+            'message' => 'Campaign queued for ' . $site->name . '.',
         ]);
+    }
+
+    /** A refused run: 422 with the reason, and nothing queued. */
+    private function refuse(string $message): JsonResponse
+    {
+        return response()->json(
+            ['ok' => false, 'message' => $message],
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+        );
     }
 }

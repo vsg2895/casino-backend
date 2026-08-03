@@ -52,33 +52,13 @@ class ScheduleRecipientService
         $now ??= now();
         $siteId = $schedule->site_id;
 
-        $audience = Newsletter::query()
-            ->where('site_id', $siteId)
-            // Promotion opt-outs, in one correlated pass.
-            ->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
-                $sub->from('unsubscribes')
-                    ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $siteId)
-                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
-            });
-
         if ($schedule->usesLimit()) {
-            // Take the newest N FIRST…
-            $slice = $audience
-                ->orderByDesc('created_at')
-                ->orderByDesc('id')
-                ->limit((int) $schedule->limit)
-                // `deleted_at` must travel into the derived table: Newsletter is
-                // soft-deleting, so the outer query's global scope references
-                // newsletters.deleted_at (the inner has already filtered it).
-                ->select(['id', 'email', 'created_at', 'deleted_at']);
-
-            // …then drop those already delivered to. Filtering after the slice
-            // is essential: filtering before it would let a second run reach
-            // deeper into the list and mail a DIFFERENT N subscribers, when it
-            // should mail nobody.
+            // Take the newest N FIRST, then drop those already delivered to.
+            // Filtering after the slice is essential: filtering before it would
+            // let a second run reach deeper into the list and mail a DIFFERENT
+            // N subscribers, when it should mail nobody.
             return Newsletter::query()
-                ->fromSub($slice, 'newsletters')
+                ->fromSub($this->newestSlice($schedule), 'newsletters')
                 ->whereNotExists($this->alreadyDelivered($siteId, $now))
                 ->orderByDesc('created_at')
                 ->orderByDesc('id');
@@ -86,9 +66,44 @@ class ScheduleRecipientService
 
         [$start, $end] = $schedule->dateRange($now);
 
-        return $audience
+        return $this->audience($siteId)
             ->whereBetween('created_at', [$start, $end])
             ->whereNotExists($this->alreadyDelivered($siteId, $now));
+    }
+
+    /**
+     * The site's promotion-eligible subscribers: everyone who has not opted out
+     * of the promotion stream. The base every other query here builds on — no
+     * caller may reconstruct it.
+     */
+    private function audience(int $siteId): Builder
+    {
+        return Newsletter::query()
+            ->where('site_id', $siteId)
+            // Promotion opt-outs, in one correlated pass against the
+            // (site_id, email, type) unique key.
+            ->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
+                $sub->from('unsubscribes')
+                    ->whereColumn('unsubscribes.email', 'newsletters.email')
+                    ->where('unsubscribes.site_id', $siteId)
+                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+            });
+    }
+
+    /**
+     * The "newest N sign-ups" slice, before the already-delivered filter — the
+     * definition of the audience in limit mode.
+     */
+    private function newestSlice(EmailSchedule $schedule): Builder
+    {
+        return $this->audience($schedule->site_id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit((int) $schedule->limit)
+            // `deleted_at` must travel into the derived table: Newsletter is
+            // soft-deleting, so the outer query's global scope references
+            // newsletters.deleted_at (the inner has already filtered it).
+            ->select(['id', 'email', 'created_at', 'deleted_at']);
     }
 
     /**
@@ -174,54 +189,56 @@ class ScheduleRecipientService
      * The one traversal every consumer is built on: keyset pagination over the
      * audience, yielding one chunk at a time.
      *
-     * Date-window mode walks `id` ascending (equivalent to chunkById); newest-N
-     * mode walks (created_at, id) descending over the already-capped subquery.
-     * Both hold a single chunk in memory and are immune to rows being inserted
-     * mid-traversal.
+     * Both modes walk the (created_at, id) key — ascending through the window,
+     * descending through the newest-N slice — so each page is served by the
+     * newsletters (site_id, created_at) index, holds a single chunk in memory,
+     * and is immune to rows being inserted mid-traversal.
      *
      * @return Generator<int, Collection<int, Newsletter>>
      */
     private function stream(EmailSchedule $schedule, int $size, ?CarbonInterface $now = null): Generator
     {
-        $base = $this->query($schedule, $now);
+        $now ??= now();
 
-        if (! $schedule->usesLimit()) {
-            $base->select(['id', 'email', 'created_at']);
-            $lastId = 0;
+        if ($schedule->usesLimit()) {
+            yield from $this->streamNewest($schedule, $size, $now);
 
-            while (true) {
-                $rows = (clone $base)->reorder()
-                    ->where('id', '>', $lastId)
-                    ->orderBy('id')
-                    ->limit($size)
-                    ->get();
-
-                if ($rows->isEmpty()) {
-                    return;
-                }
-
-                yield $rows;
-                $lastId = (int) $rows->last()->id;
-            }
+            return;
         }
 
-        // Newest-N: page down the (created_at, id) key of the capped subquery.
+        yield from $this->streamWindow($schedule, $size, $now);
+    }
+
+    /**
+     * Date-window mode: keyset over (created_at, id) ascending.
+     *
+     * The key deliberately matches the newsletters (site_id, created_at) index —
+     * which implicitly carries the primary key — so both the range filter and
+     * the ordering are index-served and no page needs a sort. Walking plain `id`
+     * instead (the obvious chunkById shape) cannot use that index for ordering,
+     * and degrades into a primary-key scan once a site has enough subscribers.
+     *
+     * @return Generator<int, Collection<int, Newsletter>>
+     */
+    private function streamWindow(EmailSchedule $schedule, int $size, CarbonInterface $now): Generator
+    {
+        $base = $this->query($schedule, $now)->select(['id', 'email', 'created_at']);
         $cursor = null;
 
         while (true) {
-            $query = (clone $base)->limit($size);
+            $page = (clone $base)->reorder()->orderBy('created_at')->orderBy('id')->limit($size);
 
             if ($cursor !== null) {
                 [$lastCreatedAt, $lastId] = $cursor;
-                $query->where(function (Builder $q) use ($lastCreatedAt, $lastId): void {
-                    $q->where('created_at', '<', $lastCreatedAt)
+                $page->where(function (Builder $q) use ($lastCreatedAt, $lastId): void {
+                    $q->where('created_at', '>', $lastCreatedAt)
                         ->orWhere(function (Builder $tie) use ($lastCreatedAt, $lastId): void {
-                            $tie->where('created_at', '=', $lastCreatedAt)->where('id', '<', $lastId);
+                            $tie->where('created_at', '=', $lastCreatedAt)->where('id', '>', $lastId);
                         });
                 });
             }
 
-            $rows = $query->get();
+            $rows = $page->get();
 
             if ($rows->isEmpty()) {
                 return;
@@ -231,6 +248,72 @@ class ScheduleRecipientService
 
             $last = $rows->last();
             $cursor = [$last->created_at, (int) $last->id];
+        }
+    }
+
+    /**
+     * Newest-N mode: page the SLICE, then filter each page.
+     *
+     * The obvious implementation — paging {@see query()}, whose subquery is
+     * `LIMIT N` — re-runs that subquery for every page, so a 50k campaign sorts
+     * and materialises 50k rows once per page instead of once in total. Here the
+     * cursor walks the slice itself, and the already-delivered filter is applied
+     * per page against the history's unique key.
+     *
+     * Semantics are unchanged: rows count towards N whether or not they survive
+     * the filter, so a second run still resolves to nobody rather than reaching
+     * deeper into the list.
+     *
+     * @return Generator<int, Collection<int, Newsletter>>
+     */
+    private function streamNewest(EmailSchedule $schedule, int $size, CarbonInterface $now): Generator
+    {
+        $siteId = $schedule->site_id;
+        $remaining = (int) $schedule->limit;
+        $cursor = null;
+
+        while ($remaining > 0) {
+            $page = $this->audience($siteId)
+                ->orderByDesc('created_at')
+                ->orderByDesc('id')
+                ->limit(min($size, $remaining));
+
+            if ($cursor !== null) {
+                [$lastCreatedAt, $lastId] = $cursor;
+                $page->where(function (Builder $q) use ($lastCreatedAt, $lastId): void {
+                    $q->where('created_at', '<', $lastCreatedAt)
+                        ->orWhere(function (Builder $tie) use ($lastCreatedAt, $lastId): void {
+                            $tie->where('created_at', '=', $lastCreatedAt)->where('id', '<', $lastId);
+                        });
+                });
+            }
+
+            $slice = $page->get(['id', 'email', 'created_at']);
+
+            if ($slice->isEmpty()) {
+                return;
+            }
+
+            // Advance before filtering: the cap counts sliced rows, not mailed ones.
+            $remaining -= $slice->count();
+            $last = $slice->last();
+            $cursor = [$last->created_at, (int) $last->id];
+
+            // Same 24h definition as the count/preview — one indexed lookup for
+            // the page rather than a correlated subquery per row.
+            $delivered = array_flip(
+                PromotionEmailHistory::sentWithinDayAmong($siteId, $slice->pluck('email')->all(), $now),
+            );
+
+            $rows = $slice
+                ->reject(static fn (Newsletter $recipient): bool => isset($delivered[(string) $recipient->email]))
+                ->values();
+
+            unset($slice, $delivered);
+
+            if ($rows->isNotEmpty()) {
+                yield $rows;
+            }
         }
     }
 }

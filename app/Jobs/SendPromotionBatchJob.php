@@ -9,6 +9,7 @@ use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
 use App\Models\Site;
+use App\Models\SitePromotionEmail;
 use App\Models\Unsubscribe;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
@@ -22,20 +23,30 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Sends the site's promotion template to ONE BATCH of recipients (≈100 emails).
+ * Sends the site's promotion template to ONE BATCH of recipients.
  *
  * Efficiency (the whole point of batching):
  *  - Site + promotion template are loaded ONCE and reused for the batch.
  *  - Recipients are hydrated with their unsubscribe tokens in a SINGLE query
  *    (`whereIn` on the batch's emails) — no per-email lookups, no N+1. That same
  *    query re-excludes anyone who opted out since fan-out, so a last-second
- *    unsubscribe is still honored.
+ *    unsubscribe is still honored. Rows come back as plain objects rather than
+ *    Eloquent models: nothing here needs a model, and hydration is pure cost.
  *  - Only the email addresses travel in the job payload — never the tokens.
  *
  * Delivery transport is chosen per-schedule (see {@see PromotionMailerFactory}):
  * the .env SMTP mailer (default) OR a stored SendGrid key. Only the provider name
  * and the key ID travel in the payload — the decrypted key is resolved here at
  * send time, so a key disabled/deleted after fan-out fails the batch gracefully.
+ *
+ * DUPLICATE SAFETY. Two mechanisms, because at 50k recipients a retry is not a
+ * hypothetical:
+ *  1. Before sending, every address already delivered to within 24h is skipped
+ *     (one query against the history's UNIQUE key).
+ *  2. Outcomes are flushed to that history DURING the batch, every
+ *     `history_flush_size` attempts — not only at the end. A worker killed
+ *     mid-batch (timeout, OOM, deploy) therefore leaves at most one flush
+ *     window of delivered addresses unrecorded, instead of the whole batch.
  *
  * Runs on the LOW queue (marketing).
  */
@@ -48,11 +59,22 @@ class SendPromotionBatchJob implements ShouldQueue
 
     public const string ON_QUEUE = 'low';
 
+    /** Fallback attempts buffered before a history flush. */
+    private const int HISTORY_FLUSH_SIZE = 25;
+
     /** Retry the whole job once if it fails mid-batch (e.g. transient infra). */
     public int $tries = 2;
 
     /** Seconds to wait before that retry. */
     public int $backoff = 30;
+
+    /**
+     * Hard cap on a batch's runtime. Sending is sequential and network-bound, so
+     * without this the 60s worker default kills long batches — and, with
+     * `retry_after` at its default, hands the SAME batch to another worker while
+     * the first is still sending. MUST stay below the connection's `retry_after`.
+     */
+    public int $timeout;
 
     /** @param list<string> $emails */
     public function __construct(
@@ -62,6 +84,7 @@ class SendPromotionBatchJob implements ShouldQueue
         public readonly ?int $sendgridKeyId = null,
     ) {
         $this->onQueue(self::ON_QUEUE);
+        $this->timeout = (int) config('promotions.batch_timeout', 240);
     }
 
     public function handle(PromotionEmailService $promotions, PromotionMailerFactory $mailers): void
@@ -75,14 +98,16 @@ class SendPromotionBatchJob implements ShouldQueue
             return;
         }
 
-        $template = $site->promotionEmailOrDefault();
+        $template = $this->template($site);
 
-        if (! $template->active) {
+        if ($template === null || ! $template->active) {
             return;
         }
 
         // One query for the whole batch: fetch each address's promotion token and
-        // drop anyone who has since opted out of the promotion stream.
+        // drop anyone who has since opted out of the promotion stream. toBase()
+        // keeps the soft-delete scope but skips model hydration for rows we only
+        // read three scalars from.
         $recipients = Newsletter::query()
             ->where('site_id', $this->siteId)
             ->whereIn('email', $this->emails)
@@ -92,6 +117,7 @@ class SendPromotionBatchJob implements ShouldQueue
                     ->where('unsubscribes.site_id', $this->siteId)
                     ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
             })
+            ->toBase()
             ->get(['email', 'full_name', 'promotion_unsubscribe_token']);
 
         // Idempotency: one query against the history for who already received
@@ -122,13 +148,17 @@ class SendPromotionBatchJob implements ShouldQueue
 
         $mailer = $resolved->mailer;
         $fromAddress = $resolved->fromAddress;
+        $flushEvery = $this->flushSize();
 
-        // Outcome of every processed address (email => success|failed|skipped)
-        // — collected for ONE bulk history insert at the end (never
-        // per-recipient), so every attempt is recorded with its status.
-        // $errors carries the failure message for the failed ones.
+        // Outcome of every processed address (email => success|failed|skipped),
+        // buffered for a BULK history insert — never one write per recipient.
+        // $errors carries the failure message for the failed ones. Both are
+        // flushed and reset every $flushEvery attempts, so neither grows with
+        // the batch and a crash can only lose one window.
         $attempts = [];
         $errors = [];
+        $sent = 0;
+        $failed = 0;
 
         foreach ($recipients as $recipient) {
             $email = (string) $recipient->email;
@@ -136,40 +166,92 @@ class SendPromotionBatchJob implements ShouldQueue
             // Delivered within the last 24h — skip, and record the skip.
             if (isset($alreadySent[$email])) {
                 $attempts[$email] = PromotionEmailHistory::STATUS_SKIPPED;
-
-                continue;
+            } else {
+                try {
+                    // From = the authenticated .env mailbox with the template's
+                    // from_name as display name, so the SMTP server accepts it.
+                    $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
+                        ->usingFromAddress($fromAddress);
+                    $mailer->to($email)->send($mailable);
+                    $attempts[$email] = PromotionEmailHistory::STATUS_SUCCESS;
+                    $sent++;
+                } catch (Throwable $e) {
+                    // This address was attempted exactly once. Don't abort the
+                    // batch or fail the job for one bad recipient — log it,
+                    // record the failure, and keep going.
+                    Log::warning('Promotion send failed for a recipient', [
+                        'site_id' => $this->siteId,
+                        'email'   => $email,
+                        'error'   => $e->getMessage(),
+                    ]);
+                    $attempts[$email] = PromotionEmailHistory::STATUS_FAILED;
+                    // Stored on the history row so the admin can see WHY it
+                    // failed without digging through the logs.
+                    $errors[$email] = $e->getMessage();
+                    $failed++;
+                }
             }
-            try {
-                // From = the authenticated .env mailbox with the template's
-                // from_name as display name, so the SMTP server accepts it.
-                Log::info('Sending email to - ' . $email . ' Via site ' . $site->name);
-                $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
-                    ->usingFromAddress($fromAddress);
-                $mailer->to($email)->send($mailable);
-                $attempts[$email] = PromotionEmailHistory::STATUS_SUCCESS;
-            } catch (Throwable $e) {
-                // This address was attempted exactly once. Don't abort the batch
-                // or fail the job for one bad recipient — log it, record the
-                // failure, and keep going.
-                Log::warning('Promotion send failed for a recipient', [
-                    'site_id' => $this->siteId,
-                    'email'   => $email,
-                    'error'   => $e->getMessage(),
-                ]);
-                $attempts[$email] = PromotionEmailHistory::STATUS_FAILED;
-                // Stored on the history row so the admin can see WHY it failed
-                // without digging through the logs.
-                $errors[$email] = $e->getMessage();
+
+            // Checkpoint: everything decided so far is durable, so a retry after
+            // a crash resumes rather than re-sending.
+            if (count($attempts) >= $flushEvery) {
+                $this->recordHistory($attempts, $errors);
+                $attempts = [];
+                $errors = [];
             }
         }
 
+        // Release the batch's rows before the final write — nothing below reads
+        // them, and the job may sit in a long-lived worker process.
+        unset($recipients, $alreadySent);
+
         $this->recordHistory($attempts, $errors);
+
+        // One line per batch (not per recipient): a 50k campaign produces ~500
+        // log lines instead of 50,000.
+        Log::info('Promotion batch processed', [
+            'site_id' => $this->siteId,
+            'sent'    => $sent,
+            'failed'  => $failed,
+            'total'   => count($this->emails),
+        ]);
     }
 
     /**
-     * Append this batch's outcomes to the long-term history in a single bulk
-     * insert. Best-effort and fully isolated: a history-write failure is logged
-     * but never affects the (already completed) send flow or the job outcome.
+     * The site's promotion template.
+     *
+     * Read via the relation first so the common path is a pure SELECT: the
+     * firstOrCreate fallback only runs for a site whose template has never been
+     * touched, keeping a write (and a unique-key race between the batch jobs of
+     * one campaign) out of the hot path.
+     */
+    private function template(Site $site): ?SitePromotionEmail
+    {
+        /** @var SitePromotionEmail|null $existing */
+        $existing = $site->promotionEmail;
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        /** @var SitePromotionEmail $created */
+        $created = $site->promotionEmailOrDefault();
+
+        return $created;
+    }
+
+    /** Attempts buffered before a history flush; always at least one. */
+    private function flushSize(): int
+    {
+        $size = (int) config('promotions.history_flush_size', self::HISTORY_FLUSH_SIZE);
+
+        return max(1, $size);
+    }
+
+    /**
+     * Append these outcomes to the long-term history in a single bulk insert.
+     * Best-effort and fully isolated: a history-write failure is logged but
+     * never affects the (already completed) send flow or the job outcome.
      *
      * @param  array<string, string>       $attempts  email => STATUS_* value
      * @param  array<string, string|null>  $errors    email => failure message
