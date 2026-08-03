@@ -13,8 +13,28 @@ use Illuminate\Http\JsonResponse;
 
 class CasinoController extends Controller
 {
-    /** Relations rendered on the public site for every casino. */
-    private const RELATIONS = ['categories', 'featuredSpecialOffer', 'specialOffers'];
+    /**
+     * Relations rendered on the public site for every casino.
+     *
+     * The special-offer relations are constrained to VISIBLE offers here rather
+     * than on the relation itself, because the admin loads the same relations
+     * and must keep seeing hidden offers in order to edit them. Switching an
+     * offer's visibility off therefore removes its card from the casino page
+     * (and from a casino's featured slot) while leaving the offer intact and
+     * still reachable by direct URL.
+     *
+     * @return array<string, \Closure|string>
+     */
+    private static function relations(): array
+    {
+        $visibleOnly = static fn ($query) => $query->where('active', true);
+
+        return [
+            'categories',
+            'featuredSpecialOffer' => $visibleOnly,
+            'specialOffers'        => $visibleOnly,
+        ];
+    }
 
     public function index(): JsonResponse
     {
@@ -22,7 +42,7 @@ class CasinoController extends Controller
         $site = app('current_site');
 
         $data = SiteCache::remember($site->id, ['casinos'], 'casinos:index:site:' . $site->id, 3600, function () use ($site) {
-            $casinos = $this->baseQuery($site)->orderBy('pivot.position')->get()->load(self::RELATIONS);
+            $casinos = $this->baseQuery($site)->orderBy('pivot.position')->get()->load(self::relations());
 
             return CasinoWithAttachmentResource::collection($casinos)->resolve();
         });
@@ -36,7 +56,7 @@ class CasinoController extends Controller
         $site = app('current_site');
 
         $data = SiteCache::remember($site->id, ['casinos'], 'casinos:show:site:' . $site->id . ':slug:' . $slug, 3600, function () use ($site, $slug) {
-            $casino = $this->baseQuery($site)->where('casinos.slug', $slug)->firstOrFail()->load(self::RELATIONS);
+            $casino = $this->baseQuery($site)->where('casinos.slug', $slug)->firstOrFail()->load(self::relations());
 
             return (new CasinoWithAttachmentResource($casino))->resolve();
         });

@@ -31,7 +31,11 @@ class SpecialOfferController extends Controller
             . ':limit:' . ($limit ?? 'all');
 
         $data = SiteCache::remember($site->id, ['special-offers'], $cacheKey, 3600, function () use ($site, $category, $limit) {
-            $query = $this->baseQuery($site)->orderBy('special_offers.sort_order');
+            // Listings are visibility-gated: switching an offer off removes its
+            // card from the home page, the offers index and the casino page.
+            $query = $this->baseQuery($site)
+                ->where('special_offers.active', true)
+                ->orderBy('special_offers.sort_order');
 
             if ($category !== null) {
                 $query->whereHas('casino.categories', function ($q) use ($category): void {
@@ -49,6 +53,21 @@ class SpecialOfferController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    /**
+     * A single offer by slug — deliberately NOT visibility-gated.
+     *
+     * Visibility controls whether an offer is *promoted*, not whether it
+     * exists. An admin who copies an offer's link must be able to open and
+     * review the page while it is switched off, so hiding it must not turn the
+     * URL into a 404. The offer stays unreachable by navigation: it is absent
+     * from every listing, from the casino page and from the sitemap, and the
+     * page marks itself noindex while hidden so a hidden offer can never be
+     * indexed by a search engine.
+     *
+     * The site scoping still applies — an offer whose casino is not attached to
+     * this site remains a 404 here, which is the tenancy boundary and is not
+     * negotiable.
+     */
     public function show(string $site, string $slug): JsonResponse
     {
         /** @var Site $site */
@@ -63,12 +82,18 @@ class SpecialOfferController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    /** @return \Illuminate\Database\Eloquent\Builder<SpecialOffer> */
+    /**
+     * Offers belonging to a casino attached to (and active on) this site.
+     *
+     * Site scoping only — callers add the visibility filter when they are
+     * building a listing.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder<SpecialOffer>
+     */
     private function baseQuery(Site $site)
     {
         return SpecialOffer::query()
             ->with('casino')
-            ->where('special_offers.active', true)
             ->whereHas('casino.sites', function ($q) use ($site): void {
                 $q->where('sites.id', $site->id)->where('casino_site.active', true);
             });

@@ -73,7 +73,16 @@ class SpecialOfferController extends Controller
         $siteIds = $offer->casino?->sites()->pluck('sites.id')->all() ?? [];
 
         if (! empty($siteIds)) {
-            InvalidateCasinoCache::dispatch($siteIds);
+            // Every surface an offer appears on, or a visibility toggle would
+            // keep showing the card for up to an hour of stale ISR:
+            //  - casinos          → the offer cards on the casino page
+            //  - special-offers   → the home-page section and /special-offers
+            //  - special-offer:*  → the offer's own detail page
+            InvalidateCasinoCache::dispatch($siteIds, [
+                'casinos',
+                'special-offers',
+                'special-offer:' . $offer->slug,
+            ]);
         }
     }
 }

@@ -17,8 +17,19 @@ class InvalidateCasinoCache
 {
     use Dispatchable;
 
-    /** @param int[] $siteIds */
-    public function __construct(private readonly array $siteIds) {}
+    /**
+     * @param  int[]         $siteIds
+     * @param  list<string>  $tags  Next.js cache tags to revalidate. The Laravel
+     *                              side always flushes the whole site, but
+     *                              Next.js only drops the tags it is told about
+     *                              — anything omitted keeps serving its ISR copy
+     *                              until the 1h window expires. Callers that
+     *                              change more than casinos must say so.
+     */
+    public function __construct(
+        private readonly array $siteIds,
+        private readonly array $tags = ['casinos'],
+    ) {}
 
     public function handle(): void
     {
@@ -27,7 +38,7 @@ class InvalidateCasinoCache
         }
 
         if (! empty($this->siteIds)) {
-            RevalidateNextJsSites::dispatch(['casinos'], array_values($this->siteIds));
+            RevalidateNextJsSites::dispatch($this->tags, array_values($this->siteIds));
         }
     }
 }
