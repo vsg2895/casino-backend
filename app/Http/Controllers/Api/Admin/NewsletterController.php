@@ -21,17 +21,33 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class NewsletterController extends Controller
 {
+    /** Page size bounds for the admin listing. */
+    private const int DEFAULT_PER_PAGE = 50;
+    private const int MAX_PER_PAGE = 200;
+
     public function index(Request $request): AnonymousResourceCollection
     {
         $siteId = $request->integer('site_id') ?: null;
         $trashed = $request->boolean('trashed');
 
+        // Driven by the table's rows-per-page control, clamped so a crafted
+        // request cannot ask for a 50k-row page.
+        $perPage = min(
+            max($request->integer('per_page') ?: self::DEFAULT_PER_PAGE, 1),
+            self::MAX_PER_PAGE,
+        );
+
         $query = Newsletter::with('site')
             ->when($siteId, fn ($q) => $q->where('site_id', $siteId))
             ->when($trashed, fn ($q) => $q->onlyTrashed())
-            ->when($trashed, fn ($q) => $q->orderByDesc('deleted_at'), fn ($q) => $q->latest());
+            ->when($trashed, fn ($q) => $q->orderByDesc('deleted_at'), fn ($q) => $q->latest())
+            // Tiebreaker, and not optional: a bulk import writes hundreds of rows
+            // with an identical created_at, and MySQL does not guarantee a stable
+            // order among ties. Without this, paging through an imported list
+            // repeats some rows and skips others.
+            ->orderByDesc('id');
 
-        return NewsletterResource::collection($query->paginate(50));
+        return NewsletterResource::collection($query->paginate($perPage));
     }
 
     public function store(StoreNewsletterRequest $request): NewsletterResource
