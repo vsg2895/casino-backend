@@ -14,8 +14,15 @@ use Illuminate\Http\JsonResponse;
 
 class CategoryController extends Controller
 {
-    /** Casinos shown per page within a category. */
-    private const PER_PAGE = 4;
+    /**
+     * Casinos shown per page within a category.
+     *
+     * Drives both the home page's category section and the paginated
+     * /casinos?category= catalog, so the two always agree on what "a page" is —
+     * which is what lets the front end decide whether there is more to show by
+     * comparing the total against the rows it received.
+     */
+    private const PER_PAGE = 6;
 
     public function index(): JsonResponse
     {
