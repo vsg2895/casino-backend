@@ -71,6 +71,9 @@ Route::prefix('v1')->group(function () {
         Route::post('sites/{site}/promotion-email/test', [SitePromotionEmailController::class, 'sendTest']);
 
         // Casinos ("Products")
+        // Dedicated record counter. MUST be declared before the resource route,
+        // or `casinos/{casino}` would swallow "count" as an id.
+        Route::get('casinos/count', [AdminCasinoController::class, 'count']);
         Route::apiResource('casinos', AdminCasinoController::class);
         Route::prefix('casinos/{casino}/sites')->group(function () {
             Route::get('',          [CasinoSiteAttachmentController::class, 'index']);
@@ -85,11 +88,15 @@ Route::prefix('v1')->group(function () {
             ->only(['index', 'store', 'update', 'destroy']);
 
         // Special Offers
+        // Dedicated record counter. MUST be declared before the resource route,
+        // or `special-offers/{specialOffer}` would swallow "count" as an id.
+        Route::get('special-offers/count', [AdminSpecialOfferController::class, 'count']);
         Route::apiResource('special-offers', AdminSpecialOfferController::class);
         Route::post('special-offers/{specialOffer}/duplicate', [AdminSpecialOfferController::class, 'duplicate']);
 
         // Newsletter
         Route::get('newsletters', [AdminNewsletterController::class, 'index']);
+        Route::get('newsletters/count', [AdminNewsletterController::class, 'count']);
         Route::post('newsletters', [AdminNewsletterController::class, 'store']);
         Route::post('newsletters/import', [AdminNewsletterController::class, 'import']);
         // Progress of a queued import — polled by the admin panel until finished.
@@ -123,9 +130,11 @@ Route::prefix('v1')->group(function () {
 
         // Promotion delivery history (read-only; partitioned + prefix search)
         Route::get('promotion-history', [PromotionEmailHistoryController::class, 'index']);
+        Route::get('promotion-history/count', [PromotionEmailHistoryController::class, 'count']);
 
         // Unsubscribes (per-stream opt-out log)
         Route::get('unsubscribes', [UnsubscribeController::class, 'index']);
+        Route::get('unsubscribes/count', [UnsubscribeController::class, 'count']);
         Route::get('unsubscribes/export', [UnsubscribeController::class, 'export']);
         Route::delete('unsubscribes/{unsubscribe}', [UnsubscribeController::class, 'destroy']);
 

@@ -30,8 +30,11 @@ class SitePromotionEmailResource extends JsonResource
             'cta_button_text'   => $this->cta_button_text,
             'disclaimer_text'   => $this->disclaimer_text,
             'unsubscribe_label' => $this->unsubscribe_label,
-            'button_color'      => $this->button_color,
-            'accent_color'      => $this->accent_color,
+            // Palette. Each falls back to the design default so a row written
+            // before these columns existed still returns a usable colour.
+            ...collect(SitePromotionEmail::COLOR_DEFAULTS)
+                ->map(fn (string $default, string $field): string => (string) ($this->{$field} ?: $default))
+                ->all(),
             'active'            => $this->active,
             // Helps the admin UI show which domain the from address must use.
             'from_domain'       => (string) config('services.sendgrid.from_domain', 'example.com'),

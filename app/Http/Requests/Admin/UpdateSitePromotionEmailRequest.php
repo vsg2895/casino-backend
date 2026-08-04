@@ -46,6 +46,18 @@ class UpdateSitePromotionEmailRequest extends FormRequest
             'disclaimer_text'   => ['nullable', 'string', 'max:1000'],
             'button_color'      => ['required', 'string', $hex],
             'accent_color'      => ['required', 'string', $hex],
+
+            // ── Palette: canvas + per-section text ───────────────────────
+            // Nullable rather than required so a client that predates these
+            // fields keeps working; the model falls back to the design default
+            // for anything omitted. Not removable content — a cleared colour is
+            // a missing colour, not a dropped block.
+            'background_color'     => ['nullable', 'string', $hex],
+            'heading_color'        => ['nullable', 'string', $hex],
+            'text_color'           => ['nullable', 'string', $hex],
+            'secondary_text_color' => ['nullable', 'string', $hex],
+            'muted_text_color'     => ['nullable', 'string', $hex],
+
             'active'            => ['required', 'boolean'],
         ];
     }
@@ -54,8 +66,13 @@ class UpdateSitePromotionEmailRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'button_color.regex' => 'The button color must be a valid hex color (e.g. #75B636).',
-            'accent_color.regex' => 'The accent color must be a valid hex color (e.g. #f3a333).',
+            'button_color.regex'         => 'The button color must be a valid hex color (e.g. #75B636).',
+            'accent_color.regex'         => 'The accent color must be a valid hex color (e.g. #f3a333).',
+            'background_color.regex'     => 'The background color must be a valid hex color (e.g. #000000).',
+            'heading_color.regex'        => 'The heading color must be a valid hex color (e.g. #ffffff).',
+            'text_color.regex'           => 'The text color must be a valid hex color (e.g. #ffffff).',
+            'secondary_text_color.regex' => 'The secondary text color must be a valid hex color (e.g. #d9d9d9).',
+            'muted_text_color.regex'     => 'The muted text color must be a valid hex color (e.g. #b3b3b3).',
         ];
     }
 }

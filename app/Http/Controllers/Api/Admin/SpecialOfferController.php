@@ -24,6 +24,19 @@ class SpecialOfferController extends Controller
         );
     }
 
+    /**
+     * Total special offers, as a dedicated COUNT.
+     *
+     * Kept off the listing request on purpose: that query eager-loads
+     * casino.sites and orders by created_at, and neither has any bearing on the
+     * total. This is a bare COUNT against the primary table (soft-deleted rows
+     * excluded by the model's global scope).
+     */
+    public function count(): JsonResponse
+    {
+        return response()->json(['total' => SpecialOffer::query()->count()]);
+    }
+
     public function store(StoreSpecialOfferRequest $request): SpecialOfferResource
     {
         $offer = SpecialOffer::create($request->validated());

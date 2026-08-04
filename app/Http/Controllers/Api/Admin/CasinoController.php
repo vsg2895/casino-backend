@@ -20,6 +20,20 @@ class CasinoController extends Controller
         );
     }
 
+    /**
+     * Total casinos, as a dedicated COUNT.
+     *
+     * Kept off the listing request on purpose: the listing eager-loads
+     * categories and orders by created_at, and neither has any bearing on the
+     * total. This is a bare COUNT against the primary table (soft-deleted rows
+     * excluded by the model's global scope), so it stays cheap as the catalogue
+     * grows.
+     */
+    public function count(): JsonResponse
+    {
+        return response()->json(['total' => Casino::query()->count()]);
+    }
+
     public function store(StoreCasinoRequest $request): CasinoResource
     {
         $data = $request->validated();

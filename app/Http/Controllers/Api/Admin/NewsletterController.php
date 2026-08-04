@@ -13,6 +13,7 @@ use App\Jobs\ImportNewslettersJob;
 use App\Models\Newsletter;
 use App\Models\NewsletterImport;
 use App\Support\CsvExport;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -27,7 +28,6 @@ class NewsletterController extends Controller
 
     public function index(Request $request): AnonymousResourceCollection
     {
-        $siteId = $request->integer('site_id') ?: null;
         $trashed = $request->boolean('trashed');
 
         // Driven by the table's rows-per-page control, clamped so a crafted
@@ -37,9 +37,8 @@ class NewsletterController extends Controller
             self::MAX_PER_PAGE,
         );
 
-        $query = Newsletter::with('site')
-            ->when($siteId, fn ($q) => $q->where('site_id', $siteId))
-            ->when($trashed, fn ($q) => $q->onlyTrashed())
+        $query = $this->filtered($request)
+            ->with('site')
             ->when($trashed, fn ($q) => $q->orderByDesc('deleted_at'), fn ($q) => $q->latest())
             // Tiebreaker, and not optional: a bulk import writes hundreds of rows
             // with an identical created_at, and MySQL does not guarantee a stable
@@ -48,6 +47,35 @@ class NewsletterController extends Controller
             ->orderByDesc('id');
 
         return NewsletterResource::collection($query->paginate($perPage));
+    }
+
+    /**
+     * Total matching the current filters, as a dedicated COUNT.
+     *
+     * Built from {@see filtered()} — the same site / trash conditions the
+     * listing uses — with no eager load, no ordering and no column selection.
+     * At 50k+ subscribers per site the `with('site')` alone would cost a second
+     * query for nothing, since the total does not depend on it.
+     */
+    public function count(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filtered($request)->count()]);
+    }
+
+    /**
+     * The filter conditions, and nothing else. THE single definition of "which
+     * subscribers is the admin looking at", shared by the listing and the count
+     * so the two can never disagree.
+     *
+     * @return Builder<Newsletter>
+     */
+    private function filtered(Request $request): Builder
+    {
+        $siteId = $request->integer('site_id') ?: null;
+
+        return Newsletter::query()
+            ->when($siteId, fn ($q) => $q->where('site_id', $siteId))
+            ->when($request->boolean('trashed'), fn ($q) => $q->onlyTrashed());
     }
 
     public function store(StoreNewsletterRequest $request): NewsletterResource

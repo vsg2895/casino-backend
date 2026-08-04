@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UnsubscribeResource;
 use App\Models\Unsubscribe;
 use App\Support\CsvExport;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -23,13 +24,40 @@ class UnsubscribeController extends Controller
 {
     public function index(Request $request): AnonymousResourceCollection
     {
-        $query = Unsubscribe::with('site')
-            ->when($request->integer('site_id') ?: null, fn ($q, $id) => $q->where('site_id', $id))
-            ->when($this->validType($request), fn ($q, $type) => $q->where('type', $type))
-            ->when(trim((string) $request->query('search')), fn ($q, $term) => $q->where('email', 'like', "%{$term}%"))
+        $query = $this->filtered($request)
+            ->with('site')
             ->orderByDesc('unsubscribed_at');
 
         return UnsubscribeResource::collection($query->paginate(50)->withQueryString());
+    }
+
+    /**
+     * Total matching the current filters, as a dedicated COUNT.
+     *
+     * Built from {@see filtered()} — the same conditions the listing uses — but
+     * deliberately without the eager load, the ordering or any column
+     * selection: none of them affect the total, and all of them cost time on a
+     * table heading for millions of rows. Kept off the listing request so the
+     * paginated query never carries the weight of counting.
+     */
+    public function count(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filtered($request)->count()]);
+    }
+
+    /**
+     * The filter conditions, and nothing else. THE single definition of "which
+     * unsubscribes is the admin looking at" — the listing, the count and the
+     * export all build on it, so the three can never disagree.
+     *
+     * @return Builder<Unsubscribe>
+     */
+    private function filtered(Request $request): Builder
+    {
+        return Unsubscribe::query()
+            ->when($request->integer('site_id') ?: null, fn ($q, $id) => $q->where('site_id', $id))
+            ->when($this->validType($request), fn ($q, $type) => $q->where('type', $type))
+            ->when(trim((string) $request->query('search')), fn ($q, $term) => $q->where('email', 'like', "%{$term}%"));
     }
 
     public function export(Request $request): StreamedResponse

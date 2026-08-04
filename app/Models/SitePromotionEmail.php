@@ -51,8 +51,28 @@ class SitePromotionEmail extends Model
         'disclaimer_text',
         'unsubscribe_label',
         'button_color',
+        'background_color',
+        'heading_color',
+        'text_color',
+        'secondary_text_color',
+        'muted_text_color',
         'accent_color',
         'active',
+    ];
+
+    /**
+     * Every colour the layout paints with, and the value to fall back on when a
+     * row predates the column or an unsaved preview omits it. Together these
+     * reproduce the original dark design exactly.
+     */
+    public const array COLOR_DEFAULTS = [
+        'button_color'         => '#75B636',
+        'background_color'     => '#000000',
+        'heading_color'        => '#ffffff',
+        'text_color'           => '#ffffff',
+        'secondary_text_color' => '#d9d9d9',
+        'muted_text_color'     => '#b3b3b3',
+        'accent_color'         => '#f3a333',
     ];
 
     protected function casts(): array
@@ -91,8 +111,7 @@ class SitePromotionEmail extends Model
             'cta_button_text'   => 'Register Your Account',
             'disclaimer_text'   => "This is a one-time invitation to join {{site_name}}. If you're not interested, you can simply disregard this message.",
             'unsubscribe_label' => 'Unsubscribe',
-            'button_color'      => '#75B636',
-            'accent_color'      => '#f3a333',
+            ...self::COLOR_DEFAULTS,
             'active'            => true,
         ];
     }
@@ -129,8 +148,13 @@ class SitePromotionEmail extends Model
             $out[$field] = self::richToHtml($replace((string) $this->{$field}));
         }
 
-        $out['button_color'] = $this->button_color;
-        $out['accent_color'] = $this->accent_color;
+        // Colours never take placeholders. Each falls back to the design default
+        // so an unsaved preview — or a row written before these columns existed —
+        // still renders a complete palette instead of emitting empty CSS.
+        foreach (self::COLOR_DEFAULTS as $field => $default) {
+            $value = trim((string) $this->{$field});
+            $out[$field] = $value !== '' ? $value : $default;
+        }
 
         return $out;
     }

@@ -45,12 +45,12 @@
         <td align="center" valign="top" style="padding:0;">
 
             <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"><tr><td><![endif]-->
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#000000" style="{{ $block }} max-width:600px; background-color:#000000;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="{{ $background }}" style="{{ $block }} max-width:600px; background-color:{{ $background }};">
                 <tbody>
                 <tr>
                     {{-- Single master cell: every block below is a self-contained
                          table stacked inside it, rather than a sibling row. --}}
-                    <td valign="top" bgcolor="#000000" style="padding:0; background-color:#000000;">
+                    <td valign="top" bgcolor="{{ $background }}" style="padding:0; background-color:{{ $background }};">
 
                         {{-- Hero image — dropped entirely when the admin clears it.
                              Linked to the offer only when an offer URL is set. --}}
@@ -100,22 +100,22 @@
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
-                                    <td align="center" style="padding:30px 20px; text-align:center; color:#ffffff; font-family:{{ $face }};">
+                                    <td align="center" style="padding:30px 20px; text-align:center; color:{{ $textColor }}; font-family:{{ $face }};">
                                         @if (! empty($t['heading']))
-                                            <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:#ffffff;">{{ $t['heading'] }}</h2>
+                                            <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:{{ $headingColor }};">{{ $t['heading'] }}</h2>
                                         @endif
 
                                         @if (! empty($greeting))
                                             {{-- Optional "Dear {name}," — only when a name was captured. --}}
-                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:#ffffff;">{{ $greeting }}</p>
+                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{{ $greeting }}</p>
                                         @endif
 
                                         @if (! empty($t['intro_text']))
-                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:#ffffff;">{!! $t['intro_text'] !!}</p>
+                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{!! $t['intro_text'] !!}</p>
                                         @endif
 
                                         @if (! empty($t['secondary_text']))
-                                            <p style="margin:0; font-size:16px; line-height:1.6; color:rgba(255,255,255,0.85);">{!! $t['secondary_text'] !!}</p>
+                                            <p style="margin:0; font-size:16px; line-height:1.6; color:{{ $secondaryColor }};">{!! $t['secondary_text'] !!}</p>
                                         @endif
                                     </td>
                                 </tr>
@@ -145,7 +145,7 @@
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
-                                    <td align="center" style="padding:30px 20px 10px; text-align:center; font-family:{{ $face }}; font-size:13px; line-height:1.6; color:rgba(255,255,255,0.7);">{!! $t['disclaimer_text'] !!}</td>
+                                    <td align="center" style="padding:30px 20px 10px; text-align:center; font-family:{{ $face }}; font-size:13px; line-height:1.6; color:{{ $mutedColor }};">{!! $t['disclaimer_text'] !!}</td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -155,7 +155,7 @@
                         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                             <tbody>
                             <tr>
-                                <td align="center" style="padding:10px 20px 30px; text-align:center; font-family:{{ $face }}; font-size:12px; line-height:1.5; color:rgba(255,255,255,0.5);">
+                                <td align="center" style="padding:10px 20px 30px; text-align:center; font-family:{{ $face }}; font-size:12px; line-height:1.5; color:{{ $mutedColor }};">
                                     <a href="{{ $unsubscribeUrl }}" style="color:{{ $accent }}; text-decoration:underline;">{{ $t['unsubscribe_label'] }}</a>
                                 </td>
                             </tr>

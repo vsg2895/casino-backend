@@ -73,8 +73,15 @@ class PromotionEmail extends Mailable implements SenderOverridable
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'greeting'       => $this->greeting,
+                // Palette — already defaulted in SitePromotionEmail::render(),
+                // so the view never has to guard against a missing colour.
                 'buttonColor'    => $this->template['button_color'],
                 'accent'         => $this->template['accent_color'],
+                'background'     => $this->template['background_color'],
+                'headingColor'   => $this->template['heading_color'],
+                'textColor'      => $this->template['text_color'],
+                'secondaryColor' => $this->template['secondary_text_color'],
+                'mutedColor'     => $this->template['muted_text_color'],
             ],
         );
     }
