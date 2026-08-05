@@ -110,11 +110,18 @@ class SendScheduledPromotionJob implements ShouldQueue
 
         $siteId = $schedule->site_id;
 
-        // Delivery transport is per-schedule. Only the provider name + the key ID
-        // travel into the batch jobs — never the decrypted key (which is resolved
-        // and re-validated inside each batch job at send time).
+        // Delivery transport is per-schedule. Only the provider name + the
+        // credential ID travel into the batch jobs — never the decrypted key
+        // (which is resolved and re-validated inside each batch job at send
+        // time). That holds for every provider: SMTP carries no credential,
+        // SendGrid and Mailgun carry only a row id in their own table.
         $provider = $schedule->provider ?? EmailSchedule::PROVIDER_SMTP;
+        // Legacy slot, still populated so a batch job that outlives a rollback
+        // resolves exactly the way it always did.
         $sendgridKeyId = $schedule->sendgrid_key_id;
+        // Provider-agnostic credential: the schedule knows which column its
+        // provider reads, so the batch job never has to.
+        $credentialId = $schedule->providerCredentialId();
 
         $batchSize = $this->positiveConfig('promotions.batch_size', self::BATCH_SIZE);
         // Never read less than one batch per round-trip.
@@ -129,7 +136,7 @@ class SendScheduledPromotionJob implements ShouldQueue
         $recipients->eachChunk(
             $schedule,
             $readChunk,
-            function (Collection $rows) use ($siteId, $provider, $sendgridKeyId, $batchSize, &$queued): void {
+            function (Collection $rows) use ($siteId, $provider, $sendgridKeyId, $credentialId, $batchSize, &$queued): void {
                 // Reduce the chunk to a flat address list immediately: the
                 // hydrated rows are not needed past this point and holding them
                 // while dispatching would keep a whole read chunk alive.
@@ -137,7 +144,7 @@ class SendScheduledPromotionJob implements ShouldQueue
                 unset($rows);
 
                 foreach (array_chunk($emails, $batchSize) as $payload) {
-                    SendPromotionBatchJob::dispatch($siteId, $payload, $provider, $sendgridKeyId);
+                    SendPromotionBatchJob::dispatch($siteId, $payload, $provider, $sendgridKeyId, $credentialId);
                     $queued += count($payload);
                 }
             },

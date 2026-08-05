@@ -31,7 +31,7 @@ class EmailScheduleController extends Controller
     public function index(): AnonymousResourceCollection
     {
         return EmailScheduleResource::collection(
-            EmailSchedule::with(['site', 'sendgridKey'])->latest()->paginate(50),
+            EmailSchedule::with(['site', 'sendgridKey', 'mailgunKey'])->latest()->paginate(50),
         );
     }
 
@@ -39,7 +39,7 @@ class EmailScheduleController extends Controller
     {
         $schedule = EmailSchedule::create($request->validated());
 
-        return (new EmailScheduleResource($schedule->load(['site', 'sendgridKey'])))
+        return (new EmailScheduleResource($schedule->load(['site', 'sendgridKey', 'mailgunKey'])))
             ->response()
             ->setStatusCode(Response::HTTP_CREATED);
     }
@@ -48,7 +48,7 @@ class EmailScheduleController extends Controller
     {
         $schedule->update($request->validated());
 
-        return new EmailScheduleResource($schedule->load(['site', 'sendgridKey']));
+        return new EmailScheduleResource($schedule->load(['site', 'sendgridKey', 'mailgunKey']));
     }
 
     public function destroy(EmailSchedule $schedule): JsonResponse

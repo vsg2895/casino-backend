@@ -43,9 +43,21 @@ class EmailSchedule extends Model
     // Delivery transport.
     public const string PROVIDER_SMTP = 'smtp';         // .env SMTP (default)
     public const string PROVIDER_SENDGRID = 'sendgrid'; // stored SendGrid key
+    public const string PROVIDER_MAILGUN = 'mailgun';   // stored Mailgun credential
 
     /** @var list<string> */
-    public const array PROVIDERS = [self::PROVIDER_SMTP, self::PROVIDER_SENDGRID];
+    public const array PROVIDERS = [self::PROVIDER_SMTP, self::PROVIDER_SENDGRID, self::PROVIDER_MAILGUN];
+
+    /**
+     * Which credential column each provider reads. SMTP is absent on purpose —
+     * it is configured entirely from the environment and has no stored row.
+     *
+     * @var array<string, string>
+     */
+    public const array PROVIDER_CREDENTIAL_COLUMNS = [
+        self::PROVIDER_SENDGRID => 'sendgrid_key_id',
+        self::PROVIDER_MAILGUN  => 'mailgun_key_id',
+    ];
 
     protected $fillable = [
         'site_id',
@@ -59,6 +71,7 @@ class EmailSchedule extends Model
         'day_of_month',
         'provider',
         'sendgrid_key_id',
+        'mailgun_key_id',
         'active',
     ];
 
@@ -70,6 +83,7 @@ class EmailSchedule extends Model
             'day_of_week'     => 'integer',
             'day_of_month'    => 'integer',
             'sendgrid_key_id' => 'integer',
+            'mailgun_key_id'  => 'integer',
             'active'          => 'boolean',
             'last_run_at'     => 'datetime',
         ];
@@ -86,10 +100,37 @@ class EmailSchedule extends Model
         return $this->belongsTo(SendgridKey::class);
     }
 
+    /** The stored Mailgun credential this schedule sends through (provider=mailgun). */
+    public function mailgunKey(): BelongsTo
+    {
+        return $this->belongsTo(MailgunKey::class);
+    }
+
     /** Whether this schedule delivers via a stored SendGrid key rather than SMTP. */
     public function usesSendgrid(): bool
     {
         return $this->provider === self::PROVIDER_SENDGRID;
+    }
+
+    /** Whether this schedule delivers via a stored Mailgun credential. */
+    public function usesMailgun(): bool
+    {
+        return $this->provider === self::PROVIDER_MAILGUN;
+    }
+
+    /**
+     * The credential row id for whichever provider is selected, or null for
+     * SMTP (and for any provider with no stored credential).
+     *
+     * This is what travels into the send jobs, so the batch job never has to
+     * know which providers exist — adding one is a new entry in
+     * {@see PROVIDER_CREDENTIAL_COLUMNS}, not a new job parameter.
+     */
+    public function providerCredentialId(): ?int
+    {
+        $column = self::PROVIDER_CREDENTIAL_COLUMNS[$this->provider] ?? null;
+
+        return $column === null ? null : ($this->{$column} === null ? null : (int) $this->{$column});
     }
 
     /**

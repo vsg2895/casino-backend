@@ -6,96 +6,113 @@ namespace App\Services\Mail;
 
 use App\Exceptions\PromotionMailerException;
 use App\Models\EmailSchedule;
+use App\Models\MailgunKey;
 use App\Models\SendgridKey;
+use App\Services\Mail\Providers\MailgunTransportProvider;
+use App\Services\Mail\Providers\PromotionTransportProvider;
+use App\Services\Mail\Providers\SendgridTransportProvider;
+use App\Services\Mail\Providers\SmtpTransportProvider;
 use Illuminate\Contracts\Mail\Mailer;
-use Illuminate\Support\Facades\Mail;
 
 /**
  * Resolves the mail transport for a promotion campaign from its saved provider.
  *
- *  - SMTP (default, and every pre-existing schedule): the .env SMTP mailer
- *    (config('mail.admin_mailer')) FROM the operator's authenticated mailbox —
- *    IDENTICAL to the previous behaviour, so nothing about SMTP changes.
+ * Previously this class held the SMTP and SendGrid branches inline. They now
+ * live behind {@see PromotionTransportProvider}, one implementation per
+ * provider, and this class is the registry that picks between them. The
+ * behaviour of each existing branch is unchanged — SMTP still resolves to
+ * config('mail.admin_mailer'), SendGrid still requires an ACTIVE stored key and
+ * still throws the same {@see PromotionMailerException} otherwise.
  *
- *  - SendGrid: a runtime `sendgrid` mailer authenticated with a STORED key
- *    (decrypted from the DB), sent via the native SendGrid Web API transport
- *    registered in AppServiceProvider. The key is re-loaded and re-validated at
- *    send time, so a key disabled/deleted after scheduling throws
- *    {@see PromotionMailerException} (the job then fails gracefully).
+ * Adding a provider is one entry in {@see providers()} plus its implementation;
+ * no caller changes.
  *
- * The From address is the same for both providers (config('mail.from.address')),
+ * The From address is the same for every provider (config('mail.from.address')),
  * so switching transport never silently changes the visible sender.
  */
 class PromotionMailerFactory
 {
+    /** @var array<string, PromotionTransportProvider>|null */
+    private ?array $providers = null;
+
     /**
-     * @throws PromotionMailerException when a SendGrid provider has no usable key.
+     * @param  int|null  $credentialId  Row id in the selected provider's
+     *                                  credential table. Null for SMTP.
+     *
+     * @throws PromotionMailerException when the provider has no usable credential.
      */
-    public function resolve(string $provider, ?int $sendgridKeyId): ResolvedPromotionMailer
+    public function resolve(string $provider, ?int $credentialId): ResolvedPromotionMailer
     {
-        $fromAddress = config('mail.from.address') ?: null;
-
-        if ($provider === EmailSchedule::PROVIDER_SENDGRID) {
-            return new ResolvedPromotionMailer(
-                $this->sendgridMailer($sendgridKeyId),
-                $fromAddress,
-            );
-        }
-
-        // SMTP (default): unchanged .env transport.
         return new ResolvedPromotionMailer(
-            Mail::mailer(config('mail.admin_mailer')),
-            $fromAddress,
+            $this->providerFor($provider)->resolve($credentialId),
+            config('mail.from.address') ?: null,
         );
     }
 
     /**
-     * Build a SendGrid mailer bound to a SPECIFIC stored key — including an
-     * INACTIVE one. Campaign sends never reach this directly (they go through
-     * {@see sendgridMailer()}, which enforces the active check); it is public so
-     * the admin "Send test" action can verify a key before enabling it, or
-     * diagnose one that was disabled.
+     * Mailer bound to a specific stored SendGrid key, active or not.
      *
-     * Uses a per-key mailer name so long-lived queue workers never reuse another
-     * key's cached transport, and purges it first so a rotated key value is
-     * always picked up.
-     *
-     * @throws PromotionMailerException when the stored key value is empty.
-     */
-    public function mailerForKey(SendgridKey $key): Mailer
-    {
-        $plainKey = (string) $key->api_key; // decrypted via the model cast
-        if ($plainKey === '') {
-            throw new PromotionMailerException(
-                "SendGrid key #{$key->id} has an empty value; cannot authenticate.",
-            );
-        }
-
-        $name = 'sendgrid_key_' . $key->id;
-        config()->set("mail.mailers.{$name}", ['transport' => 'sendgrid', 'key' => $plainKey]);
-        Mail::purge($name);
-
-        return Mail::mailer($name);
-    }
-
-    /**
-     * The campaign path: resolve the stored key by id, requiring it to still be
-     * ACTIVE at send time.
+     * Kept on this class as a stable entry point for the admin "Send test"
+     * action, which predates the provider abstraction.
      *
      * @throws PromotionMailerException
      */
-    private function sendgridMailer(?int $sendgridKeyId): Mailer
+    public function mailerForKey(SendgridKey $key): Mailer
     {
-        $key = $sendgridKeyId === null
-            ? null
-            : SendgridKey::query()->active()->find($sendgridKeyId);
+        return $this->sendgrid()->mailerForKey($key);
+    }
 
-        if ($key === null) {
-            throw new PromotionMailerException(
-                "SendGrid key #{$sendgridKeyId} is missing or inactive; cannot send promotion campaign.",
-            );
+    /**
+     * Mailer bound to a specific stored Mailgun credential, active or not —
+     * the Mailgun counterpart of {@see mailerForKey()}.
+     *
+     * @throws PromotionMailerException
+     */
+    public function mailerForMailgunKey(MailgunKey $key): Mailer
+    {
+        return $this->mailgun()->mailerForKey($key);
+    }
+
+    /**
+     * The provider for a stored value.
+     *
+     * An unknown provider falls back to SMTP rather than throwing: the column is
+     * a free-form string, and a schedule saved by a future version must degrade
+     * to the default transport instead of breaking the whole campaign.
+     */
+    private function providerFor(string $provider): PromotionTransportProvider
+    {
+        return $this->providers()[$provider]
+            ?? $this->providers()[EmailSchedule::PROVIDER_SMTP];
+    }
+
+    /** @return array<string, PromotionTransportProvider> */
+    private function providers(): array
+    {
+        if ($this->providers === null) {
+            $this->providers = [];
+
+            foreach ([new SmtpTransportProvider(), new SendgridTransportProvider(), new MailgunTransportProvider()] as $provider) {
+                $this->providers[$provider->name()] = $provider;
+            }
         }
 
-        return $this->mailerForKey($key);
+        return $this->providers;
+    }
+
+    private function sendgrid(): SendgridTransportProvider
+    {
+        /** @var SendgridTransportProvider $provider */
+        $provider = $this->providers()[EmailSchedule::PROVIDER_SENDGRID];
+
+        return $provider;
+    }
+
+    private function mailgun(): MailgunTransportProvider
+    {
+        /** @var MailgunTransportProvider $provider */
+        $provider = $this->providers()[EmailSchedule::PROVIDER_MAILGUN];
+
+        return $provider;
     }
 }

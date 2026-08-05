@@ -56,6 +56,15 @@ class StoreEmailScheduleRequest extends FormRequest
                 'integer',
                 Rule::exists('sendgrid_keys', 'id')->where('status', 'active'),
             ],
+            // Mailgun mirrors SendGrid exactly: required only when its provider
+            // is selected, and the credential must still be ACTIVE, so a broken
+            // schedule cannot be saved in the first place.
+            'mailgun_key_id'  => [
+                'nullable',
+                'required_if:provider,' . EmailSchedule::PROVIDER_MAILGUN,
+                'integer',
+                Rule::exists('mailgun_keys', 'id')->where('status', 'active'),
+            ],
 
             'active'        => ['sometimes', 'boolean'],
         ];
@@ -67,6 +76,8 @@ class StoreEmailScheduleRequest extends FormRequest
         return [
             'sendgrid_key_id.required_if' => 'Select a SendGrid key to send through.',
             'sendgrid_key_id.exists'      => 'The selected SendGrid key is not available (inactive or removed).',
+            'mailgun_key_id.required_if'  => 'Select a Mailgun key to send through.',
+            'mailgun_key_id.exists'       => 'The selected Mailgun key is not available (inactive or removed).',
         ];
     }
 
@@ -91,7 +102,10 @@ class StoreEmailScheduleRequest extends FormRequest
             'day_of_week'     => $this->frequency === EmailSchedule::FREQ_WEEKLY ? $this->day_of_week : null,
             'day_of_month'    => $this->frequency === EmailSchedule::FREQ_MONTHLY ? $this->day_of_month : null,
             'provider'        => $provider,
+            // Each provider keeps only its own credential; switching provider
+            // clears the other, so a stale id can never be resolved at send time.
             'sendgrid_key_id' => $provider === EmailSchedule::PROVIDER_SENDGRID ? $this->sendgrid_key_id : null,
+            'mailgun_key_id'  => $provider === EmailSchedule::PROVIDER_MAILGUN ? $this->mailgun_key_id : null,
         ]);
     }
 }

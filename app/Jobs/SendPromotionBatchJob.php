@@ -78,15 +78,32 @@ class SendPromotionBatchJob implements ShouldQueue
      */
     public int $timeout;
 
+    /**
+     * Credential row id for {@see $provider}, in that provider's own table.
+     *
+     * Declared as a plain defaulted property rather than a promoted readonly
+     * one ON PURPOSE. Jobs already queued when this change deploys were
+     * serialised without it; PHP restores a plain property to its declared
+     * default when the key is absent from the payload, whereas an uninitialised
+     * readonly property would throw on first access. In-flight campaigns
+     * therefore keep running through the legacy $sendgridKeyId slot below.
+     */
+    public ?int $credentialId = null;
+
     /** @param list<string> $emails */
     public function __construct(
         public readonly int $siteId,
         public readonly array $emails,
         public readonly string $provider = EmailSchedule::PROVIDER_SMTP,
+        /** @deprecated Superseded by $credentialId; kept so old payloads and callers keep working. */
         public readonly ?int $sendgridKeyId = null,
+        ?int $credentialId = null,
     ) {
         $this->onQueue(self::ON_QUEUE);
         $this->timeout = (int) config('promotions.batch_timeout', 240);
+        // A caller that still passes only $sendgridKeyId (or an old payload)
+        // resolves exactly as before.
+        $this->credentialId = $credentialId ?? $sendgridKeyId;
     }
 
     public function handle(PromotionEmailService $promotions, PromotionMailerFactory $mailers): void
@@ -135,12 +152,13 @@ class SendPromotionBatchJob implements ShouldQueue
         // but has since been disabled/deleted, fail this batch GRACEFULLY — log
         // and stop, without crashing the worker or re-queuing forever.
         try {
-            $resolved = $mailers->resolve($this->provider, $this->sendgridKeyId);
+            $resolved = $mailers->resolve($this->provider, $this->credentialId ?? $this->sendgridKeyId);
         } catch (PromotionMailerException $e) {
             Log::error('Promotion batch skipped: mail transport unavailable', [
                 'site_id'         => $this->siteId,
                 'provider'        => $this->provider,
                 'sendgrid_key_id' => $this->sendgridKeyId,
+                'credential_id'   => $this->credentialId ?? $this->sendgridKeyId,
                 'batch_size'      => count($this->emails),
                 'error'           => $e->getMessage(),
             ]);

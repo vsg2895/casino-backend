@@ -29,6 +29,8 @@ class EmailScheduleResource extends JsonResource
             'provider'        => $this->provider,
             'sendgrid_key_id' => $this->sendgrid_key_id,
             'sendgrid_key'    => new SendgridKeyResource($this->whenLoaded('sendgridKey')),
+            'mailgun_key_id'  => $this->mailgun_key_id,
+            'mailgun_key'     => new MailgunKeyResource($this->whenLoaded('mailgunKey')),
             'active'        => $this->active,
             'last_run_at'   => $this->last_run_at,
             'created_at'    => $this->created_at,

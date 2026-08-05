@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController
 use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
+use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\EmailTemplateTypeController;
@@ -118,6 +119,12 @@ Route::prefix('v1')->group(function () {
         // Verify a stored key actually authenticates + delivers, by sending a
         // real site template through it.
         Route::post('sendgrid-keys/{sendgrid_key}/test', [SendgridKeyController::class, 'test']);
+        // Mailgun credentials — same contract as sendgrid-keys above, so the
+        // admin panel reuses the identical CRUD / toggle / test workflow.
+        Route::apiResource('mailgun-keys', MailgunKeyController::class)
+            ->except(['show']);
+        Route::patch('mailgun-keys/{mailgun_key}/toggle', [MailgunKeyController::class, 'toggle']);
+        Route::post('mailgun-keys/{mailgun_key}/test', [MailgunKeyController::class, 'test']);
         // Templates available to that test (drives the admin dropdown).
         Route::get('email-template-types', [EmailTemplateTypeController::class, 'index']);
 
