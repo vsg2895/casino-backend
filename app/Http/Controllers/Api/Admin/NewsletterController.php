@@ -72,10 +72,31 @@ class NewsletterController extends Controller
     private function filtered(Request $request): Builder
     {
         $siteId = $request->integer('site_id') ?: null;
+        $verified = $this->verifiedFilter($request);
 
         return Newsletter::query()
             ->when($siteId, fn ($q) => $q->where('site_id', $siteId))
-            ->when($request->boolean('trashed'), fn ($q) => $q->onlyTrashed());
+            ->when($request->boolean('trashed'), fn ($q) => $q->onlyTrashed())
+            ->when($verified !== null, fn ($q) => $q->where('verified', $verified));
+    }
+
+    /**
+     * The ?verified filter as a tri-state: true, false, or null for "all".
+     *
+     * `$request->boolean()` is unusable here — it returns false both for
+     * "verified=0" and for an absent parameter, which would silently turn "show
+     * everyone" into "show only unverified". Presence has to be checked before
+     * the value is interpreted.
+     */
+    private function verifiedFilter(Request $request): ?bool
+    {
+        $value = $request->query('verified');
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
     }
 
     public function store(StoreNewsletterRequest $request): NewsletterResource
