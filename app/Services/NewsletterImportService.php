@@ -5,22 +5,17 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\Newsletter;
-use Generator;
+use App\Support\Spreadsheet\EmailSpreadsheetReader;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use OpenSpout\Reader\CSV\Reader as CsvReader;
-use OpenSpout\Reader\ReaderInterface;
-use OpenSpout\Reader\XLSX\Reader as XlsxReader;
-use Throwable;
 
 /**
  * Bulk-imports subscriber email addresses from an uploaded spreadsheet
  * (.xlsx / .csv).
  *
- * The file is expected to have an "Email" column; if no such header is present,
- * every cell is scanned so a plain one-column list still imports cleanly.
- * Addresses are normalised (trimmed + lowercased), validated, and de-duplicated
- * across the whole file.
+ * Parsing is delegated to {@see EmailSpreadsheetReader}, shared with the warmup
+ * import: an "Email" header selects a column, otherwise every cell is scanned,
+ * and addresses are normalised, validated and de-duplicated across the file.
  *
  * Everything is done in BATCHES, which is what makes a 50k-row file finish in
  * seconds. Per batch:
@@ -44,6 +39,8 @@ class NewsletterImportService
     /** Addresses resolved and written per round-trip. */
     private const int BATCH_SIZE = 500;
 
+    public function __construct(private readonly EmailSpreadsheetReader $reader) {}
+
     /**
      * Import every address in the file for one site.
      *
@@ -64,7 +61,7 @@ class NewsletterImportService
         $skipped = 0;
         $total = 0;
 
-        foreach ($this->batches($path, $extension) as $batch) {
+        foreach ($this->reader->batches($path, $extension, self::BATCH_SIZE) as $batch) {
             $total += count($batch);
 
             $outcome = DB::transaction(
@@ -158,115 +155,4 @@ class NewsletterImportService
         return ['imported' => count($insert) + count($restore), 'skipped' => $skipped];
     }
 
-    /**
-     * Stream the file's unique, valid addresses in batches.
-     *
-     * A generator, so the spreadsheet is never materialised: only the current
-     * batch plus the set of addresses already seen is held. That set is what
-     * de-duplicates across the WHOLE file (not just within a batch), so the
-     * reported total matches what an admin counted in their spreadsheet.
-     *
-     * @return Generator<int, list<string>>
-     */
-    private function batches(string $path, string $extension): Generator
-    {
-        $reader = $this->readerFor($extension);
-        $reader->open($path);
-
-        try {
-            $seen = [];
-            $batch = [];
-            $emailColumn = null;    // resolved column index once a header is found
-            $headerHandled = false;
-
-            foreach ($reader->getSheetIterator() as $sheet) {
-                foreach ($sheet->getRowIterator() as $row) {
-                    $cells = $row->toArray();
-
-                    if (! $headerHandled) {
-                        $headerHandled = true;
-                        $emailColumn = $this->findEmailColumn($cells);
-
-                        // A recognized "Email" header row is metadata — skip it.
-                        if ($emailColumn !== null) {
-                            continue;
-                        }
-                        // Otherwise treat the file as header-less and scan every cell
-                        // (this row included, in case it already holds data).
-                    }
-
-                    $candidates = $emailColumn !== null
-                        ? [$cells[$emailColumn] ?? null]
-                        : $cells;
-
-                    foreach ($candidates as $candidate) {
-                        $email = $this->normalise($candidate);
-
-                        if ($email === null || isset($seen[$email])) {
-                            continue;
-                        }
-
-                        $seen[$email] = true;
-                        $batch[] = $email;
-                    }
-
-                    if (count($batch) >= self::BATCH_SIZE) {
-                        yield $batch;
-                        $batch = [];
-                    }
-                }
-
-                break; // only the first sheet
-            }
-
-            if ($batch !== []) {
-                yield $batch;
-            }
-        } finally {
-            // Always release the handle — a failed import must not leak it.
-            try {
-                $reader->close();
-            } catch (Throwable) {
-                // Closing a reader that never opened is not worth surfacing.
-            }
-        }
-    }
-
-    private function readerFor(string $extension): ReaderInterface
-    {
-        return strtolower($extension) === 'csv' ? new CsvReader() : new XlsxReader();
-    }
-
-    /**
-     * Index of the column whose header equals "email" (case-insensitive), or
-     * null when there is no such header.
-     *
-     * @param  array<int, mixed>  $cells
-     */
-    private function findEmailColumn(array $cells): ?int
-    {
-        foreach ($cells as $index => $value) {
-            if (is_scalar($value) && strtolower(trim((string) $value)) === 'email') {
-                return $index;
-            }
-        }
-
-        return null;
-    }
-
-    /** A cell as a normalised address, or null when it is not one. */
-    private function normalise(mixed $value): ?string
-    {
-        if (! is_scalar($value)) {
-            return null;
-        }
-
-        $email = strtolower(trim((string) $value));
-
-        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            return null;
-        }
-
-        return $email;
-    }
 }

@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
 use App\Http\Controllers\Api\Admin\UnsubscribeController;
+use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
@@ -110,6 +111,16 @@ Route::prefix('v1')->group(function () {
         Route::delete('newsletters/{newsletter}', [AdminNewsletterController::class, 'destroy']);
         Route::post('newsletters/{newsletter}/restore', [AdminNewsletterController::class, 'restore'])->withTrashed();
         Route::delete('newsletters/{newsletter}/force', [AdminNewsletterController::class, 'forceDestroy'])->withTrashed();
+
+        // Email warmup list — addresses used to build the sending mailbox's
+        // reputation. Counter route BEFORE the resource, or `{warmup_email}`
+        // would swallow "count" as an id.
+        Route::get('warmup-emails/count', [WarmupEmailController::class, 'count']);
+        Route::post('warmup-emails/import', [WarmupEmailController::class, 'import']);
+        Route::post('warmup-emails/bulk-delete', [WarmupEmailController::class, 'bulkDestroy']);
+        Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
+        Route::apiResource('warmup-emails', WarmupEmailController::class)
+            ->except(['show']);
 
         // Scheduled promotion campaigns
         // SendGrid API keys — alternative transport for scheduled promotions.

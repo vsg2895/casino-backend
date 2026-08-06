@@ -21,14 +21,16 @@ return [
     | Purpose-specific Mailers — two transports
     |--------------------------------------------------------------------------
     |
-    | The platform sends two very different kinds of mail and routes each
-    | through its own transport:
+    | Every outbound flow and the transport it uses:
     |
-    |  - "admin_mailer"   Everything triggered from the admin panel: the "Send
-    |                     test" buttons (subscription / verify / promotion) AND
-    |                     the real promotion campaigns (scheduler + queued
-    |                     batches). Routed through the .env MAIL_* SMTP config so
-    |                     it goes out from the operator's own mail server.
+    |  - "admin_test_mailer"  The admin "Send test" buttons (subscription /
+    |                     verify / promotion). PINNED to .env SMTP — see the
+    |                     entry below for why it is not admin_mailer.
+    |
+    |  - "admin_mailer"   The SMTP branch of a scheduled promotion campaign, i.e.
+    |                     a schedule whose provider is 'smtp'. Routed through the
+    |                     .env MAIL_* config so it goes out from the operator's
+    |                     own mail server.
     |                     (Back-compat: honours the old MAIL_TEST_MAILER.)
     |
     |  - "public_mailer"  Verification emails sent when a VISITOR subscribes on a
@@ -37,9 +39,35 @@ return [
     |                     per-site From domain (see below).
     |                     (Back-compat: honours the old MAIL_NEWSLETTER_MAILER.)
     |
+    | Two flows deliberately do NOT read any value here:
+    |
+    |  - Scheduled promotion campaigns choose their transport PER SCHEDULE —
+    |    SMTP, a stored SendGrid key, or a stored Mailgun credential — resolved
+    |    at send time by App\Services\Mail\PromotionMailerFactory. This is a
+    |    product decision, not an oversight: the .env SMTP mailbox is a cPanel
+    |    account that cannot carry a 50k-recipient campaign, which is the whole
+    |    reason the stored-credential providers exist. Do not "simplify" this
+    |    into a single transport.
+    |
+    |  - Warmup sends are pinned to SMTP by config/warmup.php, because their
+    |    purpose is to build the reputation of that specific mailbox.
+    |
     */
 
     'admin_mailer' => env('MAIL_ADMIN_MAILER', env('MAIL_TEST_MAILER', env('MAIL_MAILER', 'smtp'))),
+
+    /*
+    | The mailer the admin "Send test" buttons ALWAYS use.
+    |
+    | A literal, not an env() lookup, and deliberately separate from
+    | admin_mailer. A test button exists to prove the operator's own SMTP server
+    | accepts and delivers a template; if MAIL_ADMIN_MAILER were ever pointed at
+    | SendGrid, every "Send test" would silently start proving something else,
+    | and a genuinely broken SMTP setup would keep reporting success.
+    |
+    | Must name a mailer defined in `mailers` below.
+    */
+    'admin_test_mailer' => 'smtp',
 
     'public_mailer' => env('MAIL_PUBLIC_MAILER', env('MAIL_NEWSLETTER_MAILER', 'sendgrid')),
 
