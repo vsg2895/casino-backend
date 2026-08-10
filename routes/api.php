@@ -11,6 +11,9 @@ use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
+use App\Http\Controllers\Api\Admin\NewsletterPhoneController;
+use App\Http\Controllers\Api\Admin\SmsTemplateController;
+use App\Http\Controllers\Api\Admin\TwilioConfigController;
 use App\Http\Controllers\Api\Admin\EmailTemplateTypeController;
 use App\Http\Controllers\Api\Admin\SendgridKeyController;
 use App\Http\Controllers\Api\Admin\SiteController;
@@ -111,6 +114,48 @@ Route::prefix('v1')->group(function () {
         Route::delete('newsletters/{newsletter}', [AdminNewsletterController::class, 'destroy']);
         Route::post('newsletters/{newsletter}/restore', [AdminNewsletterController::class, 'restore'])->withTrashed();
         Route::delete('newsletters/{newsletter}/force', [AdminNewsletterController::class, 'forceDestroy'])->withTrashed();
+
+        // ── Newsletters based on phone (STANDALONE) ─────────────────────
+        // Backed by `newsletters_based_on_phone` and nothing else: no site
+        // scoping, no client relationship, and no overlap with the email
+        // newsletter routes above. Literal segments are declared BEFORE the
+        // apiResource, or `{newsletter_phone}` swallows "count", "import" and
+        // "send" as ids.
+        Route::get('newsletter-phones/count', [NewsletterPhoneController::class, 'count']);
+        Route::get('newsletter-phones/export', [NewsletterPhoneController::class, 'export']);
+        Route::post('newsletter-phones/import', [NewsletterPhoneController::class, 'import']);
+        // Progress of a queued import — polled by the admin panel until finished.
+        Route::get('newsletter-phones/imports/{import}', [NewsletterPhoneController::class, 'importStatus']);
+        Route::post('newsletter-phones/bulk-delete', [NewsletterPhoneController::class, 'bulkDestroy']);
+        Route::post('newsletter-phones/delete-all', [NewsletterPhoneController::class, 'destroyAll']);
+        // Who a send with the current filters would reach (same query as the
+        // send itself), and the same list as a CSV.
+        Route::get('newsletter-phones/recipients', [NewsletterPhoneController::class, 'recipients']);
+        Route::get('newsletter-phones/recipients/export', [NewsletterPhoneController::class, 'exportRecipients']);
+        // Start a bulk SMS run. Guarded by a cross-process lock in the
+        // controller — two concurrent runs would double-charge.
+        Route::post('newsletter-phones/send', [NewsletterPhoneController::class, 'send']);
+        // Per-recipient outcome of past runs.
+        Route::get('newsletter-phones/history', [NewsletterPhoneController::class, 'history']);
+        Route::get('newsletter-phones/history/count', [NewsletterPhoneController::class, 'historyCount']);
+        Route::apiResource('newsletter-phones', NewsletterPhoneController::class)
+            ->except(['show']);
+
+        // Reusable SMS message texts. Editing one changes what the NEXT send
+        // starts from; runs already queued carry their own copy of the body.
+        Route::apiResource('sms-templates', SmsTemplateController::class)
+            ->except(['show']);
+        Route::patch('sms-templates/{sms_template}/toggle', [SmsTemplateController::class, 'toggle']);
+
+        // Twilio credentials — same CRUD / toggle / test contract as the
+        // sendgrid-keys and mailgun-keys resources below, so the admin panel
+        // reuses one workflow for every provider.
+        Route::apiResource('twilio-configs', TwilioConfigController::class)
+            ->except(['show']);
+        Route::patch('twilio-configs/{twilio_config}/toggle', [TwilioConfigController::class, 'toggle']);
+        // Verify a stored credential actually authenticates + delivers, by
+        // sending one real message through it.
+        Route::post('twilio-configs/{twilio_config}/test', [TwilioConfigController::class, 'test']);
 
         // Email warmup list — addresses used to build the sending mailbox's
         // reputation. Counter route BEFORE the resource, or `{warmup_email}`

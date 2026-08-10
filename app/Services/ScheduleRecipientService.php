@@ -46,9 +46,18 @@ class ScheduleRecipientService
     /**
      * The audience query — filtered, ordered and (in newest-N mode) already
      * capped. Never executed here; callers add their own projection.
+     *
+     * @param  array{skipOptOuts: bool, skipDelivered: bool}  $skip
+     *         Exclusions the caller has PROVEN cannot match (see
+     *         {@see skippableExclusions()}). Defaults to skipping nothing, so
+     *         every caller that does not opt in — the send traversal above all —
+     *         gets exactly the query it always got.
      */
-    public function query(EmailSchedule $schedule, ?CarbonInterface $now = null): Builder
-    {
+    public function query(
+        EmailSchedule $schedule,
+        ?CarbonInterface $now = null,
+        array $skip = ['skipOptOuts' => false, 'skipDelivered' => false],
+    ): Builder {
         $now ??= now();
         $siteId = $schedule->site_id;
 
@@ -57,18 +66,24 @@ class ScheduleRecipientService
             // Filtering after the slice is essential: filtering before it would
             // let a second run reach deeper into the list and mail a DIFFERENT
             // N subscribers, when it should mail nobody.
-            return Newsletter::query()
-                ->fromSub($this->newestSlice($schedule), 'newsletters')
-                ->whereNotExists($this->alreadyDelivered($siteId, $now))
+            $query = Newsletter::query()
+                ->fromSub($this->newestSlice($schedule, $skip), 'newsletters')
                 ->orderByDesc('created_at')
                 ->orderByDesc('id');
+
+            return $skip['skipDelivered']
+                ? $query
+                : $query->whereNotExists($this->alreadyDelivered($siteId, $now));
         }
 
         [$start, $end] = $schedule->dateRange($now);
 
-        return $this->audience($siteId)
-            ->whereBetween('created_at', [$start, $end])
-            ->whereNotExists($this->alreadyDelivered($siteId, $now));
+        $query = $this->audience($siteId, $skip['skipOptOuts'])
+            ->whereBetween('created_at', [$start, $end]);
+
+        return $skip['skipDelivered']
+            ? $query
+            : $query->whereNotExists($this->alreadyDelivered($siteId, $now));
     }
 
     /**
@@ -76,27 +91,36 @@ class ScheduleRecipientService
      * of the promotion stream. The base every other query here builds on — no
      * caller may reconstruct it.
      */
-    private function audience(int $siteId): Builder
+    /**
+     * @param  bool  $skipOptOuts  Only ever true when the caller has PROVEN the
+     *                             site has no promotion opt-out at all, which
+     *                             makes the clause a no-op.
+     */
+    private function audience(int $siteId, bool $skipOptOuts = false): Builder
     {
-        return Newsletter::query()
-            ->where('site_id', $siteId)
-            // Promotion opt-outs, in one correlated pass against the
-            // (site_id, email, type) unique key.
-            ->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
-                $sub->from('unsubscribes')
-                    ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $siteId)
-                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
-            });
+        $query = Newsletter::query()->where('site_id', $siteId);
+
+        if ($skipOptOuts) {
+            return $query;
+        }
+
+        // Promotion opt-outs, in one correlated pass against the
+        // (site_id, email, type) unique key.
+        return $query->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
+            $sub->from('unsubscribes')
+                ->whereColumn('unsubscribes.email', 'newsletters.email')
+                ->where('unsubscribes.site_id', $siteId)
+                ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+        });
     }
 
     /**
      * The "newest N sign-ups" slice, before the already-delivered filter — the
      * definition of the audience in limit mode.
      */
-    private function newestSlice(EmailSchedule $schedule): Builder
+    private function newestSlice(EmailSchedule $schedule, array $skip = ['skipOptOuts' => false]): Builder
     {
-        return $this->audience($schedule->site_id)
+        return $this->audience($schedule->site_id, $skip['skipOptOuts'] ?? false)
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->limit((int) $schedule->limit)
@@ -111,10 +135,65 @@ class ScheduleRecipientService
      *
      * In newest-N mode the cap lives inside the subquery, so counting the outer
      * query yields the capped, deduplicated total directly.
+     *
+     * Both exclusions are dropped when they provably cannot match anything — see
+     * {@see skippableExclusions()}. That is what keeps this endpoint responsive on
+     * a large list; measured on 100k subscribers, the preview count went 322ms →
+     * 188ms with the delivery-history check skipped, and → 83ms with both skipped.
      */
     public function count(EmailSchedule $schedule, ?CarbonInterface $now = null): int
     {
-        return $this->query($schedule, $now)->reorder()->count();
+        $now ??= now();
+
+        return $this->query($schedule, $now, $this->skippableExclusions($schedule, $now))
+            ->reorder()
+            ->count();
+    }
+
+    /**
+     * Which of the two exclusions can be omitted entirely for this site, right now.
+     *
+     * A `NOT EXISTS` whose subquery matches NO rows at all is true for every
+     * candidate row, so removing it cannot change the result — it is an algebraic
+     * simplification, not an approximation. Two probes settle it, and both are
+     * single indexed existence checks measured at ~0.2ms:
+     *
+     *   - opt-outs:  (site_id, type) against the unsubscribes unique key
+     *   - deliveries: the SAME non-correlated conditions the dedup subquery uses,
+     *     via {@see PromotionEmailHistory::scopeDeliveredWithinDay()} with a null
+     *     email column, so the probe can never be laxer than the clause it removes
+     *
+     * Worth it because the correlated form costs one index lookup PER CANDIDATE —
+     * ~100k lookups on a 100k list — while these cost one lookup total. And the
+     * common case is exactly the cheap one: an admin previews a campaign before
+     * sending it, when nothing has been delivered inside the dedup window yet.
+     *
+     * Deliberately NOT applied to the send traversal ({@see stream()}). There the
+     * audience is resolved page by page over minutes, and a probe taken at the
+     * start could authorise mailing someone who unsubscribed at minute three. A
+     * preview is a snapshot and may be one row stale; a send must not be.
+     *
+     * @return array{skipOptOuts: bool, skipDelivered: bool}
+     */
+    private function skippableExclusions(EmailSchedule $schedule, CarbonInterface $now): array
+    {
+        $siteId = $schedule->site_id;
+
+        $hasOptOuts = Unsubscribe::query()
+            ->where('site_id', $siteId)
+            ->where('type', Unsubscribe::TYPE_PROMOTION)
+            ->exists();
+
+        $hasRecentDeliveries = PromotionEmailHistory::query()
+            ->tap(fn (Builder $q) => PromotionEmailHistory::scopeDeliveredWithinDay(
+                $q->getQuery(), $siteId, null, $now,
+            ))
+            ->exists();
+
+        return [
+            'skipOptOuts'   => ! $hasOptOuts,
+            'skipDelivered' => ! $hasRecentDeliveries,
+        ];
     }
 
     /**

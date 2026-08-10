@@ -11,19 +11,34 @@ use OpenSpout\Reader\XLSX\Reader as XlsxReader;
 use Throwable;
 
 /**
- * Streams unique, valid email addresses out of an uploaded .xlsx / .csv.
+ * Streams unique, valid values out of one column of an uploaded .xlsx / .csv.
  *
- * Extracted verbatim from NewsletterImportService so the newsletter import and
- * the warmup import share one parser instead of two drifting copies. The
- * behaviour is unchanged: an "Email" header selects a single column; without one
- * every cell is scanned so a plain one-column list still works; addresses are
- * trimmed, lowercased, validated and de-duplicated across the WHOLE file.
+ * The traversal, header detection, de-duplication and counting are all here; a
+ * subclass supplies only the two things that actually differ per data type —
+ * which header names identify the column ({@see headerNames()}) and how a cell
+ * becomes a canonical value ({@see normalise()}).
  *
- * A generator, so the spreadsheet is never materialised — only the current batch
- * plus the set of addresses already seen is held.
+ * A generator, so the spreadsheet is never materialised: only the current batch
+ * plus the set of values already seen is held. That is what lets a 50k-row file
+ * import in flat memory.
+ *
+ * {@see EmailSpreadsheetReader} predates this class and still carries its own
+ * copy of the same traversal, deliberately: it is on the live subscription and
+ * warmup import paths, so it is not being restructured here. Folding it onto this
+ * base is a safe, behaviour-preserving follow-up.
  */
-final class EmailSpreadsheetReader
+abstract class ColumnSpreadsheetReader
 {
+    /**
+     * Header labels (lowercase) that identify the column to read.
+     *
+     * @return list<string>
+     */
+    abstract protected function headerNames(): array;
+
+    /** A cell as a canonical value, or null when it is not one. */
+    abstract protected function normalise(mixed $value): ?string;
+
     /**
      * @param  SpreadsheetScan|null  $scan  Optional counters, for callers that
      *                                      need a row-level breakdown (rows,
@@ -52,7 +67,7 @@ final class EmailSpreadsheetReader
         try {
             $seen = [];
             $batch = [];
-            $emailColumn = null;    // resolved column index once a header is found
+            $column = null;         // resolved column index once a header is found
             $headerHandled = false;
 
             foreach ($reader->getSheetIterator() as $sheet) {
@@ -61,26 +76,27 @@ final class EmailSpreadsheetReader
 
                     if (! $headerHandled) {
                         $headerHandled = true;
-                        $emailColumn = $this->findEmailColumn($cells);
+                        $column = $this->findColumn($cells);
 
-                        // A recognized "Email" header row is metadata — skip it.
-                        if ($emailColumn !== null) {
+                        // A recognised header row is metadata — skip it.
+                        if ($column !== null) {
                             continue;
                         }
-                        // Otherwise treat the file as header-less and scan every cell
-                        // (this row included, in case it already holds data).
+                        // Otherwise treat the file as header-less and scan every
+                        // cell (this row included, in case it already holds data),
+                        // so a plain one-column list still works.
                     }
 
                     $scan->rows++;
 
-                    $candidates = $emailColumn !== null
-                        ? [$cells[$emailColumn] ?? null]
+                    $candidates = $column !== null
+                        ? [$cells[$column] ?? null]
                         : $cells;
 
                     foreach ($candidates as $candidate) {
-                        $email = $this->normalise($candidate);
+                        $value = $this->normalise($candidate);
 
-                        if ($email === null) {
+                        if ($value === null) {
                             // Only count a cell as invalid when it actually held
                             // something — blank cells and padding are not errors.
                             if ($this->isNonEmpty($candidate)) {
@@ -90,15 +106,15 @@ final class EmailSpreadsheetReader
                             continue;
                         }
 
-                        if (isset($seen[$email])) {
+                        if (isset($seen[$value])) {
                             $scan->duplicatesInFile++;
 
                             continue;
                         }
 
-                        $seen[$email] = true;
+                        $seen[$value] = true;
                         $scan->valid++;
-                        $batch[] = $email;
+                        $batch[] = $value;
                     }
 
                     if (count($batch) >= $size) {
@@ -129,36 +145,26 @@ final class EmailSpreadsheetReader
     }
 
     /**
-     * Index of the column whose header equals "email" (case-insensitive), or
-     * null when there is no such header.
+     * Index of the first column whose header matches {@see headerNames()}
+     * (case-insensitive), or null when there is no such header.
      *
      * @param  array<int, mixed>  $cells
      */
-    private function findEmailColumn(array $cells): ?int
+    private function findColumn(array $cells): ?int
     {
+        $wanted = $this->headerNames();
+
         foreach ($cells as $index => $value) {
-            if (is_scalar($value) && strtolower(trim((string) $value)) === 'email') {
+            if (! is_scalar($value)) {
+                continue;
+            }
+
+            if (in_array(strtolower(trim((string) $value)), $wanted, true)) {
                 return $index;
             }
         }
 
         return null;
-    }
-
-    /** A cell as a normalised address, or null when it is not one. */
-    private function normalise(mixed $value): ?string
-    {
-        if (! is_scalar($value)) {
-            return null;
-        }
-
-        $email = strtolower(trim((string) $value));
-
-        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            return null;
-        }
-
-        return $email;
     }
 
     /** Whether a cell held anything at all (used to tell blank from invalid). */
