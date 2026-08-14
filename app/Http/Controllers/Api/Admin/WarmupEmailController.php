@@ -11,14 +11,20 @@ use App\Http\Requests\Admin\SendWarmupEmailsRequest;
 use App\Http\Requests\Admin\StoreWarmupEmailRequest;
 use App\Http\Requests\Admin\UpdateWarmupEmailRequest;
 use App\Http\Resources\WarmupEmailResource;
-use App\Jobs\SendWarmupBatchJob;
+use App\Jobs\SendWarmupCampaignJob;
+use App\Models\Site;
 use App\Models\WarmupEmail;
+use App\Models\WarmupSend;
+use App\Services\Mail\EmailTemplateCatalog;
+use App\Services\Mail\WarmupMailResolver;
 use App\Services\WarmupImportService;
+use App\Services\WarmupRecipientService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -33,12 +39,14 @@ use Throwable;
  */
 class WarmupEmailController extends Controller
 {
+    public function __construct(private readonly EmailTemplateCatalog $templates) {}
+
     /** Page size bounds for the admin listing. */
     private const int DEFAULT_PER_PAGE = 50;
     private const int MAX_PER_PAGE = 200;
 
-    /** Fallback addresses per queued send job; see config/warmup.php. */
-    private const int SEND_BATCH_SIZE = 100;
+    /** How long the "a warmup run is in flight" lock is held for. */
+    private const int RUN_LOCK_SECONDS = 900;
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -141,44 +149,93 @@ class WarmupEmailController extends Controller
     }
 
     /**
-     * Queue the warmup send to every address on the list.
+     * Templates a warmup run may use — the catalog, minus what warmup forbids.
      *
-     * Fanned out in batches on the LOW queue so the request returns immediately
-     * and a long run never occupies a php-fpm worker. Addresses are streamed
-     * with a keyset cursor, so the list is never fully materialised.
+     * Served from {@see WarmupMailResolver::ALLOWED_TEMPLATES} so the dropdown,
+     * the validation rule and the send path all read ONE allow-list. Registering a
+     * future template in the catalog makes it appear here automatically.
      */
-    public function send(SendWarmupEmailsRequest $request): JsonResponse
+    public function templates(): JsonResponse
     {
-        $subject = (string) $request->validated('subject');
-        $body = (string) $request->validated('body');
+        $allowed = array_values(array_filter(
+            $this->templates->types(),
+            static fn (array $type): bool => WarmupMailResolver::supports($type['value']),
+        ));
 
-        $queued = 0;
-        $batchSize = max(1, (int) config('warmup.send_batch_size', self::SEND_BATCH_SIZE));
+        return response()->json(['data' => $allowed]);
+    }
 
-        WarmupEmail::query()
-            ->orderBy('id')
-            ->chunkById($batchSize, function ($rows) use ($subject, $body, &$queued): void {
-                $emails = $rows->pluck('email')->all();
-                SendWarmupBatchJob::dispatch($emails, $subject, $body);
-                $queued += count($emails);
-            });
+    /**
+     * Queue a warmup run: one site's email template, sent to a chosen number of
+     * addresses — or to the whole list when no count is given.
+     *
+     * The request only RECORDS the run and queues the fan-out; streaming the
+     * rotation and dispatching batches happens in {@see SendWarmupCampaignJob} on
+     * the low-priority queue, so a long list never occupies a php-fpm worker.
+     *
+     * Guarded by a cross-process lock rather than a disabled button: two
+     * concurrent runs would mail the same seed addresses twice and skew the
+     * rotation, and the guard has to hold across tabs and app servers. The lock is
+     * released by the fan-out job, and expires on its own if a worker dies.
+     */
+    public function send(SendWarmupEmailsRequest $request, WarmupRecipientService $recipients): JsonResponse
+    {
+        $available = $recipients->available();
 
-        if ($queued === 0) {
+        if ($available === 0) {
             return response()->json([
                 'ok'      => false,
                 'message' => 'The warmup list is empty. Add or import addresses first.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        Log::info('Warmup send queued', [
-            'recipients' => $queued,
-            'admin_id'   => auth()->id(),
+        $site = Site::findOrFail($request->integer('site_id'));
+        $template = (string) $request->validated('template');
+        $limit = $request->recipientLimit();
+
+        $lock = Cache::lock(SendWarmupCampaignJob::runLockKey(), self::RUN_LOCK_SECONDS);
+
+        if (! $lock->get()) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'A warmup run is already in progress. Wait for it to finish before starting another.',
+            ], Response::HTTP_CONFLICT);
+        }
+
+        $send = WarmupSend::create([
+            'site_id'         => $site->id,
+            'user_id'         => $request->user()?->id,
+            'template'        => $template,
+            'requested_count' => $limit,
+        ]);
+
+        // The owner token travels with the job so only that job can release this
+        // exact lock — a slower earlier run can never free a newer one's.
+        SendWarmupCampaignJob::dispatch($send->id, $site->id, $template, $limit, $lock->owner());
+
+        $recipientCount = $recipients->count($limit);
+
+        Log::info('Warmup run queued', [
+            'warmup_send_id' => $send->id,
+            'site_id'        => $site->id,
+            'template'       => $template,
+            'scope'          => $limit === null ? 'all' : $limit,
+            'recipients'     => $recipientCount,
+            'admin_id'       => $request->user()?->id,
         ]);
 
         return response()->json([
             'ok'         => true,
-            'recipients' => $queued,
-            'message'    => "Warmup queued for {$queued} address(es).",
+            'send_id'    => $send->id,
+            'recipients' => $recipientCount,
+            'message'    => sprintf(
+                'Warmup queued: %s template for %s to %s.',
+                $this->templates->label($template),
+                $site->name,
+                $limit === null
+                    ? "all {$recipientCount} address(es)"
+                    : "{$recipientCount} least-recently-contacted address(es)",
+            ),
         ], Response::HTTP_ACCEPTED);
     }
 

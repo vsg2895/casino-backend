@@ -161,6 +161,9 @@ Route::prefix('v1')->group(function () {
         // reputation. Counter route BEFORE the resource, or `{warmup_email}`
         // would swallow "count" as an id.
         Route::get('warmup-emails/count', [WarmupEmailController::class, 'count']);
+        // Templates a warmup run may use (catalog minus verify) — drives the
+        // send dialog's dropdown from the same allow-list the validator uses.
+        Route::get('warmup-emails/templates', [WarmupEmailController::class, 'templates']);
         Route::post('warmup-emails/import', [WarmupEmailController::class, 'import']);
         Route::post('warmup-emails/bulk-delete', [WarmupEmailController::class, 'bulkDestroy']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Mail\WarmupEmailMessage;
+use App\Models\Site;
+use App\Models\WarmupEmail;
+use App\Services\Mail\WarmupMailResolver;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -15,27 +17,24 @@ use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
- * Sends the warmup message to ONE BATCH of addresses over the .env SMTP mailer.
+ * Sends ONE BATCH of warmup addresses a rendered site template.
  *
- * The transport is PINNED to config('warmup.mailer') — a literal 'smtp' — not
- * config('mail.admin_mailer') like the admin test buttons. Warmup exists to
- * build the reputation of the mailbox in MAIL_HOST / MAIL_USERNAME /
- * MAIL_PASSWORD; routing it through SendGrid or Mailgun would warm those
- * providers' shared infrastructure instead and silently defeat the feature. So
- * changing MAIL_ADMIN_MAILER must not drag warmup along with it.
+ * TRANSPORT IS UNCHANGED. Still pinned to config('warmup.mailer') — a literal
+ * 'smtp' — so warmup keeps going out over the credentials in MAIL_HOST /
+ * MAIL_USERNAME / MAIL_PASSWORD. Only the message SOURCE changed: the body used
+ * to be free text typed into the form, and is now a real site template rendered
+ * by {@see WarmupMailResolver}. Routing warmup through a per-site or per-schedule
+ * provider would warm that provider's shared infrastructure instead of this
+ * mailbox and silently defeat the feature.
  *
  * The From address still comes from config('mail.from.address'), the same rule
- * every admin-originated email uses (see
- * {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}). No second SMTP
- * implementation exists; warmup only applies that rule in a batch context, which
- * the trait cannot serve because it sends one message and returns an HTTP
- * response.
- *
- * Runs on the LOW queue: warmup is background traffic and must never delay a
- * subscription confirmation or a list import on `high`.
+ * every admin-originated email follows.
  *
  * A single bad address never stops the batch — it is logged and the loop
- * continues, matching how promotion batches behave.
+ * continues, matching how promotion batches behave. Addresses that were actually
+ * attempted are stamped with `last_sent_at` so the next run rotates past them.
+ *
+ * Runs on the LOW queue, like the fan-out that dispatched it.
  */
 class SendWarmupBatchJob implements ShouldQueue
 {
@@ -57,16 +56,28 @@ class SendWarmupBatchJob implements ShouldQueue
     /** @param list<string> $emails */
     public function __construct(
         public readonly array $emails,
-        public readonly string $subjectLine,
-        public readonly string $bodyText,
+        public readonly int $siteId,
+        public readonly string $template,
     ) {
         $this->onQueue(self::ON_QUEUE);
         $this->timeout = (int) config('warmup.send_timeout', 240);
     }
 
-    public function handle(): void
+    public function handle(WarmupMailResolver $resolver): void
     {
         if ($this->emails === []) {
+            return;
+        }
+
+        $site = Site::find($this->siteId);
+
+        if ($site === null || ! WarmupMailResolver::supports($this->template)) {
+            Log::warning('Warmup batch skipped: site missing or template not permitted', [
+                'site_id'    => $this->siteId,
+                'template'   => $this->template,
+                'batch_size' => count($this->emails),
+            ]);
+
             return;
         }
 
@@ -76,14 +87,18 @@ class SendWarmupBatchJob implements ShouldQueue
 
         $sent = 0;
         $failed = 0;
+        $contacted = [];
 
         foreach ($this->emails as $email) {
+            $email = (string) $email;
+
             try {
-                $message = (new WarmupEmailMessage($this->subjectLine, $this->bodyText))
+                $mailable = $resolver->build($this->template, $site, $email)
                     ->usingFromAddress($fromAddress);
 
-                $mailer->to($email)->send($message);
+                $mailer->to($email)->send($mailable);
                 $sent++;
+                $contacted[] = $email;
             } catch (Throwable $e) {
                 // One unroutable address must not abort the rest of the batch.
                 $failed++;
@@ -94,17 +109,40 @@ class SendWarmupBatchJob implements ShouldQueue
             }
         }
 
+        // Only addresses actually reached advance in the rotation, so a failure
+        // is retried on the next run rather than silently rotating to the back.
+        $this->markContacted($contacted);
+
         // One line per batch, not per recipient.
         Log::info('Warmup batch processed', [
-            'sent'   => $sent,
-            'failed' => $failed,
-            'total'  => count($this->emails),
+            'site_id'  => $site->id,
+            'template' => $this->template,
+            'sent'     => $sent,
+            'failed'   => $failed,
+            'total'    => count($this->emails),
         ]);
+    }
+
+    /** @param list<string> $emails */
+    private function markContacted(array $emails): void
+    {
+        try {
+            WarmupEmail::markContacted($emails);
+        } catch (Throwable $e) {
+            // The mail is already out; losing the rotation stamp only means these
+            // addresses may be picked again sooner. Never fail a sent batch here.
+            Log::warning('Could not stamp warmup rotation timestamps', [
+                'addresses' => count($emails),
+                'error'     => $e->getMessage(),
+            ]);
+        }
     }
 
     public function failed(Throwable $e): void
     {
         Log::error('Warmup batch job failed', [
+            'site_id'    => $this->siteId,
+            'template'   => $this->template,
             'batch_size' => count($this->emails),
             'error'      => $e->getMessage(),
         ]);
