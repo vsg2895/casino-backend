@@ -22,7 +22,11 @@ class CmsPagePublicResource extends JsonResource
             'content'          => $this->content,
             'meta_title'       => $this->meta_title ?? $this->title,
             'meta_description' => $this->meta_description,
-            'updated_at'       => $this->updated_at,
+            // ISO-8601 STRING, not the Carbon instance. These responses are cached
+            // via SiteCache, and a serialized Carbon returns as
+            // __PHP_Incomplete_Class — so the cached copy shipped a broken object
+            // where the uncached one shipped a date. Same wire format either way.
+            'updated_at'       => $this->updated_at?->toISOString(),
         ];
     }
 }

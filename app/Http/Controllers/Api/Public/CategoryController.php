@@ -79,7 +79,15 @@ class CategoryController extends Controller
                     ])
                     ->paginate(self::PER_PAGE, ['*'], 'page', $page);
 
-                $paginator->getCollection()->load(['categories', 'featuredSpecialOffer']);
+                // `featuredSpecialOffer` is visibility-gated here for the same
+                // reason it is in Public\CasinoController: switching an offer off
+                // must remove its card from EVERY public surface, and an
+                // unconstrained load would keep serving the hidden offer on this
+                // catalog while the casino page correctly dropped it.
+                $paginator->getCollection()->load([
+                    'categories',
+                    'featuredSpecialOffer' => fn ($query) => $query->where('active', true),
+                ]);
 
                 return [
                     'category' => (new CategoryResource($category))->resolve(),

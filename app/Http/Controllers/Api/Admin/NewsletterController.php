@@ -101,10 +101,20 @@ class NewsletterController extends Controller
 
     public function store(StoreNewsletterRequest $request): NewsletterResource
     {
-        $newsletter = Newsletter::firstOrCreate([
+        // Trashed rows MUST be included. The (site_id, email) unique index does
+        // not carry `deleted_at`, so a soft-deleted subscriber still occupies the
+        // slot: without withTrashed() the lookup misses it, the INSERT hits the
+        // unique key and the admin gets a 500 instead of the row back. Same rule
+        // the public subscribe path and the spreadsheet import already follow —
+        // re-adding a removed address restores it rather than duplicating it.
+        $newsletter = Newsletter::withTrashed()->firstOrCreate([
             'site_id' => $request->integer('site_id'),
             'email'   => $request->validated('email'),
         ]);
+
+        if ($newsletter->trashed()) {
+            $newsletter->restore();
+        }
 
         return new NewsletterResource($newsletter->load('site'));
     }

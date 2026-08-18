@@ -53,18 +53,32 @@ class SpecialOfferController extends Controller
 
     public function update(UpdateSpecialOfferRequest $request, SpecialOffer $specialOffer): SpecialOfferResource
     {
+        // Captured BEFORE the write. The model's saving hook regenerates the slug
+        // whenever the title changes, and the casino may be reassigned — so after
+        // update() the old detail-page tag and the previous casino's sites are
+        // unreachable, and the pages they back would keep serving the stale offer
+        // for the rest of the ISR window.
+        $previousSiteIds = $this->siteIdsFor($specialOffer);
+        $previousSlug = (string) $specialOffer->slug;
+
         $specialOffer->update($request->validated());
 
-        $this->revalidate($specialOffer);
+        $this->revalidate($specialOffer, $previousSiteIds, [$previousSlug]);
 
         return new SpecialOfferResource($specialOffer->fresh('casino.sites'));
     }
 
     public function destroy(SpecialOffer $specialOffer): JsonResponse
     {
-        $this->revalidate($specialOffer);
+        // Resolve the audience first, delete, THEN revalidate. Pinging before the
+        // delete lets Next.js regenerate the affected pages while the offer is
+        // still readable, which re-caches the very rows this request removes.
+        $siteIds = $this->siteIdsFor($specialOffer);
+        $slug = (string) $specialOffer->slug;
 
         $specialOffer->delete();
+
+        $this->dispatchInvalidation($siteIds, [$slug]);
 
         return response()->json(null, 204);
     }
@@ -81,21 +95,50 @@ class SpecialOfferController extends Controller
         return new SpecialOfferResource($copy->load('casino.sites'));
     }
 
-    private function revalidate(SpecialOffer $offer): void
+    /**
+     * Sites this offer is published on, via its casino's attachments.
+     *
+     * @return list<int>
+     */
+    private function siteIdsFor(SpecialOffer $offer): array
     {
-        $siteIds = $offer->casino?->sites()->pluck('sites.id')->all() ?? [];
+        return $offer->casino?->sites()->pluck('sites.id')->all() ?? [];
+    }
 
-        if (! empty($siteIds)) {
-            // Every surface an offer appears on, or a visibility toggle would
-            // keep showing the card for up to an hour of stale ISR:
-            //  - casinos          → the offer cards on the casino page
-            //  - special-offers   → the home-page section and /special-offers
-            //  - special-offer:*  → the offer's own detail page
-            InvalidateCasinoCache::dispatch($siteIds, [
-                'casinos',
-                'special-offers',
-                'special-offer:' . $offer->slug,
-            ]);
+    /**
+     * @param  list<int>     $alsoSiteIds  Sites the offer was on BEFORE this write.
+     * @param  list<string>  $alsoSlugs    Detail-page slugs it answered to before.
+     */
+    private function revalidate(SpecialOffer $offer, array $alsoSiteIds = [], array $alsoSlugs = []): void
+    {
+        $this->dispatchInvalidation(
+            [...$this->siteIdsFor($offer), ...$alsoSiteIds],
+            [(string) $offer->slug, ...$alsoSlugs],
+        );
+    }
+
+    /**
+     * @param  list<int>     $siteIds
+     * @param  list<string>  $slugs
+     */
+    private function dispatchInvalidation(array $siteIds, array $slugs): void
+    {
+        $siteIds = array_values(array_unique(array_filter($siteIds)));
+
+        if ($siteIds === []) {
+            return;
         }
+
+        // Every surface an offer appears on, or a visibility toggle would
+        // keep showing the card for up to an hour of stale ISR:
+        //  - casinos          → the offer cards on the casino page
+        //  - special-offers   → the home-page section and /special-offers
+        //  - special-offer:*  → the offer's own detail page
+        $slugTags = array_map(
+            static fn (string $slug): string => 'special-offer:' . $slug,
+            array_values(array_unique(array_filter($slugs, static fn (string $s): bool => $s !== ''))),
+        );
+
+        InvalidateCasinoCache::dispatch($siteIds, ['casinos', 'special-offers', ...$slugTags]);
     }
 }

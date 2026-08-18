@@ -7,6 +7,7 @@ namespace App\Support;
 use Closure;
 use Illuminate\Cache\TaggableStore;
 use Illuminate\Support\Facades\Cache;
+use JsonSerializable;
 
 /**
  * Per-site cache helper that works on ANY cache store.
@@ -23,11 +24,47 @@ final class SiteCache
      */
     public static function remember(int $siteId, array $tags, string $key, int $ttl, Closure $callback): mixed
     {
+        // Whatever the callback produces is normalised to plain arrays/scalars
+        // BEFORE it reaches the store — see normalise().
+        $wrapped = static fn (): mixed => self::normalise($callback());
+
         if (self::taggable()) {
-            return Cache::tags([self::siteTag($siteId), ...$tags])->remember($key, $ttl, $callback);
+            return Cache::tags([self::siteTag($siteId), ...$tags])->remember($key, $ttl, $wrapped);
         }
 
-        return Cache::remember($key . ':v' . self::version($siteId), $ttl, $callback);
+        return Cache::remember($key . ':v' . self::version($siteId), $ttl, $wrapped);
+    }
+
+    /**
+     * Reduce a value to plain arrays and scalars so it survives the cache.
+     *
+     * This is not tidiness, it is a correctness fix. Callers hand us
+     * `SomeResource::collection($models)->resolve()`, and `resolve()` is SHALLOW:
+     * nested `CategoryResource::collection(...)` entries stay as live Resource
+     * objects, and dates stay as Carbon instances. Those get PHP-serialized into
+     * the store and come back as `__PHP_Incomplete_Class`, so a cache HIT returned
+     * a structurally different payload from a cache MISS — the casino endpoint
+     * dropped from 186 leaf fields to 32, losing categories and special offers
+     * entirely. It only ever looked fine because the FIRST request (a miss) is
+     * JSON-encoded on the way out, which resolves everything.
+     *
+     * Round-tripping through JSON is what the HTTP response does anyway, so the
+     * cached value is now byte-identical to the uncached one by construction.
+     */
+    private static function normalise(mixed $value): mixed
+    {
+        if (is_scalar($value) || $value === null) {
+            return $value;
+        }
+
+        if (is_array($value) || $value instanceof JsonSerializable) {
+            /** @var mixed $decoded */
+            $decoded = json_decode(json_encode($value, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+
+            return $decoded;
+        }
+
+        return $value;
     }
 
     /** Invalidate every cached entry belonging to a site. */

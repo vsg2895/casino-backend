@@ -57,7 +57,26 @@ class UnsubscribeController extends Controller
         return Unsubscribe::query()
             ->when($request->integer('site_id') ?: null, fn ($q, $id) => $q->where('site_id', $id))
             ->when($this->validType($request), fn ($q, $type) => $q->where('type', $type))
-            ->when(trim((string) $request->query('search')), fn ($q, $term) => $q->where('email', 'like', "%{$term}%"));
+            ->when($this->searchTerm($request), fn ($q, $term) => $q->where('email', 'like', "%{$term}%"));
+    }
+
+    /**
+     * Sanitised search term, or null when blank.
+     *
+     * LIKE wildcards are escaped: an address containing `_` (common) otherwise
+     * matched any single character, and a stray `%` turned the filter into "match
+     * everything" — so searching for a specific opt-out silently returned rows
+     * that were not it.
+     */
+    private function searchTerm(Request $request): ?string
+    {
+        $term = trim((string) $request->query('search'));
+
+        if ($term === '') {
+            return null;
+        }
+
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term);
     }
 
     public function export(Request $request): StreamedResponse

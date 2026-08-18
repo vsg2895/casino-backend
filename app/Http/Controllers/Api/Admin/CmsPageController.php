@@ -27,12 +27,18 @@ class CmsPageController extends Controller
      */
     private function revalidate(CmsPage $page): void
     {
-        SiteCache::flushSite($page->site_id);
+        $this->revalidateSite($page->site_id, (string) $page->slug);
+    }
 
-        $site = Site::query()->where('id', $page->site_id)->where('active', true)->first();
+    /** Same invalidation, from primitives — usable after the row is gone. */
+    private function revalidateSite(int $siteId, string $slug): void
+    {
+        SiteCache::flushSite($siteId);
+
+        $site = Site::query()->where('id', $siteId)->where('active', true)->first();
 
         if ($site !== null) {
-            RevalidateNextJsSites::dispatch(['page:' . $page->slug], [$site->id]);
+            RevalidateNextJsSites::dispatch(['page:' . $slug], [$site->id]);
         }
     }
 
@@ -76,9 +82,15 @@ class CmsPageController extends Controller
     {
         $this->authorize('delete', $page);
 
-        $this->revalidate($page);
+        // Delete FIRST, then revalidate. Pinging beforehand lets Next.js
+        // regenerate the page while the row is still published, re-caching the
+        // very content this request removes.
+        $siteId = $page->site_id;
+        $slug = (string) $page->slug;
 
         $this->service->delete($page);
+
+        $this->revalidateSite($siteId, $slug);
 
         return response()->json(null, 204);
     }

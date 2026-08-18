@@ -21,8 +21,12 @@ class SocialLinkResource extends JsonResource
             'url'        => $this->url,
             'sort_order' => (int) $this->sort_order,
             'active'     => (bool) $this->active,
-            'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at,
+            // ISO-8601 STRING, not the Carbon instance. These responses are cached
+            // via SiteCache, and a serialized Carbon returns as
+            // __PHP_Incomplete_Class — so the cached copy shipped a broken object
+            // where the uncached one shipped a date. Same wire format either way.
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
         ];
     }
 }
