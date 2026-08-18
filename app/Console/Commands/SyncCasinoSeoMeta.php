@@ -56,7 +56,13 @@ class SyncCasinoSeoMeta extends Command
     private const int RESERVED_DESCRIPTION = 36;  // ' License and payout limits verified.'
 
     /**
-     * Keyed by casino slug — the same seven rows the .sql file carried, verbatim.
+     * Keyed by casino slug — the seven rows the .sql file carried, verbatim, plus
+     * any added since.
+     *
+     * A slug that does not exist in the database being targeted is REPORTED AND
+     * SKIPPED, never created: this command only ever fills metadata on casinos
+     * that are already there. So an entry may be added here before the casino
+     * itself exists in production, and it applies on the next run after it does.
      *
      * CAREFUL: PHP silently converts a numeric-string array key to an integer, so
      * the '7' below is stored as int 7. Every read of a key from this map is cast
@@ -94,6 +100,14 @@ class SyncCasinoSeoMeta extends Command
         '7' => [
             'title'       => '7 Casino Review: Bonuses & Games',
             'description' => '7 Casino review: welcome bonus, game selection, payment methods and how quickly winnings arrive. Rated 4/5.',
+        ],
+        'wild-fortune' => [
+            'title'       => 'Wild Fortune Casino Review & Free Spins',
+            'description' => 'Wild Fortune casino review: 50 free spins on registration, game range, deposit methods and payout speed. Rated 5/5.',
+        ],
+        'spin-samurai' => [
+            'title'       => 'Spin Samurai Review: Bonus & Free Spins',
+            'description' => 'Spin Samurai casino review: 40 free spins on registration, slot library, banking options and cashout times. Rated 5/5.',
         ],
     ];
 

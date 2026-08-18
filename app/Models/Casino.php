@@ -44,6 +44,16 @@ class Casino extends Model
         ];
     }
 
+    /**
+     * The slug is generated from the name only when one is not supplied, and is
+     * never regenerated afterwards.
+     *
+     * `doNotGenerateSlugsOnUpdate()` is what makes the slug ADMIN-OWNED rather
+     * than immutable: an admin may edit it deliberately (validated for format
+     * and uniqueness in {@see \App\Http\Requests\Admin\UpdateCasinoRequest}),
+     * but simply renaming a casino must never move its public URL out from under
+     * the pages already indexed against it.
+     */
     public function getSlugOptions(): SlugOptions
     {
         return SlugOptions::create()
