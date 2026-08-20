@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Carbon;
 
 /**
  * Persists a newsletter subscription for the given site and, when the email is
@@ -81,7 +82,18 @@ class ProcessNewsletterSubscription implements ShouldQueue
             // (pending) and must click the emailed link — unless this site is in
             // the auto-verify opt-out list. Only touched on this transition so a
             // still-active subscriber re-submitting keeps their verified state.
-            $newsletter->forceFill(['verified' => $this->autoVerifies()])->save();
+            // On an auto-verify site there is no link to click, so the moment of
+            // subscribing IS the moment of verification — stamp it, otherwise
+            // those subscribers would carry a NULL verified_at and could never
+            // become eligible for the post-verification promotion. A site that
+            // uses the normal double opt-in gets NULL here and is stamped by
+            // VerifyController when the subscriber actually clicks.
+            $autoVerified = $this->autoVerifies();
+
+            $newsletter->forceFill([
+                'verified'    => $autoVerified,
+                'verified_at' => $autoVerified ? Carbon::now() : null,
+            ])->save();
         }
 
         // Send the verify email for a new/reactivated subscriber, AND re-send it

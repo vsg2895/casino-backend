@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\Newsletter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
 
 /**
  * Double opt-in email verification landing target.
@@ -26,8 +27,14 @@ class VerifyController extends Controller
         if (strlen($token) === 64) {
             $newsletter = Newsletter::where('unsubscribe_token', $token)->first();
 
+            // Guarded by `! verified` so the timestamp records the FIRST click.
+            // Re-clicking the link must not move it forward, or the
+            // post-verification promotion delay would restart on every click.
             if ($newsletter !== null && ! $newsletter->verified) {
-                $newsletter->forceFill(['verified' => true])->save();
+                $newsletter->forceFill([
+                    'verified'    => true,
+                    'verified_at' => Carbon::now(),
+                ])->save();
             }
         }
 

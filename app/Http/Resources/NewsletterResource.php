@@ -19,6 +19,10 @@ class NewsletterResource extends JsonResource
             'email'      => $this->email,
             'full_name'  => $this->full_name,
             'verified'   => (bool) $this->verified,
+            // When they clicked the verify link. NULL for anyone who never did,
+            // and for rows that predate the column. The post-verification
+            // promotion delay is measured from this.
+            'verified_at' => $this->verified_at,
             'created_at' => $this->created_at,
             'deleted_at' => $this->deleted_at,
         ];

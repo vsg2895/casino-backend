@@ -44,8 +44,18 @@ class EmailSchedule extends Model
     public const string PROVIDER_SMTP = 'smtp';         // .env SMTP (default)
     public const string PROVIDER_SENDGRID = 'sendgrid'; // stored SendGrid key
     public const string PROVIDER_MAILGUN = 'mailgun';   // stored Mailgun credential
+    public const string PROVIDER_SENDGRID_ENV = 'sendgrid_env'; // .env SENDGRID_API_KEY, no stored key
 
-    /** @var list<string> */
+    /**
+     * Transports a SCHEDULED CAMPAIGN may be saved with.
+     *
+     * PROVIDER_SENDGRID_ENV is deliberately absent: it exists for the
+     * post-verification promotion (see {@see VerificationPromotionEmail::PROVIDERS}),
+     * and adding it here would silently offer every campaign the environment key
+     * as well — a change to campaign behaviour that nobody asked for.
+     *
+     * @var list<string>
+     */
     public const array PROVIDERS = [self::PROVIDER_SMTP, self::PROVIDER_SENDGRID, self::PROVIDER_MAILGUN];
 
     /**

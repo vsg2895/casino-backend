@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
 use App\Http\Controllers\Api\Admin\SiteVerifyEmailController;
 use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
+use App\Http\Controllers\Api\Admin\VerificationPromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
 use App\Http\Controllers\Api\Admin\UnsubscribeController;
@@ -74,6 +75,15 @@ Route::prefix('v1')->group(function () {
         Route::put('sites/{site}/promotion-email', [SitePromotionEmailController::class, 'update']);
         Route::post('sites/{site}/promotion-email/preview', [SitePromotionEmailController::class, 'preview']);
         Route::post('sites/{site}/promotion-email/test', [SitePromotionEmailController::class, 'sendTest']);
+
+        // GLOBAL post-verification promotion — one template for every site, so
+        // deliberately no {site} segment. Sent by SendVerificationPromotionJob
+        // once `newsletters.created_at + delay_minutes` has elapsed for a
+        // verified subscriber.
+        Route::get('verification-promotion', [VerificationPromotionEmailController::class, 'show']);
+        Route::put('verification-promotion', [VerificationPromotionEmailController::class, 'update']);
+        Route::post('verification-promotion/preview', [VerificationPromotionEmailController::class, 'preview']);
+        Route::post('verification-promotion/test', [VerificationPromotionEmailController::class, 'sendTest']);
 
         // Casinos ("Products")
         // Dedicated record counter. MUST be declared before the resource route,

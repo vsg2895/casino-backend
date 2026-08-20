@@ -63,4 +63,11 @@ return [
     // Change it here and deploy if a campaign ever runs longer than 3 hours.
     'dedup_jitter_minutes' => 180,
 
+    // Most subscribers the post-verification sweep queues per run (it runs every
+    // minute). A ceiling rather than a target: it caps the burst when a large
+    // backlog becomes eligible at once — e.g. the first run after the feature is
+    // switched on, when every already-verified subscriber qualifies. The
+    // remainder is picked up by the following runs.
+    'verification_dispatch_limit' => (int) env('PROMOTION_VERIFICATION_DISPATCH_LIMIT', 1000),
+
 ];

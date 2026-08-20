@@ -14,6 +14,14 @@ Schedule::command('promotions:dispatch-due')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Queue the global post-verification promotion for subscribers whose
+// `newsletters.verified_at + delay_minutes` has elapsed. Every minute so the
+// promotion lands close to the intended delay after the subscriber clicked
+// their verify link, rather than drifting on a coarse tick.
+Schedule::command('promotions:dispatch-verification')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Provision upcoming monthly partitions for the promotion history table.
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')

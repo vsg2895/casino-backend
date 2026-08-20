@@ -10,6 +10,7 @@ use App\Models\MailgunKey;
 use App\Models\SendgridKey;
 use App\Services\Mail\Providers\MailgunTransportProvider;
 use App\Services\Mail\Providers\PromotionTransportProvider;
+use App\Services\Mail\Providers\SendgridEnvTransportProvider;
 use App\Services\Mail\Providers\SendgridTransportProvider;
 use App\Services\Mail\Providers\SmtpTransportProvider;
 use Illuminate\Contracts\Mail\Mailer;
@@ -92,7 +93,17 @@ class PromotionMailerFactory
         if ($this->providers === null) {
             $this->providers = [];
 
-            foreach ([new SmtpTransportProvider(), new SendgridTransportProvider(), new MailgunTransportProvider()] as $provider) {
+            $registry = [
+                new SmtpTransportProvider(),
+                new SendgridTransportProvider(),
+                new MailgunTransportProvider(),
+                // SendGrid via the .env key. Registered alongside — NOT instead
+                // of — the stored-key provider above: campaigns keep using a
+                // selected key, the post-verification promotion uses .env.
+                new SendgridEnvTransportProvider(),
+            ];
+
+            foreach ($registry as $provider) {
                 $this->providers[$provider->name()] = $provider;
             }
         }

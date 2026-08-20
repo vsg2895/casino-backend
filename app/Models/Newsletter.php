@@ -26,6 +26,15 @@ class Newsletter extends Model
     {
         return [
             'verified' => 'boolean',
+            // When the subscriber clicked the verify link. NULL means they never
+            // did (or predate the column). This is what the post-verification
+            // promotion delay is measured from.
+            'verified_at' => 'datetime',
+            // Set by the atomic claim in SendVerificationPromotionJob, never by
+            // mass assignment — hence cast but deliberately absent from
+            // $fillable. Non-null means the post-verification promotion has been
+            // claimed (and, unless a send failed and released it, delivered).
+            'verification_promotion_sent_at' => 'datetime',
         ];
     }
 
