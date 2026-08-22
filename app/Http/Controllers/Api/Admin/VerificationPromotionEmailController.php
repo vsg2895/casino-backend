@@ -14,6 +14,7 @@ use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
+use App\Support\Mail\MailCredential;
 use App\Support\Mail\SiteSender;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -103,29 +104,42 @@ class VerificationPromotionEmailController extends Controller
             ], 422);
         }
 
+        // Which credential this test will use. Resolved BEFORE the transport so
+        // it can be reported even when the transport itself fails — that is the
+        // case where knowing the key matters most.
+        $credential = MailCredential::describe($config->provider, $config->credentialId());
+
         // Same resolution the job performs. A missing/disabled key fails loudly
         // here instead of falling back to another transport and reporting a
         // success that proves nothing.
         try {
             $resolved = $this->mailers->resolve($config->provider, $config->credentialId());
         } catch (PromotionMailerException $e) {
+            Log::warning('Post-verification promotion test email: transport unavailable', [
+                'to'       => $to,
+                'provider' => $config->provider,
+                'error'    => $e->getMessage(),
+                ...$credential,
+            ]);
+
             return response()->json([
                 'ok' => false,
                 // The exception describes the configuration problem (which
                 // provider, which key state) and never contains key material.
-                'message' => 'Mail transport unavailable: ' . $e->getMessage(),
+                'message' => 'Mail transport unavailable (' . $credential['source'] . '): ' . $e->getMessage(),
             ], 422);
         }
 
-        try {
-            // Same From resolution as the real send (see
-            // SendVerificationPromotionJob::fromAddress) — over SendGrid the
-            // sender must be one SendGrid has authenticated, or the test
-            // "succeeds" and never arrives, proving nothing.
-            $from = $config->provider === EmailSchedule::PROVIDER_SENDGRID_ENV
-                ? (SiteSender::verificationAddress($site) ?: $resolved->fromAddress)
-                : $resolved->fromAddress;
+        // Same From resolution as the real send (see
+        // SendVerificationPromotionJob::fromAddress) — over SendGrid the sender
+        // must be one SendGrid has authenticated, or the test "succeeds" and
+        // never arrives, proving nothing. Outside the try so the catch below can
+        // report it.
+        $from = $config->provider === EmailSchedule::PROVIDER_SENDGRID_ENV
+            ? (SiteSender::verificationAddress($site) ?: $resolved->fromAddress)
+            : $resolved->fromAddress;
 
+        try {
             $mailable = $this->promotions
                 ->previewMail($site, $config, $to, $request->validated('name'))
                 ->usingFromAddress($from);
@@ -135,18 +149,37 @@ class VerificationPromotionEmailController extends Controller
             Log::warning('Post-verification promotion test email failed', [
                 'to'       => $to,
                 'provider' => $config->provider,
+                'from'     => $from,
                 'error'    => $e->getMessage(),
+                ...$credential,
             ]);
 
             return response()->json([
                 'ok'      => false,
-                'message' => 'Could not send test email: ' . $e->getMessage(),
+                'message' => 'Could not send test email via ' . $credential['source']
+                    . ' (' . $credential['key_prefix'] . ' ' . $credential['key_fingerprint'] . '): '
+                    . $e->getMessage(),
             ], 502);
         }
 
+        // Logged on SUCCESS too, not just failure. This button is the fastest
+        // way to answer "which key is production actually sending with?", and
+        // that answer is worthless if it is only recorded when things break.
+        // Fingerprint, never key material — see MailCredential.
+        Log::info('Post-verification promotion test email sent', [
+            'to'       => $to,
+            'provider' => $config->provider,
+            'from'     => $from,
+            ...$credential,
+        ]);
+
         return response()->json([
-            'ok'      => true,
-            'message' => "Test email sent to {$to} via {$config->provider}.",
+            'ok' => true,
+            // The credential is echoed back so it can be checked from the admin
+            // panel alone, with no shell access. Safe to surface: an
+            // already-authenticated screen, and a one-way fingerprint.
+            'message' => "Test email sent to {$to} from {$from} via {$credential['source']}"
+                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']}).",
         ]);
     }
 
