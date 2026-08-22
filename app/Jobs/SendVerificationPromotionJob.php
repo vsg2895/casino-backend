@@ -12,6 +12,7 @@ use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
+use App\Support\Mail\MailCredential;
 use App\Support\Mail\SiteSender;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -150,6 +151,17 @@ class SendVerificationPromotionJob implements ShouldQueue
         }
 
         $this->record($newsletter, PromotionEmailHistory::STATUS_SUCCESS);
+
+        // Names the credential this actually went out with, so "is production
+        // using the right SendGrid key?" is answerable from the log. Carries a
+        // prefix and a fingerprint, never key material — see MailCredential.
+        Log::info('Post-verification promotion sent', [
+            'newsletter_id' => $newsletter->id,
+            'email'         => $newsletter->email,
+            'site_id'       => $newsletter->site_id,
+            'provider'      => $config->provider,
+            ...MailCredential::describe($config->provider, $config->credentialId()),
+        ]);
     }
 
     /**

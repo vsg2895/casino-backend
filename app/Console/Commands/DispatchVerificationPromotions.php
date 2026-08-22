@@ -52,6 +52,10 @@ class DispatchVerificationPromotions extends Command
         $config = VerificationPromotionEmail::current();
 
         if (! $config->active) {
+            // Logged, not just printed: when nothing arrives in production this
+            // is the first thing to rule out, and the scheduler's output goes
+            // nowhere by default.
+            Log::info('Post-verification promotion sweep skipped: feature is disabled');
             $this->info('Post-verification promotion is disabled — nothing to do.');
 
             return self::SUCCESS;
@@ -77,25 +81,38 @@ class DispatchVerificationPromotions extends Command
             })
             ->orderBy('id')
             ->limit($limit)
-            ->pluck('id');
+            // id AND email: the id is what the job needs, the email is what
+            // makes the log line answerable ("did MY address get queued?")
+            // without joining back to the table by hand.
+            ->get(['id', 'email']);
 
         if ($candidates->isEmpty()) {
+            // Also logged: "the sweep ran and found nobody" and "the sweep never
+            // ran at all" look identical from the outside otherwise, and they
+            // have completely different causes.
+            Log::info('Post-verification promotion sweep found no eligible subscribers', [
+                'delay_minutes' => (int) $config->delay_minutes,
+                'cutoff'        => $cutoff->toDateTimeString(),
+            ]);
             $this->info('No subscribers are eligible right now.');
 
             return self::SUCCESS;
         }
 
-        foreach ($candidates as $id) {
-            SendVerificationPromotionJob::dispatch((int) $id);
+        foreach ($candidates as $candidate) {
+            SendVerificationPromotionJob::dispatch((int) $candidate->id);
         }
+
+        $emails = $candidates->pluck('email')->implode(', ');
 
         Log::info('Post-verification promotions queued', [
             'count'         => $candidates->count(),
             'delay_minutes' => (int) $config->delay_minutes,
             'cutoff'        => $cutoff->toDateTimeString(),
+            'emails'        => $emails,
         ]);
 
-        $this->info("Queued {$candidates->count()} post-verification promotion(s).");
+        $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
 
         return self::SUCCESS;
     }
