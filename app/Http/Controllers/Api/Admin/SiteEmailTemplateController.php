@@ -91,6 +91,6 @@ class SiteEmailTemplateController extends Controller
         $newsletter->full_name = $request->validated('name');
 
         // Shared admin send path (SMTP, from the .env mailbox) — see the trait.
-        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to);
+        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to, $site);
     }
 }

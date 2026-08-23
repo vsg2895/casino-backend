@@ -76,6 +76,6 @@ class SiteVerifyEmailController extends Controller
 
         // Identical send path to the subscription + promotion tests — only the
         // template built into the mailable differs (that was the whole bug).
-        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to);
+        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to, $site);
     }
 }
