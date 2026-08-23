@@ -24,7 +24,7 @@ use Throwable;
  * Admin management of the ONE global post-verification promotion.
  *
  * Deliberately has no {site} parameter anywhere: a single template serves
- * subscribers from every registered site. Otherwise it follows
+ * subscribers from every registered site. Otherwise, it follows
  * {@see SitePromotionEmailController} — show (materialising defaults on first
  * access), update, live preview of unsaved edits, and a test send.
  *
@@ -144,7 +144,7 @@ class VerificationPromotionEmailController extends Controller
                 ->previewMail($site, $config, $to, $request->validated('name'))
                 ->usingFromAddress($from);
 
-            $resolved->mailer->to($to)->send($mailable);
+            $sent = $resolved->mailer->to($to)->send($mailable);
         } catch (Throwable $e) {
             Log::warning('Post-verification promotion test email failed', [
                 'to'       => $to,
@@ -166,10 +166,15 @@ class VerificationPromotionEmailController extends Controller
         // way to answer "which key is production actually sending with?", and
         // that answer is worthless if it is only recorded when things break.
         // Fingerprint, never key material — see MailCredential.
+        // SendGrid's own id for the message — the handle for looking up its
+        // real fate in the Activity Feed when it does not appear in an inbox.
+        $messageId = $sent?->getSymfonySentMessage()?->getMessageId();
+
         Log::info('Post-verification promotion test email sent', [
-            'to'       => $to,
-            'provider' => $config->provider,
-            'from'     => $from,
+            'to'         => $to,
+            'provider'   => $config->provider,
+            'from'       => $from,
+            'message_id' => $messageId,
             ...$credential,
         ]);
 
@@ -179,7 +184,8 @@ class VerificationPromotionEmailController extends Controller
             // panel alone, with no shell access. Safe to surface: an
             // already-authenticated screen, and a one-way fingerprint.
             'message' => "Test email sent to {$to} from {$from} via {$credential['source']}"
-                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']}).",
+                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']})"
+                . ($messageId ? " — SendGrid id {$messageId}" : '') . '.',
         ]);
     }
 

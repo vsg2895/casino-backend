@@ -57,7 +57,7 @@ trait SendsAdminTestEmail
         $mailable->usingFromAddress($from ?: null);
 
         try {
-            Mail::mailer($mailer)->to($to)->send($mailable);
+            $sent = Mail::mailer($mailer)->to($to)->send($mailable);
         } catch (Throwable $e) {
             // Logged as well as returned: without this, a failed test left no
             // trace behind, so "the test never arrived" reports had no history
@@ -77,18 +77,26 @@ trait SendsAdminTestEmail
             ], 502);
         }
 
+        // The provider's own id for this message. Without it, "it never
+        // arrived" cannot be told apart from "it was never accepted" — with it,
+        // the message can be looked up in the SendGrid Activity Feed and its
+        // real fate (delivered / bounced / dropped / spam) read off directly.
+        $messageId = $sent?->getSymfonySentMessage()?->getMessageId();
+
         Log::info('Admin test email sent', [
-            'to'       => $to,
-            'mailable' => $mailable::class,
-            'mailer'   => $mailer,
-            'from'     => $from,
+            'to'         => $to,
+            'mailable'   => $mailable::class,
+            'mailer'     => $mailer,
+            'from'       => $from,
+            'message_id' => $messageId,
             ...$credential,
         ]);
 
         return response()->json([
             'ok'      => true,
             'message' => "Test email sent to {$to} from {$from} via {$credential['source']}"
-                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']}).",
+                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']})"
+                . ($messageId ? " — SendGrid id {$messageId}" : '') . '.',
         ]);
     }
 

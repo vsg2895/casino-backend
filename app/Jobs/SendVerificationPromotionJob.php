@@ -132,7 +132,7 @@ class SendVerificationPromotionJob implements ShouldQueue
                 )
                 ->usingFromAddress($this->fromAddress($config, $newsletter, $resolved->fromAddress));
 
-            $resolved->mailer->to($newsletter->email)->send($mailable);
+            $sent = $resolved->mailer->to($newsletter->email)->send($mailable);
         } catch (Throwable $e) {
             // Hand the claim back so a later sweep can retry, and record the
             // failure. Deliberately NOT marked as sent.
@@ -160,6 +160,9 @@ class SendVerificationPromotionJob implements ShouldQueue
             'email'         => $newsletter->email,
             'site_id'       => $newsletter->site_id,
             'provider'      => $config->provider,
+            // Traceable in the SendGrid Activity Feed — proves acceptance, and
+            // shows whether it was then delivered, bounced or dropped.
+            'message_id'    => $sent?->getSymfonySentMessage()?->getMessageId(),
             ...MailCredential::describe($config->provider, $config->credentialId()),
         ]);
     }
