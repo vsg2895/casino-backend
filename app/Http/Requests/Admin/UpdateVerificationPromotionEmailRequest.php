@@ -32,6 +32,12 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
         $hex = 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/';
 
         return [
+            // Preview/test only: which registered site the {{site_name}} /
+            // {{site_url}} placeholders resolve against. Never persisted — this
+            // template is global — so it is deliberately not in the model's
+            // $fillable and is stripped before the template is built.
+            'site_id'           => ['nullable', 'integer', 'exists:sites,id'],
+
             // ── Template (identical to the per-site promotion editor) ────
             'from_name'         => ['required', 'string', 'max:120'],
             'from_email'        => ['required', 'string', 'email', 'max:180'],

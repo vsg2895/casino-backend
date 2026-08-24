@@ -15,6 +15,7 @@ use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -74,7 +75,7 @@ class VerificationPromotionEmailController extends Controller
      */
     public function preview(UpdateVerificationPromotionEmailRequest $request): JsonResponse
     {
-        $site = $this->sampleSite();
+        $site = $this->resolveSite($request->integer('site_id'));
 
         if ($site === null) {
             return response()->json([
@@ -82,7 +83,11 @@ class VerificationPromotionEmailController extends Controller
             ], 422);
         }
 
-        $template = new VerificationPromotionEmail($request->validated());
+        // site_id is a preview-only selector, never a template column — strip it
+        // before building the (unsaved) template model.
+        $template = new VerificationPromotionEmail(
+            Arr::except($request->validated(), 'site_id'),
+        );
 
         return response()->json([
             'html' => $this->promotions->previewMail($site, $template)->render(),
@@ -99,7 +104,7 @@ class VerificationPromotionEmailController extends Controller
     {
         $to = $request->validated('to');
         $config = VerificationPromotionEmail::current();
-        $site = $this->sampleSite();
+        $site = $this->resolveSite($request->integer('site_id'));
 
         if ($site === null) {
             return response()->json([
@@ -192,14 +197,24 @@ class VerificationPromotionEmailController extends Controller
     }
 
     /**
-     * A site to render the global template against.
+     * The site to render the global template against.
      *
-     * Any active site will do — the template is brand-neutral by design and only
-     * reads site_name / site_url, which every site has. Lowest id for a stable,
-     * repeatable preview.
+     * When the admin has picked one in the editor ($siteId), its {{site_name}} /
+     * {{site_url}} are used, so the preview and test show exactly the copy a
+     * subscriber from that site would receive. An unknown/inactive id, or none at
+     * all, falls back to a representative site: any active site will do — the
+     * template is brand-neutral by design and only reads site_name / site_url,
+     * which every site has. Lowest id for a stable, repeatable default.
      */
-    private function sampleSite(): ?Site
+    private function resolveSite(?int $siteId): ?Site
     {
+        if ($siteId !== null && $siteId > 0) {
+            $chosen = Site::query()->where('active', true)->find($siteId);
+            if ($chosen !== null) {
+                return $chosen;
+            }
+        }
+
         return Site::query()->where('active', true)->orderBy('id')->first()
             ?? Site::query()->orderBy('id')->first();
     }
