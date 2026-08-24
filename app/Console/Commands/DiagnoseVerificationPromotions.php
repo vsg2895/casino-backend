@@ -65,7 +65,12 @@ class DiagnoseVerificationPromotions extends Command
         try {
             $resolved = $mailers->resolve($config->provider, $config->credentialId());
             $this->row('Resolves', get_class($resolved->mailer->getSymfonyTransport()), true);
-            $this->row('From address', (string) $resolved->fromAddress, true);
+            // The sender is this section's own from_email — NOT the factory's
+            // default ($resolved->fromAddress, the .env SMTP mailbox), which is
+            // what the send would use only if it applied an override. It does
+            // not, so reporting that value here would name the wrong address.
+            $this->row('From address (section)', (string) $config->from_email, trim((string) $config->from_email) !== '');
+            $this->line('    <fg=gray>must be a sender authenticated in SendGrid, or delivery is rejected</>');
         } catch (PromotionMailerException $e) {
             $this->row('Resolves', 'NO  <- '.$e->getMessage(), false);
         } catch (Throwable $e) {
@@ -139,8 +144,7 @@ class DiagnoseVerificationPromotions extends Command
             ->whereNotExists(function (Builder $query): void {
                 $query->from('unsubscribes')
                     ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id')
-                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id');
             });
     }
 
@@ -174,8 +178,8 @@ class DiagnoseVerificationPromotions extends Command
             $claimed = $n->verification_promotion_sent_at;
             $this->row('  Already sent/claimed', $claimed === null ? 'no' : $claimed->toDateTimeString().'  <- will not send again', $claimed === null);
 
-            $unsub = Unsubscribe::has($n->site_id, $n->email, Unsubscribe::TYPE_PROMOTION);
-            $this->row('  Opted out of promos', $unsub ? 'YES  <- excluded' : 'no', ! $unsub);
+            $unsub = Unsubscribe::hasAny($n->site_id, $n->email);
+            $this->row('  Opted out (any template)', $unsub ? 'YES  <- excluded' : 'no', ! $unsub);
 
             $history = PromotionEmailHistory::where('email', $n->email)
                 ->where('site_id', $n->site_id)->orderByDesc('id')->first();

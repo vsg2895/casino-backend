@@ -6,7 +6,6 @@ namespace App\Console\Commands;
 
 use App\Jobs\SendVerificationPromotionJob;
 use App\Models\Newsletter;
-use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
@@ -72,12 +71,12 @@ class DispatchVerificationPromotions extends Command
             ->whereNotNull('verified_at')                   // actually clicked the link
             ->where('verified', true)                       // defensive: flag agrees
             ->where('verified_at', '<=', $cutoff)           // delay since the click has elapsed
-            // Honour the promotion-stream opt-out, exactly as the batch job does.
+            // Honour a global opt-out — any template's opt-out excludes the
+            // address, exactly as the send job re-checks with Unsubscribe::hasAny.
             ->whereNotExists(function (Builder $query): void {
                 $query->from('unsubscribes')
                     ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id')
-                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id');
             })
             ->orderBy('id')
             ->limit($limit)

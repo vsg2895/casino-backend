@@ -6,9 +6,7 @@ namespace App\Http\Controllers\Concerns;
 
 use App\Mail\Contracts\SenderOverridable;
 use App\Models\EmailSchedule;
-use App\Models\Site;
 use App\Support\Mail\MailCredential;
-use App\Support\Mail\SiteSender;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Mail\Mailable;
 use Illuminate\Support\Facades\Log;
@@ -16,45 +14,39 @@ use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
- * The single send path shared by every admin "Send test" button that tests a
- * TEMPLATE (subscription, verify, per-site promotion). Keeping it in one place
- * guarantees the three behave identically — the only thing that differs is which
- * template each controller builds into the mailable.
+ * The single send path shared by the admin "Send test" buttons of the three
+ * per-site TEMPLATE sections: Subscription Emails, Verify Email and Promotion
+ * Emails. Keeping it in one place guarantees the three behave identically — the
+ * only thing that differs is which template each controller builds.
  *
- * TRANSPORT: the .env SendGrid mailer, config('mail.public_mailer') — the exact
- * one a visitor's subscribe/verify email goes out through.
+ * TRANSPORT: the .env SMTP mailer, config('mail.admin_test_mailer') — a literal
+ * 'smtp' rather than config('mail.admin_mailer'). These buttons exist to prove
+ * the operator's own SMTP server accepts and delivers a template; following a
+ * variable would let a changed MAIL_ADMIN_MAILER quietly turn them into a test
+ * of something else, and a broken SMTP setup would keep reporting success.
  *
- * This is a deliberate change from the previous behaviour, which pinned these
- * buttons to SMTP so they would prove the operator's own mail server worked.
- * That made the test answer a question nobody was asking: these templates are
- * only ever delivered to real people over SendGrid, so a test that passed over
- * SMTP — from a different domain, with different authentication — proved
- * nothing about whether the real thing arrives. Now a green test means the real
- * delivery path works.
+ * FROM: config('mail.from.address') — the authenticated .env mailbox
+ * (MAIL_FROM_ADDRESS), so a self-hosted mail server accepts the message. The
+ * mailable's own from_name stays the display name.
  *
- * FROM: the SendGrid-authenticated public sender, resolved by {@see SiteSender}
- * — the same helper the live verify email uses. SendGrid only accepts mail from
- * a sender it has authenticated, so the .env SMTP mailbox (a different domain)
- * would send without error and never arrive.
- *
- * NOTE: the SendGrid- and Mailgun-key "Test" buttons do NOT come through here,
- * on purpose. Those exist to verify one specific STORED credential, so they must
- * use that key rather than the .env one.
+ * NOT ROUTED THROUGH HERE, on purpose:
+ *  - Promotion After Verification's test, which must mirror its real send
+ *    (SendGrid via .env, From taken from that section's own template);
+ *  - the SendGrid- and Mailgun-key "Test" buttons, which exist to verify one
+ *    specific STORED credential and must use that key.
  */
 trait SendsAdminTestEmail
 {
-    protected function sendAdminTestEmail(
-        Mailable&SenderOverridable $mailable,
-        string $to,
-        ?Site $site = null,
-    ): JsonResponse {
-        $mailer = (string) config('mail.public_mailer', 'sendgrid');
-        $from = $this->adminTestFromAddress($site);
-        // Reported so the admin can confirm WHICH credential a test used,
-        // without shell access. Fingerprint only — never key material.
-        $credential = MailCredential::describe(EmailSchedule::PROVIDER_SENDGRID_ENV, null);
+    protected function sendAdminTestEmail(Mailable&SenderOverridable $mailable, string $to): JsonResponse
+    {
+        $mailer = (string) config('mail.admin_test_mailer', 'smtp');
+        $from = config('mail.from.address') ?: null;
+        // Recorded so "which credentials did that test use?" is answerable from
+        // the log. SMTP authenticates with MAIL_USERNAME/MAIL_PASSWORD, so there
+        // is no API key here to fingerprint.
+        $credential = MailCredential::describe(EmailSchedule::PROVIDER_SMTP, null);
 
-        $mailable->usingFromAddress($from ?: null);
+        $mailable->usingFromAddress($from);
 
         try {
             $sent = Mail::mailer($mailer)->to($to)->send($mailable);
@@ -73,14 +65,13 @@ trait SendsAdminTestEmail
 
             return response()->json([
                 'ok'      => false,
-                'message' => 'Could not send test email via ' . $credential['source'] . ': ' . $e->getMessage(),
+                'message' => 'Could not send test email: ' . $e->getMessage(),
             ], 502);
         }
 
-        // The provider's own id for this message. Without it, "it never
-        // arrived" cannot be told apart from "it was never accepted" — with it,
-        // the message can be looked up in the SendGrid Activity Feed and its
-        // real fate (delivered / bounced / dropped / spam) read off directly.
+        // The transport's own id for this message, when it exposes one. Without
+        // it, "it never arrived" cannot be told apart from "it was never
+        // accepted".
         $messageId = $sent?->getSymfonySentMessage()?->getMessageId();
 
         Log::info('Admin test email sent', [
@@ -95,27 +86,7 @@ trait SendsAdminTestEmail
         return response()->json([
             'ok'      => true,
             'message' => "Test email sent to {$to} from {$from} via {$credential['source']}"
-                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']})"
-                . ($messageId ? " — SendGrid id {$messageId}" : '') . '.',
+                . ($messageId ? " — message id {$messageId}" : '') . '.',
         ]);
-    }
-
-    /**
-     * The SendGrid-authenticated sender for a test.
-     *
-     * With a site, this is byte-for-byte what that site's live verify email
-     * uses. Without one, it falls back to the configured public sender, and only
-     * then to the .env From — which keeps the method total even on an install
-     * that has not set MAIL_PUBLIC_FROM_ADDRESS.
-     */
-    private function adminTestFromAddress(?Site $site): ?string
-    {
-        if ($site !== null) {
-            return SiteSender::verificationAddress($site) ?: null;
-        }
-
-        $public = trim((string) config('mail.public_from_address', ''));
-
-        return $public !== '' ? $public : (config('mail.from.address') ?: null);
     }
 }

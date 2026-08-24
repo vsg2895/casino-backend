@@ -10,7 +10,6 @@ use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
 use App\Models\Site;
 use App\Models\SitePromotionEmail;
-use App\Models\Unsubscribe;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
 use Illuminate\Bus\Queueable;
@@ -124,17 +123,17 @@ class SendPromotionBatchJob implements ShouldQueue
         }
 
         // One query for the whole batch: fetch each address's promotion token and
-        // drop anyone who has since opted out of the promotion stream. toBase()
-        // keeps the soft-delete scope but skips model hydration for rows we only
-        // read three scalars from.
+        // drop anyone who has since opted out — of ANY template. Opt-out is global
+        // (see Unsubscribe::hasAny), so the existence check is not scoped to a
+        // type. toBase() keeps the soft-delete scope but skips model hydration for
+        // rows we only read three scalars from.
         $recipients = Newsletter::query()
             ->where('site_id', $this->siteId)
             ->whereIn('email', $this->emails)
             ->whereNotExists(function (Builder $query): void {
                 $query->from('unsubscribes')
                     ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $this->siteId)
-                    ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+                    ->where('unsubscribes.site_id', $this->siteId);
             })
             ->toBase()
             ->get(['email', 'full_name', 'promotion_unsubscribe_token']);

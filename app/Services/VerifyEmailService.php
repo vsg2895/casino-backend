@@ -46,8 +46,13 @@ class VerifyEmailService
             $site,
             $template,
             $newsletter->email,
+            // The verify LINK uses the subscription token — VerifyController
+            // resolves the subscriber by `unsubscribe_token`.
             $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_SUBSCRIPTION),
             $newsletter->full_name,
+            // The unsubscribe link uses the verify template's OWN token, so an
+            // opt-out from this email is attributed to the "verify" stream.
+            $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_VERIFY),
         );
     }
 
@@ -62,19 +67,34 @@ class VerifyEmailService
         string $sampleEmail = 'subscriber@example.com',
         ?string $sampleName = null,
     ): VerifyEmailMail {
-        // A realistic (random, well-formed) sample token so the preview's verify
-        // and unsubscribe links look like real ones — not a string of zeros.
-        return $this->build($site, $template, $sampleEmail, Newsletter::generateUnsubscribeToken(), $sampleName);
+        // Realistic (random, well-formed) sample tokens so the preview's verify
+        // and unsubscribe links look like real ones — not a string of zeros. The
+        // two links carry independent tokens in a real send, so use two here too.
+        return $this->build(
+            $site,
+            $template,
+            $sampleEmail,
+            Newsletter::generateUnsubscribeToken(),
+            $sampleName,
+            Newsletter::generateUnsubscribeToken(),
+        );
     }
 
+    /**
+     * @param  string       $token             The subscription token — credential for the verify LINK.
+     * @param  string|null  $unsubscribeToken  The verify template's own token for the unsubscribe LINK;
+     *                                          falls back to $token when absent (preview convenience).
+     */
     private function build(
         Site $site,
         SiteVerifyEmail $template,
         string $email,
         string $token,
         ?string $fullName = null,
+        ?string $unsubscribeToken = null,
     ): VerifyEmailMail {
-        $unsubscribeUrl = $template->unsubscribeUrl($site, $token);
+        $unsubToken = $unsubscribeToken ?? $token;
+        $unsubscribeUrl = $template->unsubscribeUrl($site, $unsubToken);
         $verifyUrl = $template->verifyUrl($site, $token);
         $context = $this->context($site, $email, $unsubscribeUrl, $verifyUrl);
 
@@ -84,7 +104,9 @@ class VerifyEmailService
             siteUrl: $context['site_url'],
             unsubscribeUrl: $unsubscribeUrl,
             verifyUrl: $verifyUrl,
-            oneClickUrl: Unsubscribe::oneClickUrl($token),
+            // One-click uses the unsubscribe token too, so a native "Unsubscribe"
+            // is attributed to the verify stream just like the in-body link.
+            oneClickUrl: Unsubscribe::oneClickUrl($unsubToken),
             greeting: EmailGreeting::line($fullName),
         );
     }

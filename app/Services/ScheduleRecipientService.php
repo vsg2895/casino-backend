@@ -104,13 +104,13 @@ class ScheduleRecipientService
             return $query;
         }
 
-        // Promotion opt-outs, in one correlated pass against the
-        // (site_id, email, type) unique key.
+        // Opt-outs, in one correlated pass against the unsubscribes index. Opt-out
+        // is global (Unsubscribe::hasAny) — any template's opt-out excludes the
+        // address — so this is not scoped to a type.
         return $query->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
             $sub->from('unsubscribes')
                 ->whereColumn('unsubscribes.email', 'newsletters.email')
-                ->where('unsubscribes.site_id', $siteId)
-                ->where('unsubscribes.type', Unsubscribe::TYPE_PROMOTION);
+                ->where('unsubscribes.site_id', $siteId);
         });
     }
 
@@ -158,7 +158,7 @@ class ScheduleRecipientService
      * simplification, not an approximation. Two probes settle it, and both are
      * single indexed existence checks measured at ~0.2ms:
      *
-     *   - opt-outs:  (site_id, type) against the unsubscribes unique key
+     *   - opt-outs:  (site_id) against the unsubscribes index (global opt-out)
      *   - deliveries: the SAME non-correlated conditions the dedup subquery uses,
      *     via {@see PromotionEmailHistory::scopeDeliveredWithinDay()} with a null
      *     email column, so the probe can never be laxer than the clause it removes
@@ -181,7 +181,6 @@ class ScheduleRecipientService
 
         $hasOptOuts = Unsubscribe::query()
             ->where('site_id', $siteId)
-            ->where('type', Unsubscribe::TYPE_PROMOTION)
             ->exists();
 
         $hasRecentDeliveries = PromotionEmailHistory::query()

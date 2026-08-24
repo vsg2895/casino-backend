@@ -5,15 +5,13 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Exceptions\PromotionMailerException;
-use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
-use App\Services\PromotionEmailService;
+use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
-use App\Support\Mail\SiteSender;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -71,7 +69,7 @@ class SendVerificationPromotionJob implements ShouldQueue
         $this->onQueue(self::ON_QUEUE);
     }
 
-    public function handle(PromotionEmailService $promotions, PromotionMailerFactory $mailers): void
+    public function handle(PostVerificationPromotionEmailService $promotions, PromotionMailerFactory $mailers): void
     {
         $config = VerificationPromotionEmail::current();
 
@@ -97,7 +95,8 @@ class SendVerificationPromotionJob implements ShouldQueue
             return;
         }
 
-        if (Unsubscribe::has($newsletter->site_id, $newsletter->email, Unsubscribe::TYPE_PROMOTION)) {
+        // Global opt-out: any unsubscribe, of any template, stops this send.
+        if (Unsubscribe::hasAny($newsletter->site_id, $newsletter->email)) {
             return;
         }
 
@@ -122,15 +121,21 @@ class SendVerificationPromotionJob implements ShouldQueue
         }
 
         try {
-            $mailable = $promotions
-                ->mailFor(
-                    $newsletter->site,
-                    $config,
-                    $newsletter->email,
-                    $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_PROMOTION),
-                    $newsletter->full_name,
-                )
-                ->usingFromAddress($this->fromAddress($config, $newsletter, $resolved->fromAddress));
+            // No usingFromAddress() on purpose: PromotionEmail::envelope() falls
+            // back to the template's own from_email, which is the address
+            // configured in the Promotion After Verification section — the
+            // sender this feature is specified to use. Overriding it here (with
+            // the SMTP mailbox, or the shared public sender) would silently
+            // ignore what the admin typed into that field.
+            $mailable = $promotions->mailFor(
+                $newsletter->site,
+                $config,
+                $newsletter->email,
+                // This template's own token, so an opt-out it produces is
+                // attributed to the "promotion after verification" stream.
+                $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_PROMOTION_AFTER_VERIFICATION),
+                $newsletter->full_name,
+            );
 
             $sent = $resolved->mailer->to($newsletter->email)->send($mailable);
         } catch (Throwable $e) {
@@ -165,32 +170,6 @@ class SendVerificationPromotionJob implements ShouldQueue
             'message_id'    => $sent?->getSymfonySentMessage()?->getMessageId(),
             ...MailCredential::describe($config->provider, $config->credentialId()),
         ]);
-    }
-
-    /**
-     * The From address this send must use.
-     *
-     * SendGrid only accepts mail from a sender it has authenticated. The default
-     * for every promotion transport is config('mail.from.address') — the SMTP
-     * mailbox — which is correct for SMTP and Mailgun but NOT for SendGrid: that
-     * domain is not verified there, so the message is silently dropped or
-     * spam-filed (it sends, returns no error, and never arrives).
-     *
-     * Over the .env SendGrid transport it therefore reuses {@see SiteSender},
-     * the same helper that picks the From for the public verify emails on that
-     * exact transport — one place decides what a SendGrid-authenticated sender
-     * is, for both of the mails that go out through it.
-     */
-    private function fromAddress(
-        VerificationPromotionEmail $config,
-        Newsletter $newsletter,
-        ?string $default,
-    ): ?string {
-        if ($config->provider !== EmailSchedule::PROVIDER_SENDGRID_ENV) {
-            return $default;
-        }
-
-        return SiteSender::verificationAddress($newsletter->site) ?: $default;
     }
 
     /**

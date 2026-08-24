@@ -68,11 +68,11 @@ class ProcessNewsletterSubscription implements ShouldQueue
             $newsletter->save();
         }
 
-        // Re-consent: subscribing again clears any prior subscription-stream
-        // opt-out so the welcome (and future subscription mail) can flow again.
+        // Re-consent: subscribing again is a fresh opt-in, so it clears ANY prior
+        // opt-out (of any template) — the opt-out is global, so a partial clear
+        // would leave the subscriber blocked from all mail despite re-subscribing.
         $reactivated = Unsubscribe::where('site_id', $this->siteId)
             ->where('email', $this->email)
-            ->where('type', Unsubscribe::TYPE_SUBSCRIPTION)
             ->delete() > 0;
 
         $isNewOrReactivated = $newsletter->wasRecentlyCreated || $resubscribed || $reactivated;

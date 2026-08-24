@@ -41,8 +41,10 @@ final class MailCredential
             EmailSchedule::PROVIDER_SENDGRID_ENV => self::fromEnvSendgrid(),
             EmailSchedule::PROVIDER_SENDGRID     => self::fromStoredSendgrid($credentialId),
             EmailSchedule::PROVIDER_MAILGUN      => self::fromStoredMailgun($credentialId),
+            // SMTP (and anything unrecognised) authenticates with the .env
+            // MAIL_USERNAME/MAIL_PASSWORD, so there is no API key to fingerprint.
             default                              => [
-                'source'          => '.env SMTP mailer (' . (string) config('mail.admin_mailer') . ')',
+                'source'          => '.env SMTP credentials',
                 'key_prefix'      => '',
                 'key_fingerprint' => '',
             ],

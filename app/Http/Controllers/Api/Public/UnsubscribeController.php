@@ -27,16 +27,14 @@ class UnsubscribeController extends Controller
     public function oneClick(string $token): JsonResponse
     {
         // Tokens are 64-char and globally unique, so a single lookup resolves the
-        // subscriber AND the stream across all sites.
+        // subscriber AND the template across all sites. The template that carried
+        // the token is recorded as the opt-out type — the send-gate itself is
+        // global (Unsubscribe::hasAny), so this is purely for attribution.
         if (strlen($token) === 64) {
-            $newsletter = Newsletter::where('unsubscribe_token', $token)
-                ->orWhere('promotion_unsubscribe_token', $token)
-                ->first();
+            $newsletter = Newsletter::findByUnsubscribeToken($token);
 
             if ($newsletter !== null) {
-                $type = hash_equals((string) $newsletter->unsubscribe_token, $token)
-                    ? Unsubscribe::TYPE_SUBSCRIPTION
-                    : Unsubscribe::TYPE_PROMOTION;
+                $type = $newsletter->unsubscribeTypeForToken($token) ?? Unsubscribe::TYPE_SUBSCRIPTION;
 
                 Unsubscribe::record($newsletter->site_id, $newsletter->email, $type);
             }

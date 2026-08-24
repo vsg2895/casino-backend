@@ -9,13 +9,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateVerificationPromotionEmailRequest;
 use App\Http\Resources\VerificationPromotionEmailResource;
-use App\Models\EmailSchedule;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
-use App\Services\PromotionEmailService;
+use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
-use App\Support\Mail\SiteSender;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -28,17 +26,23 @@ use Throwable;
  * {@see SitePromotionEmailController} — show (materialising defaults on first
  * access), update, live preview of unsaved edits, and a test send.
  *
- * THE TEST SEND IS THE ONE DIVERGENCE. Every other admin test button routes
- * through {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}, which pins
- * delivery to SMTP. That is wrong for this feature: the point of the button here
- * is to prove the transport the REAL promotion will use, so it resolves the same
- * saved provider + credential the job resolves. A test that succeeded over SMTP
- * while the configured SendGrid key was broken would be worse than no test.
+ * THE TEST SEND DELIBERATELY DOES NOT USE
+ * {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}. That shared path
+ * sends the per-site templates over the .env SMTP mailer, which is right for
+ * them — those buttons exist to prove the operator's own mail server works.
+ * This feature's test has a different job: it must mirror its REAL send exactly,
+ * so it goes through the same provider ({@see VerificationPromotionEmail}, the
+ * .env SendGrid key) and the same sender (this section's own from_email). A
+ * green result here therefore proves the automatic promotion's delivery path,
+ * which a success over some other transport would not.
+ *
+ * It also ignores the Enable switch: that switch pauses the AUTOMATIC send, and
+ * an admin must still be able to test a paused template before turning it on.
  */
 class VerificationPromotionEmailController extends Controller
 {
     public function __construct(
-        private readonly PromotionEmailService $promotions,
+        private readonly PostVerificationPromotionEmailService $promotions,
         private readonly PromotionMailerFactory $mailers,
     ) {}
 
@@ -130,19 +134,17 @@ class VerificationPromotionEmailController extends Controller
             ], 422);
         }
 
-        // Same From resolution as the real send (see
-        // SendVerificationPromotionJob::fromAddress) — over SendGrid the sender
-        // must be one SendGrid has authenticated, or the test "succeeds" and
-        // never arrives, proving nothing. Outside the try so the catch below can
-        // report it.
-        $from = $config->provider === EmailSchedule::PROVIDER_SENDGRID_ENV
-            ? (SiteSender::verificationAddress($site) ?: $resolved->fromAddress)
-            : $resolved->fromAddress;
+        // The sender is the one configured in THIS section, exactly as the real
+        // send uses it: PromotionEmail::envelope() falls back to the template's
+        // own from_email when no override is applied, so the test proves the
+        // same From the automatic promotion will use.
+        $from = (string) $config->from_email;
 
         try {
+            // No usingFromAddress(): the mailable already takes from_email from
+            // the template, which is what this section configures.
             $mailable = $this->promotions
-                ->previewMail($site, $config, $to, $request->validated('name'))
-                ->usingFromAddress($from);
+                ->previewMail($site, $config, $to, $request->validated('name'));
 
             $sent = $resolved->mailer->to($to)->send($mailable);
         } catch (Throwable $e) {

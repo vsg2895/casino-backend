@@ -60,9 +60,10 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
             return;
         }
 
-        // Respect a subscription-stream opt-out (defensive: normally cleared on
-        // subscribe, but the subscriber may have unsubscribed in between).
-        if (Unsubscribe::has($this->siteId, $this->email, Unsubscribe::TYPE_SUBSCRIPTION)) {
+        // Respect a global opt-out (defensive: normally cleared on subscribe, but
+        // the subscriber may have unsubscribed in between). Any opt-out, of any
+        // template, stops this send.
+        if (Unsubscribe::hasAny($this->siteId, $this->email)) {
             return;
         }
 

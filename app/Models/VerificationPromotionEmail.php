@@ -9,14 +9,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * The single global "promotion after verification" template + its settings.
  *
- * Extends {@see SitePromotionEmail} on purpose: the template columns are
- * identical, so render(), the **bold** rich-text handling, COLOR_DEFAULTS and
- * unsubscribeUrl() are inherited unchanged — and, because
- * {@see \App\Services\PromotionEmailService::mailFor()} type-hints the parent,
- * this model flows through the existing mailable and Blade layout with no new
- * rendering code at all.
+ * Extends {@see SitePromotionEmail} for its lifecycle helpers and type identity
+ * (so it still flows through {@see \App\Services\Mail\PromotionMailerFactory} and
+ * the credential plumbing unchanged), but it OWNS its design: a richer, light
+ * "thanks for subscribing — here's your welcome gift" layout with its own set of
+ * editable components (eyebrow label, star-rating highlight box, responsible-
+ * gambling notice, footer tagline + navigation links, affiliate disclosure,
+ * copyright). It therefore overrides the field set, the colour palette, the
+ * defaults and render(), and renders through its own Blade view
+ * (`mail.promotion.after-verification`) via {@see \App\Mail\PostVerificationPromotionEmail}.
  *
- * What differs from the parent is scope and lifecycle:
+ * Scope & lifecycle vs the parent:
  *  - ONE row for every site (there is no site_id), fetched via {@see current()};
  *  - it also carries the feature's settings (active, delay_minutes, transport).
  */
@@ -47,6 +50,44 @@ class VerificationPromotionEmail extends SitePromotionEmail
         EmailSchedule::PROVIDER_SMTP,
     ];
 
+    /** Body fields that support a light **bold** syntax when rendered to HTML. */
+    public const array RICH_FIELDS = [
+        'intro_text', 'secondary_text', 'disclaimer_text',
+        'responsible_notice_text', 'footer_tagline', 'affiliate_disclosure_text',
+    ];
+
+    /**
+     * Plain text/URL fields: placeholders are substituted but no markup is
+     * allowed (Blade escapes them at render time).
+     *
+     * @var list<string>
+     */
+    private const array PLAIN_FIELDS = [
+        'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url', 'hero_url',
+        'top_button_text', 'heading', 'cta_button_text', 'unsubscribe_label',
+        'header_brand_text', 'eyebrow_text', 'rating_stars', 'highlight_text', 'copyright_text',
+    ];
+
+    /**
+     * Every colour the light layout paints with, and the fallback used when a row
+     * predates the column or an unsaved preview omits it. Overrides the parent's
+     * dark palette: this template has its own header band, white body card and
+     * dark footer, none of which the shared dark design had.
+     */
+    public const array COLOR_DEFAULTS = [
+        'background_color'        => '#f4f5f7', // page canvas around the card
+        'body_background_color'   => '#ffffff', // the white content card
+        'header_color'            => '#059669', // header brand band
+        'heading_color'           => '#111827', // the large title
+        'text_color'              => '#374151', // body paragraphs
+        'secondary_text_color'    => '#4b5563', // secondary paragraph
+        'muted_text_color'        => '#6b7280', // fine print / notice
+        'button_color'            => '#059669', // CTA + rating highlight
+        'accent_color'            => '#059669', // eyebrow + links + unsubscribe
+        'footer_background_color' => '#111827', // dark footer band
+        'footer_text_color'       => '#9ca3af', // footer copy
+    ];
+
     protected $fillable = [
         'from_name',
         'from_email',
@@ -61,13 +102,29 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'cta_button_text',
         'disclaimer_text',
         'unsubscribe_label',
-        'button_color',
+        // New design components
+        'header_brand_text',
+        'eyebrow_text',
+        'rating_stars',
+        'highlight_text',
+        'responsible_notice_text',
+        'footer_tagline',
+        'footer_links',
+        'affiliate_disclosure_text',
+        'copyright_text',
+        // Palette
         'background_color',
+        'body_background_color',
+        'header_color',
         'heading_color',
         'text_color',
         'secondary_text_color',
         'muted_text_color',
+        'button_color',
         'accent_color',
+        'footer_background_color',
+        'footer_text_color',
+        // Settings
         'active',
         'delay_minutes',
         'provider',
@@ -82,6 +139,8 @@ class VerificationPromotionEmail extends SitePromotionEmail
             'delay_minutes'   => 'integer',
             'sendgrid_key_id' => 'integer',
             'mailgun_key_id'  => 'integer',
+            // Ordered list of {label,url} footer navigation links.
+            'footer_links'    => 'array',
         ];
     }
 
@@ -117,18 +176,102 @@ class VerificationPromotionEmail extends SitePromotionEmail
             'preheader'         => 'Thanks for confirming your email — here is what we lined up for you.',
             'hero_image_url'    => null,
             'hero_url'          => '{{site_url}}',
-            'top_button_text'   => 'See the offer',
-            'heading'           => 'Thanks for confirming your email',
-            'intro_text'        => 'Your subscription to **{{site_name}}** is now active, so here is the offer we promised.',
-            'secondary_text'    => 'Every operator we list is reviewed before it appears. Terms and wagering requirements always apply.',
-            'cta_button_text'   => 'Claim your offer',
-            'disclaimer_text'   => '18+ only. Gambling carries real financial risk — please play responsibly.',
+            'top_button_text'   => null,
+            'heading'           => "Thanks for subscribing — here's a welcome gift on us",
+            'intro_text'        => 'As a thank-you for joining **{{site_name}}**, we have lined up a special offer with one of our top-rated partners. Register and verify your email to claim it — no hassle, no delays.',
+            'secondary_text'    => 'Our partners offer fast payouts, top game providers and round-the-clock support — every operator reviewed before it reaches you.',
+            'cta_button_text'   => 'Claim Your Offer',
+            'disclaimer_text'   => 'Wagering requirements and withdrawal caps are stated upfront on the offer page, so nothing surprises you later.',
             'unsubscribe_label' => 'Unsubscribe',
+
+            // New design components
+            'header_brand_text'         => '{{site_name}}',
+            'eyebrow_text'              => 'Exclusive subscriber offer',
+            'rating_stars'              => '★★★★★',
+            'highlight_text'            => '100 Free Spins',
+            'responsible_notice_text'   => '**18+ · Gamble responsibly.** Gambling should stay entertainment, never a way to make money. Set a limit before you play and walk away when you reach it.',
+            'footer_tagline'            => '{{site_name}} — A curated, independent guide to the finest online casinos and exclusive offers.',
+            'footer_links'              => [
+                ['label' => 'About', 'url' => '{{site_url}}/about'],
+                ['label' => 'Contact', 'url' => '{{site_url}}/contact'],
+                ['label' => 'Privacy Policy', 'url' => '{{site_url}}/privacy-policy'],
+                ['label' => 'Responsible Gambling', 'url' => '{{site_url}}/responsible-gambling'],
+            ],
+            'affiliate_disclosure_text' => 'Some links in this email earn us a commission, which never influences a rating.',
+            'copyright_text'            => '© {{year}} {{site_name}}. All rights reserved.',
+
+            ...self::COLOR_DEFAULTS,
+
             'active'            => false,
             'delay_minutes'     => 60,
             // The .env SendGrid key — usable with no further configuration.
             'provider'          => EmailSchedule::PROVIDER_SENDGRID_ENV,
         ];
+    }
+
+    /**
+     * Resolve this template into render-ready values for the Blade view.
+     *
+     * Placeholders ({{site_name}}, {{site_url}}, {{email}}, {{year}},
+     * {{unsubscribe_url}}) are substituted everywhere; RICH_FIELDS additionally
+     * get HTML-escaped and a minimal **bold** → <strong> conversion so admins
+     * cannot inject markup. Plain/URL fields are left for Blade to escape.
+     * `footer_links` returns as an array of {label,url} with placeholders
+     * substituted — Blade escapes both when it emits them.
+     *
+     * @param  array<string, string>  $context
+     * @return array<string, mixed>
+     */
+    public function render(array $context): array
+    {
+        $replace = static function (string $value) use ($context): string {
+            foreach ($context as $key => $val) {
+                $value = str_replace('{{' . $key . '}}', $val, $value);
+                $value = str_replace('{{ ' . $key . ' }}', $val, $value);
+            }
+
+            return $value;
+        };
+
+        $out = [];
+
+        foreach (self::PLAIN_FIELDS as $field) {
+            $out[$field] = $replace((string) $this->{$field});
+        }
+
+        foreach (self::RICH_FIELDS as $field) {
+            $out[$field] = self::richToHtml($replace((string) $this->{$field}));
+        }
+
+        // Colours never take placeholders. Each falls back to the design default
+        // so an unsaved preview — or a row written before these columns existed —
+        // still renders a complete palette instead of emitting empty CSS.
+        foreach (self::COLOR_DEFAULTS as $field => $default) {
+            $value = trim((string) $this->{$field});
+            $out[$field] = $value !== '' ? $value : $default;
+        }
+
+        // Footer navigation links: substitute placeholders in each label + url,
+        // drop any entry missing either half. Left as raw strings — Blade escapes
+        // them where they are emitted.
+        $out['footer_links'] = collect($this->footer_links ?? [])
+            ->map(fn ($link): array => [
+                'label' => $replace((string) ($link['label'] ?? '')),
+                'url'   => $replace((string) ($link['url'] ?? '')),
+            ])
+            ->filter(fn (array $link): bool => $link['label'] !== '' && $link['url'] !== '')
+            ->values()
+            ->all();
+
+        return $out;
+    }
+
+    /** Escape HTML, then convert a minimal **bold** syntax to <strong>. */
+    private static function richToHtml(string $value): string
+    {
+        $escaped = e($value);
+
+        return (string) preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', $escaped);
     }
 
     /**

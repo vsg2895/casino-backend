@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
-use App\Models\SitePromotionEmail;
 use App\Models\VerificationPromotionEmail;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -40,7 +39,19 @@ class VerificationPromotionEmailResource extends JsonResource
             'disclaimer_text'   => $this->disclaimer_text,
             'unsubscribe_label' => $this->unsubscribe_label,
 
-            ...collect(SitePromotionEmail::COLOR_DEFAULTS)
+            // ── New design components ─────────────────────────────────────
+            'header_brand_text'         => $this->header_brand_text,
+            'eyebrow_text'              => $this->eyebrow_text,
+            'rating_stars'              => $this->rating_stars,
+            'highlight_text'            => $this->highlight_text,
+            'responsible_notice_text'   => $this->responsible_notice_text,
+            'footer_tagline'            => $this->footer_tagline,
+            // Always an array so the admin editor can bind to it directly.
+            'footer_links'              => $this->footer_links ?? [],
+            'affiliate_disclosure_text' => $this->affiliate_disclosure_text,
+            'copyright_text'            => $this->copyright_text,
+
+            ...collect(VerificationPromotionEmail::COLOR_DEFAULTS)
                 ->map(fn (string $default, string $field): string => (string) ($this->{$field} ?: $default))
                 ->all(),
 

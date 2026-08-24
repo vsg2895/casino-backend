@@ -36,12 +36,13 @@ class NewsletterController extends Controller
     /**
      * One-click unsubscribe via the subscriber's opaque per-stream token.
      *
-     * The token alone identifies both the subscriber AND which stream
-     * (subscription vs promotion) they are opting out of — no email, id or other
-     * personal data is ever sent in the URL. Scoped to the current site and
-     * idempotent: an unknown/already-removed token still returns ok, never
-     * revealing whether an address is on the list. Opting out of one stream
-     * leaves the subscriber (and the other stream) untouched.
+     * The token alone identifies both the subscriber AND which TEMPLATE
+     * (subscription, verify, promotion, promotion-after-verification) prompted
+     * the opt-out — no email, id or other personal data is ever sent in the URL.
+     * The template is recorded for detection; the opt-out itself is global, so
+     * one click stops all further mail to that address. Scoped to the current
+     * site and idempotent: an unknown/already-removed token still returns ok,
+     * never revealing whether an address is on the list.
      */
     public function unsubscribe(UnsubscribeNewsletterRequest $request): JsonResponse
     {
@@ -49,17 +50,12 @@ class NewsletterController extends Controller
         $site = app('current_site');
         $token = $request->validated('token');
 
-        $newsletter = Newsletter::where('site_id', $site->id)
-            ->where(function ($query) use ($token): void {
-                $query->where('unsubscribe_token', $token)
-                    ->orWhere('promotion_unsubscribe_token', $token);
-            })
-            ->first();
+        $newsletter = Newsletter::findByUnsubscribeToken($token, $site->id);
 
         if ($newsletter !== null) {
-            $type = hash_equals((string) $newsletter->unsubscribe_token, $token)
-                ? Unsubscribe::TYPE_SUBSCRIPTION
-                : Unsubscribe::TYPE_PROMOTION;
+            // The template that carried the token is recorded as the opt-out
+            // type (for detection); the opt-out itself is global.
+            $type = $newsletter->unsubscribeTypeForToken($token) ?? Unsubscribe::TYPE_SUBSCRIPTION;
 
             Unsubscribe::record($site->id, $newsletter->email, $type);
         }

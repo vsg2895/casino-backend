@@ -13,9 +13,10 @@ use Illuminate\Validation\Validator;
 /**
  * Validation for the global post-verification promotion.
  *
- * The template half mirrors {@see UpdateSitePromotionEmailRequest} field for
- * field — same columns, same rules, so an admin who knows one editor knows this
- * one. What this request adds is the settings half: the delay and the transport.
+ * Covers the shared promotion fields (sender, hero, body, colours) PLUS this
+ * template's own richer design — the eyebrow label, star-rating highlight box,
+ * responsible-gambling notice, footer tagline + navigation links, affiliate
+ * disclosure and copyright — and the settings half: the delay and the transport.
  */
 class UpdateVerificationPromotionEmailRequest extends FormRequest
 {
@@ -47,13 +48,32 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'secondary_text'    => ['nullable', 'string', 'max:1000'],
             'disclaimer_text'   => ['nullable', 'string', 'max:1000'],
 
-            'button_color'         => ['required', 'string', $hex],
-            'accent_color'         => ['required', 'string', $hex],
-            'background_color'     => ['nullable', 'string', $hex],
-            'heading_color'        => ['nullable', 'string', $hex],
-            'text_color'           => ['nullable', 'string', $hex],
-            'secondary_text_color' => ['nullable', 'string', $hex],
-            'muted_text_color'     => ['nullable', 'string', $hex],
+            // ── New design components ─────────────────────────────────────
+            'header_brand_text'         => ['nullable', 'string', 'max:120'],
+            'eyebrow_text'              => ['nullable', 'string', 'max:120'],
+            'rating_stars'              => ['nullable', 'string', 'max:20'],
+            'highlight_text'            => ['nullable', 'string', 'max:120'],
+            'responsible_notice_text'   => ['nullable', 'string', 'max:1000'],
+            'footer_tagline'            => ['nullable', 'string', 'max:500'],
+            'affiliate_disclosure_text' => ['nullable', 'string', 'max:500'],
+            'copyright_text'            => ['nullable', 'string', 'max:200'],
+
+            // Ordered list of {label,url} footer navigation links.
+            'footer_links'          => ['nullable', 'array', 'max:8'],
+            'footer_links.*.label'  => ['required_with:footer_links', 'string', 'max:60'],
+            'footer_links.*.url'    => ['required_with:footer_links', 'string', 'max:300'],
+
+            'button_color'            => ['required', 'string', $hex],
+            'accent_color'            => ['required', 'string', $hex],
+            'background_color'        => ['nullable', 'string', $hex],
+            'body_background_color'   => ['nullable', 'string', $hex],
+            'header_color'            => ['nullable', 'string', $hex],
+            'heading_color'           => ['nullable', 'string', $hex],
+            'text_color'              => ['nullable', 'string', $hex],
+            'secondary_text_color'    => ['nullable', 'string', $hex],
+            'muted_text_color'        => ['nullable', 'string', $hex],
+            'footer_background_color' => ['nullable', 'string', $hex],
+            'footer_text_color'       => ['nullable', 'string', $hex],
 
             // ── Settings ─────────────────────────────────────────────────
             'active' => ['required', 'boolean'],

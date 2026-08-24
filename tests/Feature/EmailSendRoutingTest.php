@@ -158,7 +158,12 @@ class EmailSendRoutingTest extends TestCase
 
     public function test_admin_mailer_is_configurable(): void
     {
-        config()->set('mail.admin_mailer', 'array');
+        // The test buttons follow admin_TEST_mailer, not admin_mailer. They are
+        // deliberately pinned away from the campaign mailer so that changing
+        // MAIL_ADMIN_MAILER cannot silently turn "prove my SMTP server works"
+        // into a test of something else. This test previously set the campaign
+        // key and so asserted a routing rule the app has never had.
+        config()->set('mail.admin_test_mailer', 'array');
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();

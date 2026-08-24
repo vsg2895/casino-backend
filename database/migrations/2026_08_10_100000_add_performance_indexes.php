@@ -120,6 +120,22 @@ return new class extends Migration
      */
     private function indexExists(string $table, string $name): bool
     {
+        // information_schema is MySQL-only. On any other driver — SQLite, which
+        // the test suite runs on — querying it throws "no such table" and takes
+        // every migration-backed test down with it. Laravel's schema builder
+        // answers the same question portably, so it is used everywhere except
+        // MySQL, where the direct lookup is kept as-is.
+        if (DB::getDriverName() !== 'mysql') {
+            return in_array(
+                $name,
+                array_map(
+                    static fn (array $index): string => (string) $index['name'],
+                    Schema::getIndexes($table),
+                ),
+                true,
+            );
+        }
+
         return DB::table('information_schema.STATISTICS')
             ->where('TABLE_SCHEMA', DB::getDatabaseName())
             ->where('TABLE_NAME', $table)

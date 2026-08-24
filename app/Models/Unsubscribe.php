@@ -13,12 +13,26 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class Unsubscribe extends Model
 {
-    /** Email streams a subscriber can opt out of independently. */
+    /**
+     * The email templates an unsubscribe can be attributed to.
+     *
+     * These name WHICH template the subscriber unsubscribed through, recorded for
+     * detection/reporting. Send-gating itself is GLOBAL — see {@see hasAny()}:
+     * any opt-out, of any type, stops all mail to that address — so the type is
+     * about attribution, not about which stream stays alive.
+     */
     public const string TYPE_SUBSCRIPTION = 'subscription';
     public const string TYPE_PROMOTION = 'promotion';
+    public const string TYPE_VERIFY = 'verify';
+    public const string TYPE_PROMOTION_AFTER_VERIFICATION = 'promotion_after_verification';
 
     /** @var list<string> */
-    public const array TYPES = [self::TYPE_SUBSCRIPTION, self::TYPE_PROMOTION];
+    public const array TYPES = [
+        self::TYPE_SUBSCRIPTION,
+        self::TYPE_PROMOTION,
+        self::TYPE_VERIFY,
+        self::TYPE_PROMOTION_AFTER_VERIFICATION,
+    ];
 
     protected $fillable = [
         'site_id',
@@ -64,6 +78,21 @@ class Unsubscribe extends Model
         return static::where('site_id', $siteId)
             ->where('email', $email)
             ->where('type', $type)
+            ->exists();
+    }
+
+    /**
+     * Whether the address has opted out of ANY stream on the site.
+     *
+     * This is the send-gate every email checks: an opt-out recorded against any
+     * template (subscription, verify, promotion, promotion-after-verification)
+     * stops all further mail to that address. The per-type value is kept only so
+     * the admin can see which template prompted the opt-out.
+     */
+    public static function hasAny(int $siteId, string $email): bool
+    {
+        return static::where('site_id', $siteId)
+            ->where('email', $email)
             ->exists();
     }
 }

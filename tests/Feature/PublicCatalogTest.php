@@ -94,17 +94,21 @@ class PublicCatalogTest extends TestCase
         [$site, $key] = $this->siteWithKey();
         $category = Category::factory()->create();
 
-        for ($i = 0; $i < 5; $i++) {
+        // Eight rows against a page size of six, so page 2 is genuinely a
+        // partial page — with only five the whole set fits on one page and the
+        // assertions below would pass without pagination happening at all.
+        for ($i = 0; $i < 8; $i++) {
             $this->attachedCasino($site)->categories()->attach($category->id);
         }
 
         $page1 = $this->getJson($this->publicBase($site) . '/categories/' . $category->slug . '?page=1', $this->siteHeaders($key))->assertOk();
-        $this->assertCount(4, $page1->json('data.casinos'));         // PER_PAGE = 4
-        $this->assertSame(5, $page1->json('data.meta.total'));
+        $this->assertSame(6, $page1->json('data.meta.per_page'), 'CategoryController::PER_PAGE');
+        $this->assertCount(6, $page1->json('data.casinos'));
+        $this->assertSame(8, $page1->json('data.meta.total'));
         $this->assertSame(2, $page1->json('data.meta.last_page'));
 
         $page2 = $this->getJson($this->publicBase($site) . '/categories/' . $category->slug . '?page=2', $this->siteHeaders($key))->assertOk();
-        $this->assertCount(1, $page2->json('data.casinos'));
+        $this->assertCount(2, $page2->json('data.casinos'));
     }
 
     // ── Special offers — scoped via their casino's site attachment ────────
