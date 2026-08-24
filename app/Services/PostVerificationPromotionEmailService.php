@@ -32,6 +32,9 @@ class PostVerificationPromotionEmailService
         return [
             'site_name'       => $site->name,
             'site_url'        => 'https://' . $site->domain,
+            // Bare domain (no scheme) for footer copy — "confirmed at winpalack.com",
+            // "info@winpalack.com" — where "https://" would read wrong.
+            'site_domain'     => $site->domain,
             'email'           => $email,
             'year'            => (string) Carbon::now()->year,
             'unsubscribe_url' => $unsubscribeUrl,

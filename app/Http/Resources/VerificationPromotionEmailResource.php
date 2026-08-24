@@ -42,13 +42,22 @@ class VerificationPromotionEmailResource extends JsonResource
             // ── New design components ─────────────────────────────────────
             'header_brand_text'         => $this->header_brand_text,
             'eyebrow_text'              => $this->eyebrow_text,
-            'rating_stars'              => $this->rating_stars,
+            'confirmation_text'         => $this->confirmation_text,
             'highlight_text'            => $this->highlight_text,
+            // Always an array so the admin editor can bind to it directly.
+            'offer_terms'               => $this->offer_terms ?? [],
             'responsible_notice_text'   => $this->responsible_notice_text,
             'footer_tagline'            => $this->footer_tagline,
             // Always an array so the admin editor can bind to it directly.
             'footer_links'              => $this->footer_links ?? [],
             'affiliate_disclosure_text' => $this->affiliate_disclosure_text,
+            // Footer legal / contact lines
+            'reason_text'               => $this->reason_text,
+            'age_disclaimer_text'       => $this->age_disclaimer_text,
+            'postal_address'            => $this->postal_address,
+            'contact_email'             => $this->contact_email,
+            'email_preferences_label'   => $this->email_preferences_label,
+            'email_preferences_url'     => $this->email_preferences_url,
             'copyright_text'            => $this->copyright_text,
 
             ...collect(VerificationPromotionEmail::COLOR_DEFAULTS)

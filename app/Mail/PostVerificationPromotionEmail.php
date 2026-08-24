@@ -88,6 +88,7 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
                 'accent'         => $this->template['accent_color'],
                 'footerBg'       => $this->template['footer_background_color'],
                 'footerColor'    => $this->template['footer_text_color'],
+                'footerLink'     => $this->template['footer_link_color'],
             ],
         );
     }

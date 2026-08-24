@@ -57,9 +57,22 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             // ── New design components ─────────────────────────────────────
             'header_brand_text'         => ['nullable', 'string', 'max:120'],
             'eyebrow_text'              => ['nullable', 'string', 'max:120'],
-            'rating_stars'              => ['nullable', 'string', 'max:20'],
+            'confirmation_text'         => ['nullable', 'string', 'max:200'],
             'highlight_text'            => ['nullable', 'string', 'max:120'],
             'responsible_notice_text'   => ['nullable', 'string', 'max:1000'],
+
+            // Footer legal / contact lines
+            'reason_text'             => ['nullable', 'string', 'max:300'],
+            'age_disclaimer_text'     => ['nullable', 'string', 'max:200'],
+            'postal_address'          => ['nullable', 'string', 'max:300'],
+            'contact_email'           => ['nullable', 'string', 'max:180'],
+            'email_preferences_label' => ['nullable', 'string', 'max:60'],
+            'email_preferences_url'   => ['nullable', 'string', 'max:300'],
+
+            // Offer "ticket" terms — an ordered list of {label,value} columns.
+            'offer_terms'         => ['nullable', 'array', 'max:6'],
+            'offer_terms.*.label' => ['required_with:offer_terms', 'string', 'max:40'],
+            'offer_terms.*.value' => ['required_with:offer_terms', 'string', 'max:40'],
             'footer_tagline'            => ['nullable', 'string', 'max:500'],
             'affiliate_disclosure_text' => ['nullable', 'string', 'max:500'],
             'copyright_text'            => ['nullable', 'string', 'max:200'],
@@ -80,6 +93,7 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'muted_text_color'        => ['nullable', 'string', $hex],
             'footer_background_color' => ['nullable', 'string', $hex],
             'footer_text_color'       => ['nullable', 'string', $hex],
+            'footer_link_color'       => ['nullable', 'string', $hex],
 
             // ── Settings ─────────────────────────────────────────────────
             'active' => ['required', 'boolean'],

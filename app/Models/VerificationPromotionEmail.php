@@ -65,7 +65,11 @@ class VerificationPromotionEmail extends SitePromotionEmail
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url', 'hero_url',
         'top_button_text', 'heading', 'cta_button_text', 'unsubscribe_label',
-        'header_brand_text', 'eyebrow_text', 'rating_stars', 'highlight_text', 'copyright_text',
+        'header_brand_text', 'eyebrow_text', 'confirmation_text',
+        'highlight_text', 'copyright_text',
+        // Footer legal/contact lines
+        'reason_text', 'age_disclaimer_text', 'postal_address', 'contact_email',
+        'email_preferences_label', 'email_preferences_url',
     ];
 
     /**
@@ -85,7 +89,9 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'button_color'            => '#059669', // CTA + rating highlight
         'accent_color'            => '#059669', // eyebrow + links + unsubscribe
         'footer_background_color' => '#111827', // dark footer band
-        'footer_text_color'       => '#9ca3af', // footer copy
+        // Raised for readability on the dark footer (was #9ca3af — too faint).
+        'footer_text_color'       => '#b8bcba', // footer body copy
+        'footer_link_color'       => '#d6dad8', // footer links (incl. unsubscribe)
     ];
 
     protected $fillable = [
@@ -105,12 +111,20 @@ class VerificationPromotionEmail extends SitePromotionEmail
         // New design components
         'header_brand_text',
         'eyebrow_text',
-        'rating_stars',
+        'confirmation_text',
         'highlight_text',
+        'offer_terms',
         'responsible_notice_text',
         'footer_tagline',
         'footer_links',
         'affiliate_disclosure_text',
+        // Footer legal/contact lines
+        'reason_text',
+        'age_disclaimer_text',
+        'postal_address',
+        'contact_email',
+        'email_preferences_label',
+        'email_preferences_url',
         'copyright_text',
         // Palette
         'background_color',
@@ -124,6 +138,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'accent_color',
         'footer_background_color',
         'footer_text_color',
+        'footer_link_color',
         // Settings
         'active',
         'delay_minutes',
@@ -141,6 +156,8 @@ class VerificationPromotionEmail extends SitePromotionEmail
             'mailgun_key_id'  => 'integer',
             // Ordered list of {label,url} footer navigation links.
             'footer_links'    => 'array',
+            // Ordered list of {label,value} offer "ticket" terms (Wagering, etc.).
+            'offer_terms'     => 'array',
         ];
     }
 
@@ -173,24 +190,40 @@ class VerificationPromotionEmail extends SitePromotionEmail
             'from_name'         => '{{site_name}}',
             'from_email'        => 'offers@' . $domain,
             'subject'           => 'Your welcome offer at {{site_name}}',
-            'preheader'         => 'Thanks for confirming your email — here is what we lined up for you.',
+            'preheader'         => 'Your welcome offer is ready — 100 free spins waiting inside.',
             'hero_image_url'    => null,
             'hero_url'          => '{{site_url}}',
             'top_button_text'   => null,
-            'heading'           => "Thanks for subscribing — here's a welcome gift on us",
-            'intro_text'        => 'As a thank-you for joining **{{site_name}}**, we have lined up a special offer with one of our top-rated partners. Register and verify your email to claim it — no hassle, no delays.',
-            'secondary_text'    => 'Our partners offer fast payouts, top game providers and round-the-clock support — every operator reviewed before it reaches you.',
-            'cta_button_text'   => 'Claim Your Offer',
+            // Talks to the reader about what they GET, not about the confirmation
+            // that already happened (that fact lives in the confirmation strip).
+            'heading'           => "Here's the offer we promised",
+            'intro_text'        => 'We have lined up a special offer with one of our top-rated partners. Register and verify to claim it — no hassle, no delays.',
+            // Concrete facts, not a vague "we reviewed it" claim: a real licence
+            // and a real withdrawal time are what a reader actually weighs.
+            'secondary_text'    => 'Licensed operator with withdrawals typically cleared within 24 hours and 24/7 support — the full terms are always on the offer page.',
+            // Built from the offer variables so it stays specific for every offer:
+            // {{bonus_amount}} is the ticket bonus, {{offer_brand}} the brand.
+            'cta_button_text'   => 'Claim {{bonus_amount}} at {{offer_brand}}',
             'disclaimer_text'   => 'Wagering requirements and withdrawal caps are stated upfront on the offer page, so nothing surprises you later.',
             'unsubscribe_label' => 'Unsubscribe',
 
             // New design components
             'header_brand_text'         => '{{site_name}}',
+            // Thin green strip at the very top — the confirmation fact, one line.
+            'confirmation_text'         => '✓ Your email is confirmed — your welcome offer is unlocked',
             'eyebrow_text'              => 'Exclusive subscriber offer',
-            'rating_stars'              => '★★★★★',
+            // The "ticket": the bonus amount headline...
             'highlight_text'            => '100 Free Spins',
+            // ...and the three terms a subscriber actually checks before clicking.
+            'offer_terms'               => [
+                ['label' => 'Wagering', 'value' => '40x'],
+                ['label' => 'Min deposit', 'value' => 'None'],
+                ['label' => 'Offer ends', 'value' => '7 days'],
+            ],
             'responsible_notice_text'   => '**18+ · Gamble responsibly.** Gambling should stay entertainment, never a way to make money. Set a limit before you play and walk away when you reach it.',
-            'footer_tagline'            => '{{site_name}} — A curated, independent guide to the finest online casinos and exclusive offers.',
+            // "independent" and "finest" contradict each other — an independent
+            // guide does not hand out superlatives, so the superlative is dropped.
+            'footer_tagline'            => '{{site_name}} — A curated, independent guide to online casinos and current offers.',
             'footer_links'              => [
                 ['label' => 'About', 'url' => '{{site_url}}/about'],
                 ['label' => 'Contact', 'url' => '{{site_url}}/contact'],
@@ -198,7 +231,23 @@ class VerificationPromotionEmail extends SitePromotionEmail
                 ['label' => 'Responsible Gambling', 'url' => '{{site_url}}/responsible-gambling'],
             ],
             'affiliate_disclosure_text' => 'Some links in this email earn us a commission, which never influences a rating.',
-            'copyright_text'            => '© {{year}} {{site_name}}. All rights reserved.',
+
+            // Reason-for-receipt: reminds the reader they opted in, so they reach
+            // for Unsubscribe instead of the Spam button.
+            'reason_text'               => "You're getting this because you confirmed your subscription at {{site_domain}}.",
+            // The age disclaimer itself — a Responsible Gambling link is NOT a
+            // substitute for stating it in the email.
+            'age_disclaimer_text'       => '18+ only. Gambling can be addictive — play responsibly.',
+            // CAN-SPAM requires a real postal address; Gmail/Outlook weigh it for
+            // inbox placement. Replace with the company's registered address.
+            'postal_address'            => '123 Example Street, City 00000, Country',
+            // A MONITORED mailbox that accepts replies — never no-reply@ / promo@.
+            'contact_email'             => 'info@{{site_domain}}',
+            // Lets a reader cut back instead of leaving entirely.
+            'email_preferences_label'   => 'Email preferences',
+            'email_preferences_url'     => '{{site_url}}/email-preferences',
+            // "All rights reserved" is empty text with no legal effect — dropped.
+            'copyright_text'            => '© {{year}} {{site_name}}',
 
             ...self::COLOR_DEFAULTS,
 
@@ -213,10 +262,12 @@ class VerificationPromotionEmail extends SitePromotionEmail
      * Resolve this template into render-ready values for the Blade view.
      *
      * Placeholders ({{site_name}}, {{site_url}}, {{email}}, {{year}},
-     * {{unsubscribe_url}}) are substituted everywhere; RICH_FIELDS additionally
-     * get HTML-escaped and a minimal **bold** → <strong> conversion so admins
-     * cannot inject markup. Plain/URL fields are left for Blade to escape.
-     * `footer_links` returns as an array of {label,url} with placeholders
+     * {{unsubscribe_url}}) are substituted everywhere, PLUS two derived offer
+     * variables — {{bonus_amount}} (the ticket bonus) and {{offer_brand}} (the
+     * brand) — so labels like the CTA stay specific for every offer. RICH_FIELDS
+     * additionally get HTML-escaped and a minimal **bold** → <strong> conversion
+     * so admins cannot inject markup. Plain/URL fields are left for Blade to
+     * escape. `footer_links` / `offer_terms` return as arrays with placeholders
      * substituted — Blade escapes both when it emits them.
      *
      * @param  array<string, string>  $context
@@ -224,7 +275,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
      */
     public function render(array $context): array
     {
-        $replace = static function (string $value) use ($context): string {
+        $replace = static function (string $value) use (&$context): string {
             foreach ($context as $key => $val) {
                 $value = str_replace('{{' . $key . '}}', $val, $value);
                 $value = str_replace('{{ ' . $key . ' }}', $val, $value);
@@ -232,6 +283,15 @@ class VerificationPromotionEmail extends SitePromotionEmail
 
             return $value;
         };
+
+        // Offer variables derived from THIS template's own fields (site
+        // placeholders resolved first). Exposing them lets copy — above all the
+        // CTA — be composed from the offer rather than hard-coded, so the label
+        // stays specific for every offer, e.g. "Claim {{bonus_amount}} at
+        // {{offer_brand}}". Added to $context (captured by reference above) before
+        // the field loops so every field substitution can use them.
+        $context['bonus_amount'] = trim($replace((string) $this->highlight_text));
+        $context['offer_brand']  = trim($replace((string) $this->header_brand_text));
 
         $out = [];
 
@@ -260,6 +320,17 @@ class VerificationPromotionEmail extends SitePromotionEmail
                 'url'   => $replace((string) ($link['url'] ?? '')),
             ])
             ->filter(fn (array $link): bool => $link['label'] !== '' && $link['url'] !== '')
+            ->values()
+            ->all();
+
+        // Offer "ticket" terms: each {label,value} with placeholders substituted,
+        // dropping any entry missing either half. Blade escapes them at emit time.
+        $out['offer_terms'] = collect($this->offer_terms ?? [])
+            ->map(fn ($term): array => [
+                'label' => $replace((string) ($term['label'] ?? '')),
+                'value' => $replace((string) ($term['value'] ?? '')),
+            ])
+            ->filter(fn (array $term): bool => $term['label'] !== '' && $term['value'] !== '')
             ->values()
             ->all();
 
