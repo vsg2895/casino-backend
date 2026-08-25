@@ -110,7 +110,13 @@ class VerifyEmailService
             // Built unconditionally, even when the body link is hidden: removing
             // the link is a layout choice and must not change how anyone actually
             // unsubscribes.
-            oneClickUrl: Unsubscribe::oneClickUrl($unsubToken),
+            //
+            // Served from the SITE's domain — the only stream that does. A
+            // verification email asks the recipient to trust a link, so advertising
+            // a header on an unrelated API host works against it. The endpoint
+            // behind it is the same one every other stream uses; see
+            // {@see Unsubscribe::siteOneClickUrl()}.
+            oneClickUrl: Unsubscribe::siteOneClickUrl($site, $unsubToken),
             greeting: EmailGreeting::line($fullName),
             // Whether the footer link block is rendered. Coalesced on the model so
             // an unsaved preview template and a legacy row both mean "shown".

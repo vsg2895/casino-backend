@@ -11,6 +11,7 @@ use App\Policies\CmsPagePolicy;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Repositories\CmsPageRepository;
 use App\Services\Mail\Transport\MailgunApiTransport;
+use App\Services\Mail\Transport\SendgridClickTrackingClient;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\ServiceProvider;
@@ -37,7 +38,14 @@ class AppServiceProvider extends ServiceProvider
         // Admin + promotion mail deliver over .env SMTP instead
         // (config('mail.admin_mailer')).
         Mail::extend('sendgrid', function (array $config) {
-            return (new SendgridTransportFactory())->create(
+            // The HTTP client is wrapped so a single message can switch SendGrid
+            // click tracking off from its own headers — see
+            // {@see SendgridClickTrackingClient}. The wrapper is a no-op for every
+            // message that does not carry the marker, so the other streams on this
+            // mailer are unaffected and keep following the account settings.
+            return (new SendgridTransportFactory(
+                client: new SendgridClickTrackingClient(HttpClient::create()),
+            ))->create(
                 new Dsn('sendgrid+api', 'default', $config['key'] ?? config('services.sendgrid.key')),
             );
         });

@@ -63,6 +63,28 @@ class Unsubscribe extends Model
         return url('/api/v1/unsubscribe/' . $token);
     }
 
+    /**
+     * The same one-click endpoint, but on the SITE's own domain.
+     *
+     * Used by the verification email only. A List-Unsubscribe pointing at the API
+     * host advertises a domain the recipient has never heard of, next to a message
+     * whose whole purpose is asking them to trust a link — so that stream serves
+     * the header from the brand domain instead.
+     *
+     * The target is a thin Next.js route handler (`src/app/api/unsubscribe/[token]`)
+     * that POSTs straight through to {@see oneClickUrl()}'s endpoint. Nothing about
+     * the opt-out itself moves: the same token, the same controller, the same
+     * `unsubscribes` row. Only the hop in front of it is different.
+     *
+     * Kept SEPARATE from oneClickUrl() rather than replacing it, because the
+     * subscription, promotion and post-verification streams must keep emitting the
+     * exact header they emit today.
+     */
+    public static function siteOneClickUrl(Site $site, string $token): string
+    {
+        return $site->frontendBaseUrl() . '/api/unsubscribe/' . $token;
+    }
+
     /** Record (or refresh) an opt-out idempotently. */
     public static function record(int $siteId, string $email, string $type): self
     {
