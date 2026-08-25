@@ -101,7 +101,7 @@ class SitePromotionEmailBlocksTest extends TestCase
     public function test_the_cta_uses_its_own_link_when_set(): void
     {
         [$site, $template] = $this->template([
-            'cta_button_text' => 'Claim your offer',
+            'top_button_text' => 'View Details',
             'cta_button_url'  => 'https://offer.example.com/landing?c=abc',
             'hero_url'        => 'https://banner.example.com',
         ]);
@@ -114,7 +114,7 @@ class SitePromotionEmailBlocksTest extends TestCase
         // Compatibility guarantee: existing rows have no cta_button_url and must
         // keep pointing where they point today.
         [$site, $template] = $this->template([
-            'cta_button_text' => 'Claim your offer',
+            'top_button_text' => 'View Details',
             'cta_button_url'  => null,
             'hero_url'        => 'https://banner.example.com/offer',
         ]);
@@ -125,7 +125,7 @@ class SitePromotionEmailBlocksTest extends TestCase
     public function test_hiding_the_offer_link_does_not_leave_a_dead_button_href(): void
     {
         [$site, $template] = $this->template([
-            'cta_button_text' => 'Claim your offer',
+            'top_button_text' => 'View Details',
             'cta_button_url'  => null,
             'hero_url'        => 'https://banner.example.com/offer',
             'hidden_blocks'   => ['hero_url'],

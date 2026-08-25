@@ -111,19 +111,16 @@ class PromotionEmailTest extends TestCase
             $this->validPayload([
                 'hero_image_url'  => null,
                 'top_button_text' => null,
-                'cta_button_text' => null,
                 'hero_url'        => null,
             ]),
         )->assertOk()
             ->assertJsonPath('data.hero_image_url', null)
-            ->assertJsonPath('data.top_button_text', null)
-            ->assertJsonPath('data.cta_button_text', null);
+            ->assertJsonPath('data.top_button_text', null);
 
         $this->assertDatabaseHas('site_promotion_emails', [
             'site_id'         => $site->id,
             'hero_image_url'  => null,
             'top_button_text' => null,
-            'cta_button_text' => null,
         ]);
     }
 
@@ -132,12 +129,12 @@ class PromotionEmailTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        // Baseline: everything present renders.
+        // Baseline: everything present renders. One button now — the second
+        // ("Register Your Account") was removed from the layout.
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
-            $this->validPayload(['top_button_text' => 'TOP CTA', 'cta_button_text' => 'BOTTOM CTA']),
-        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'TOP CTA')
-            && str_contains($html, 'BOTTOM CTA')
+            $this->validPayload(['top_button_text' => 'THE CTA']),
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'THE CTA')
             && str_contains($html, 'cdn.example.com/hero.jpg'));
 
         // Cleared: the elements are gone from the markup entirely — no empty
@@ -147,22 +144,22 @@ class PromotionEmailTest extends TestCase
             $this->validPayload([
                 'hero_image_url'  => null,
                 'top_button_text' => null,
-                'cta_button_text' => null,
             ]),
-        )->assertOk()->assertJsonPath('html', fn (string $html): bool => ! str_contains($html, 'TOP CTA')
-            && ! str_contains($html, 'BOTTOM CTA')
+        )->assertOk()->assertJsonPath('html', fn (string $html): bool => ! str_contains($html, 'THE CTA')
             && ! str_contains($html, 'cdn.example.com/hero.jpg')
             && ! str_contains($html, '<img'));
     }
 
-    public function test_one_button_can_be_removed_while_the_other_stays(): void
+    public function test_the_button_can_be_removed_on_its_own(): void
     {
+        // The layout has a single button since the bottom CTA was removed;
+        // clearing its label drops it without touching anything else.
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/promotion-email/preview",
-            $this->validPayload(['top_button_text' => null, 'cta_button_text' => 'STILL HERE']),
+            $this->validPayload(['top_button_text' => null, 'heading' => 'STILL HERE']),
         )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'STILL HERE'));
     }
 
@@ -180,7 +177,6 @@ class PromotionEmailTest extends TestCase
                 'hero_image_url'  => null,
                 'hero_url'        => null,
                 'top_button_text' => 'View Details',
-                'cta_button_text' => 'Register Your Account',
             ]),
         )->assertOk()
             ->assertJsonPath('data.hero_url', null)
@@ -198,7 +194,6 @@ class PromotionEmailTest extends TestCase
                 'hero_url'        => null,
                 'hero_image_url'  => null,
                 'top_button_text' => 'UNLINKED BUTTON',
-                'cta_button_text' => null,
             ]),
         )->assertOk()->assertJsonPath('html', fn (string $html): bool => str_contains($html, 'UNLINKED BUTTON')
             // Rendered, but not as a link: no empty href, and the only anchor
@@ -215,7 +210,7 @@ class PromotionEmailTest extends TestCase
 
         $blocks = [
             'preheader', 'hero_image_url', 'hero_url', 'top_button_text',
-            'heading', 'intro_text', 'secondary_text', 'cta_button_text', 'disclaimer_text',
+            'heading', 'intro_text', 'secondary_text', 'disclaimer_text',
         ];
 
         // Each one on its own.
@@ -319,7 +314,6 @@ class PromotionEmailTest extends TestCase
             'heading'           => 'Welcome to {{site_name}}',
             'intro_text'        => 'Get **100 FS** now.',
             'secondary_text'    => 'A trusted, licensed platform.',
-            'cta_button_text'   => 'Register Your Account',
             'disclaimer_text'   => 'This is a one-time invitation.',
             'unsubscribe_label' => 'Unsubscribe',
             'button_color'      => '#75B636',

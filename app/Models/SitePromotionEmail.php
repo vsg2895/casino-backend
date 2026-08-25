@@ -32,7 +32,7 @@ class SitePromotionEmail extends Model
      */
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url',
-        'hero_url', 'top_button_text', 'heading', 'cta_button_text', 'cta_button_url',
+        'hero_url', 'top_button_text', 'heading', 'cta_button_url',
         'unsubscribe_label',
     ];
 
@@ -48,7 +48,6 @@ class SitePromotionEmail extends Model
         'heading',
         'intro_text',
         'secondary_text',
-        'cta_button_text',
         'cta_button_url',
         'disclaimer_text',
         'unsubscribe_label',
@@ -112,7 +111,6 @@ class SitePromotionEmail extends Model
             'heading'           => 'Welcome to {{site_name}}',
             'intro_text'        => 'Join our platform and receive **100 FS** as part of your welcome package. **No deposit required** — just register and start playing.',
             'secondary_text'    => 'A trusted, licensed platform built for players who value transparency, security, and seamless gameplay.',
-            'cta_button_text'   => 'Register Your Account',
             'disclaimer_text'   => "This is a one-time invitation to join {{site_name}}. If you're not interested, you can simply disregard this message.",
             'unsubscribe_label' => 'Unsubscribe',
             ...self::COLOR_DEFAULTS,
@@ -153,7 +151,6 @@ class SitePromotionEmail extends Model
         'heading',
         'intro_text',
         'secondary_text',
-        'cta_button_text',
         'cta_button_url',
         'disclaimer_text',
     ];

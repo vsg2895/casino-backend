@@ -64,6 +64,41 @@
                          table stacked inside it, rather than a sibling row. --}}
                     <td valign="top" bgcolor="{{ $background }}" style="padding:0; background-color:{{ $background }};">
 
+                        {{-- Body copy FIRST — the welcome and the offer in words, before
+                             the banner, so the message still reads with images blocked
+                             (Outlook, most corporate mail). Heading, greeting and both
+                             paragraphs are individually removable; the block disappears
+                             with them. --}}
+                        @if ($show('heading') || ! empty($greeting) || $show('intro_text') || $show('secondary_text'))
+                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
+                                <tbody>
+                                <tr>
+                                    {{-- Full top padding again: this block now opens the
+                                         email, where the tightened 10px was only right when
+                                         it sat under a button. --}}
+                                    <td align="center" style="padding:30px 20px; text-align:center; color:{{ $textColor }}; font-family:{{ $face }};">
+                                        @if ($show('heading'))
+                                            <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:{{ $headingColor }};">{{ $t['heading'] }}</h2>
+                                        @endif
+
+                                        @if (! empty($greeting))
+                                            {{-- Optional "Dear {name}," — only when a name was captured. --}}
+                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{{ $greeting }}</p>
+                                        @endif
+
+                                        @if ($show('intro_text'))
+                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{!! $t['intro_text'] !!}</p>
+                                        @endif
+
+                                        @if ($show('secondary_text'))
+                                            <p style="margin:0; font-size:16px; line-height:1.6; color:{{ $secondaryColor }};">{!! $t['secondary_text'] !!}</p>
+                                        @endif
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        @endif
+
                         {{-- Hero image — dropped entirely when the admin clears it.
                              Linked to the offer only when an offer URL is set. --}}
                         @if ($show('hero_image_url'))
@@ -87,9 +122,10 @@
                             </table>
                         @endif
 
-                        {{-- Top CTA — omitted (with its spacing) when the label is
-                             cleared. Independent of the offer link: without one it
-                             renders as an unlinked pill. --}}
+                        {{-- The CTA — the template's only button, sitting under the
+                             banner. Omitted (with its spacing) when the label is cleared.
+                             Independent of the offer link: without one it renders as an
+                             unlinked pill. --}}
                         @if ($show('top_button_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
@@ -100,54 +136,9 @@
                                     <td align="center" style="padding:20px;">
                                         @include('mail.promotion.partials.cta-button', [
                                             'label' => $t['top_button_text'],
-                                            'url'   => $val('hero_url'),
-                                            'color' => $buttonColor,
-                                        ])
-                                    </td>
-                                </tr>
-                                </tbody>
-                            </table>
-                        @endif
-
-                        {{-- Body copy — heading, greeting and both paragraphs are
-                             individually removable; the block disappears with them. --}}
-                        @if ($show('heading') || ! empty($greeting) || $show('intro_text') || $show('secondary_text'))
-                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
-                                <tbody>
-                                <tr>
-                                    <td align="center" style="padding:10px 20px 30px; text-align:center; color:{{ $textColor }}; font-family:{{ $face }};">
-                                        @if ($show('heading'))
-                                            <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:{{ $headingColor }};">{{ $t['heading'] }}</h2>
-                                        @endif
-
-                                        @if (! empty($greeting))
-                                            {{-- Optional "Dear {name}," — only when a name was captured. --}}
-                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{{ $greeting }}</p>
-                                        @endif
-
-                                        @if ($show('intro_text'))
-                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{!! $t['intro_text'] !!}</p>
-                                        @endif
-
-                                        @if ($show('secondary_text'))
-                                            <p style="margin:0; font-size:16px; line-height:1.6; color:{{ $secondaryColor }};">{!! $t['secondary_text'] !!}</p>
-                                        @endif
-                                    </td>
-                                </tr>
-                                </tbody>
-                            </table>
-                        @endif
-
-                        {{-- Bottom CTA — same removal rule as the top one. --}}
-                        @if ($show('cta_button_text'))
-                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
-                                <tbody>
-                                <tr>
-                                    <td align="center" style="padding:20px 20px 40px;">
-                                        @include('mail.promotion.partials.cta-button', [
-                                            'label' => $t['cta_button_text'],
-                                            // Own destination, falling back to the banner
-                                            // link — existing rows keep their target.
+                                            // The template's single button, so it takes the
+                                            // CTA's own destination and falls back to the
+                                            // offer link — existing rows keep their target.
                                             'url'   => $val('cta_button_url') ?: $val('hero_url'),
                                             'color' => $buttonColor,
                                         ])

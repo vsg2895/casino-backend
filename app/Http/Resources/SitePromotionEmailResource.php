@@ -27,7 +27,6 @@ class SitePromotionEmailResource extends JsonResource
             'heading'           => $this->heading,
             'intro_text'        => $this->intro_text,
             'secondary_text'    => $this->secondary_text,
-            'cta_button_text'   => $this->cta_button_text,
             'cta_button_url'    => $this->cta_button_url,
             'disclaimer_text'   => $this->disclaimer_text,
             'unsubscribe_label' => $this->unsubscribe_label,
