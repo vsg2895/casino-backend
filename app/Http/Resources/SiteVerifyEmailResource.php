@@ -28,6 +28,9 @@ class SiteVerifyEmailResource extends JsonResource
             'spam_notice'       => $this->spam_notice,
             'footer_note'       => $this->footer_note,
             'unsubscribe_label' => $this->unsubscribe_label,
+            // Whether the footer link block is rendered. The label above is kept
+            // either way, so the admin can restore the exact same link.
+            'unsubscribe_enabled' => $this->showsUnsubscribeLink(),
             'copyright_text'    => $this->copyright_text,
             'accent_color'      => $this->accent_color,
             'active'            => $this->active,

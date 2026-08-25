@@ -30,6 +30,13 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
     /**
      * @param  array<string, string>  $template  Rendered template strings.
      */
+    /**
+     * @param  bool  $showUnsubscribe  Whether the footer unsubscribe LINK is
+     *                                 rendered. Defaults to true so every existing
+     *                                 caller keeps its current output. It gates the
+     *                                 body block only — {@see headers()} still emits
+     *                                 List-Unsubscribe either way.
+     */
     public function __construct(
         public readonly array $template,
         public readonly string $siteName,
@@ -38,6 +45,7 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
         public readonly string $verifyUrl = '',
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
+        public readonly bool $showUnsubscribe = true,
     ) {}
 
     public function envelope(): Envelope
@@ -48,6 +56,13 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
         );
     }
 
+    /**
+     * DELIBERATELY independent of $showUnsubscribe.
+     *
+     * Hiding the body link is a layout choice; removing the RFC 8058 headers
+     * would change how recipients opt out and how mailbox providers score the
+     * message. The one-click header stays either way.
+     */
     public function headers(): Headers
     {
         return new Headers(
@@ -69,6 +84,7 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'verifyUrl'      => $this->verifyUrl,
                 'greeting'       => $this->greeting,
+                'showUnsubscribe' => $this->showUnsubscribe,
                 'accent'         => $this->template['accent_color'],
             ],
         );

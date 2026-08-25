@@ -29,6 +29,11 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
             'spam_notice'       => ['nullable', 'string', 'max:1000'],
             'footer_note'       => ['nullable', 'string', 'max:1000'],
             'unsubscribe_label' => ['required', 'string', 'max:80'],
+            // `sometimes`, not `required`: an existing caller that does not send
+            // the key leaves the stored value alone and keeps its current output.
+            // The label above stays required either way, so removing the link
+            // never discards the wording needed to restore it.
+            'unsubscribe_enabled' => ['sometimes', 'boolean'],
             'copyright_text'    => ['nullable', 'string', 'max:200'],
             'accent_color'      => ['required', 'string', 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'active'            => ['required', 'boolean'],

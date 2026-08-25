@@ -34,6 +34,7 @@ class SiteVerifyEmail extends Model
         'spam_notice',
         'footer_note',
         'unsubscribe_label',
+        'unsubscribe_enabled',
         'copyright_text',
         'accent_color',
         'active',
@@ -42,7 +43,8 @@ class SiteVerifyEmail extends Model
     protected function casts(): array
     {
         return [
-            'active' => 'boolean',
+            'unsubscribe_enabled' => 'boolean',
+            'active'              => 'boolean',
         ];
     }
 
@@ -72,6 +74,9 @@ class SiteVerifyEmail extends Model
             'spam_notice'       => "If you didn't request this, you can safely ignore this email.",
             'footer_note'       => 'You received this email because an address was registered at {{site_name}}.',
             'unsubscribe_label' => 'Unsubscribe',
+            // The footer link is shown by default; the admin can remove and
+            // restore it without losing the label above.
+            'unsubscribe_enabled' => true,
             'copyright_text'    => '© {{year}} {{site_name}}. All rights reserved.',
             'accent_color'      => '#4f1d96',
             'active'            => true,
@@ -116,6 +121,24 @@ class SiteVerifyEmail extends Model
         $escaped = e($value);
 
         return (string) preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', $escaped);
+    }
+
+    /**
+     * Whether the footer unsubscribe LINK is rendered in the body.
+     *
+     * Coalesced rather than read directly: the live preview builds an UNSAVED
+     * model from the request payload, where an absent key leaves the attribute
+     * unset (null, not false). Legacy rows written before the column existed
+     * behave the same way. Both must mean "shown", which is the pre-existing
+     * behaviour.
+     *
+     * This gates the visible link ONLY. The List-Unsubscribe headers and the
+     * unsubscribe endpoint are deliberately untouched — a recipient can always
+     * opt out through their mail client.
+     */
+    public function showsUnsubscribeLink(): bool
+    {
+        return (bool) ($this->unsubscribe_enabled ?? true);
     }
 
     /** Absolute unsubscribe URL for a subscriber on this site (opaque token only). */

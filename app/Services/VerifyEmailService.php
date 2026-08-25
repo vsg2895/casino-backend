@@ -106,8 +106,15 @@ class VerifyEmailService
             verifyUrl: $verifyUrl,
             // One-click uses the unsubscribe token too, so a native "Unsubscribe"
             // is attributed to the verify stream just like the in-body link.
+            //
+            // Built unconditionally, even when the body link is hidden: removing
+            // the link is a layout choice and must not change how anyone actually
+            // unsubscribes.
             oneClickUrl: Unsubscribe::oneClickUrl($unsubToken),
             greeting: EmailGreeting::line($fullName),
+            // Whether the footer link block is rendered. Coalesced on the model so
+            // an unsaved preview template and a legacy row both mean "shown".
+            showUnsubscribe: $template->showsUnsubscribeLink(),
         );
     }
 }

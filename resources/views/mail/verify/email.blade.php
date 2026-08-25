@@ -99,11 +99,18 @@
                                     {!! $t['footer_note'] !!}
                                 </p>
                             @endif
-                            <p style="margin:0; font-size:12px;">
-                                <a href="{{ $unsubscribeUrl }}" style="color:{{ $accent }}; text-decoration:underline;">
-                                    {{ $t['unsubscribe_label'] }}
-                                </a>
-                            </p>
+                            {{-- Removable in the admin. $showUnsubscribe is the stored
+                                 flag; the label is kept in the database either way, so
+                                 restoring renders this block back unchanged.
+                                 The List-Unsubscribe headers are emitted regardless —
+                                 see VerifyEmailMail::headers(). --}}
+                            @if (($showUnsubscribe ?? true) && ! empty($t['unsubscribe_label']))
+                                <p style="margin:0; font-size:12px;">
+                                    <a href="{{ $unsubscribeUrl }}" style="color:{{ $accent }}; text-decoration:underline;">
+                                        {{ $t['unsubscribe_label'] }}
+                                    </a>
+                                </p>
+                            @endif
                         </td>
                     </tr>
 
