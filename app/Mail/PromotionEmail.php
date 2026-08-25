@@ -39,6 +39,14 @@ class PromotionEmail extends Mailable implements SenderOverridable
         public readonly string $unsubscribeUrl,
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
+        /**
+         * Visibility flag per optional block, from
+         * {@see \App\Models\SitePromotionEmail::visibleBlocks()}. Defaulted so
+         * every existing caller keeps rendering everything.
+         *
+         * @var array<string, bool>
+         */
+        public readonly array $visibleBlocks = [],
     ) {}
 
     public function envelope(): Envelope
@@ -73,6 +81,7 @@ class PromotionEmail extends Mailable implements SenderOverridable
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'greeting'       => $this->greeting,
+                'visible'        => $this->visibleBlocks,
                 // Palette — already defaulted in SitePromotionEmail::render(),
                 // so the view never has to guard against a missing colour.
                 'buttonColor'    => $this->template['button_color'],

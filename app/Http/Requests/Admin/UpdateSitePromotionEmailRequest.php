@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\SitePromotionEmail;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateSitePromotionEmailRequest extends FormRequest
 {
@@ -40,6 +42,18 @@ class UpdateSitePromotionEmailRequest extends FormRequest
             'hero_url'          => ['nullable', 'string', 'max:500'],
             'top_button_text'   => ['nullable', 'string', 'max:80'],
             'cta_button_text'   => ['nullable', 'string', 'max:80'],
+            // Where the buttons point. A plain string, not `url`, for the same
+            // reason hero_url is: affiliate destinations carry tracking macros and
+            // {{site_url}} placeholders the `url` rule rejects. Empty falls back
+            // to hero_url, so existing rows keep their current target.
+            'cta_button_url'    => ['nullable', 'string', 'max:500'],
+
+            // Which optional blocks are switched OFF. Visibility only — every
+            // block's own content is stored separately and is never touched by
+            // hiding it, which is what makes removal reversible. `sometimes`, so a
+            // caller omitting the key leaves the stored selection alone.
+            'hidden_blocks'   => ['sometimes', 'array'],
+            'hidden_blocks.*' => ['string', Rule::in(SitePromotionEmail::OPTIONAL_BLOCKS)],
             'heading'           => ['nullable', 'string', 'max:150'],
             'intro_text'        => ['nullable', 'string', 'max:1000'],
             'secondary_text'    => ['nullable', 'string', 'max:1000'],

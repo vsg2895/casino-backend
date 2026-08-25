@@ -31,11 +31,23 @@
     $face = "'DM Sans',-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
     // One reset per stacked block, so nested tables abut with no seam.
     $block = 'border-collapse:collapse;';
+
+    // OPTIONAL BLOCKS. Every removable text and image is hidden by the admin
+    // switching it OFF, never by clearing its field — the content stays in the row
+    // so restoring is a toggle rather than a retype. $visible comes from
+    // SitePromotionEmail::visibleBlocks(); a block absent from it defaults to
+    // visible, which keeps existing rows rendering unchanged.
+    //
+    // $show — render this block? (switched on AND has content)
+    // $val  — its value, or '' when switched off, for fields used as a value
+    //         rather than a guard (the link behind a button or image).
+    $show = fn (string $key): bool => ($visible[$key] ?? true) && ! empty($t[$key]);
+    $val  = fn (string $key): string => ($visible[$key] ?? true) ? (string) ($t[$key] ?? '') : '';
 @endphp
 <body style="margin:0; padding:0; background-color:#f1f1f1; font-family:{{ $face }}; -webkit-font-smoothing:antialiased;">
 
 {{-- Hidden preview (preheader) text — removable --}}
-@if (! empty($t['preheader']))
+@if ($show('preheader'))
     <div style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; line-height:0; color:transparent; overflow:hidden;">{{ $t['preheader'] }}</div>
 @endif
 
@@ -54,19 +66,19 @@
 
                         {{-- Hero image — dropped entirely when the admin clears it.
                              Linked to the offer only when an offer URL is set. --}}
-                        @if (! empty($t['hero_image_url']))
+                        @if ($show('hero_image_url'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
                                     <td align="center" style="padding:0; font-size:0; line-height:0;">
-                                        @if (! empty($t['hero_url']))
+                                        @if ($show('hero_url'))
                                             <a href="{{ $t['hero_url'] }}" target="_blank" rel="nofollow sponsored noopener"><img
                                                     src="{{ $t['hero_image_url'] }}" width="600"
-                                                    alt="{{ $t['heading'] ?: $siteName }}"
+                                                    alt="{{ $val('heading') ?: $siteName }}"
                                                     style="display:block; width:100%; max-width:600px; height:auto; border:0;"></a>
                                         @else
                                             <img src="{{ $t['hero_image_url'] }}" width="600"
-                                                 alt="{{ $t['heading'] ?: $siteName }}"
+                                                 alt="{{ $val('heading') ?: $siteName }}"
                                                  style="display:block; width:100%; max-width:600px; height:auto; border:0;">
                                         @endif
                                     </td>
@@ -78,14 +90,17 @@
                         {{-- Top CTA — omitted (with its spacing) when the label is
                              cleared. Independent of the offer link: without one it
                              renders as an unlinked pill. --}}
-                        @if (! empty($t['top_button_text']))
+                        @if ($show('top_button_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
-                                    <td align="center" style="padding:20px 20px 40px;">
+                                    {{-- 20px below, not 40: paired with the body's
+                                         reduced top padding this closes a 70px band of
+                                         empty canvas that read as the email ending. --}}
+                                    <td align="center" style="padding:20px;">
                                         @include('mail.promotion.partials.cta-button', [
                                             'label' => $t['top_button_text'],
-                                            'url'   => $t['hero_url'],
+                                            'url'   => $val('hero_url'),
                                             'color' => $buttonColor,
                                         ])
                                     </td>
@@ -96,12 +111,12 @@
 
                         {{-- Body copy — heading, greeting and both paragraphs are
                              individually removable; the block disappears with them. --}}
-                        @if (! empty($t['heading']) || ! empty($greeting) || ! empty($t['intro_text']) || ! empty($t['secondary_text']))
+                        @if ($show('heading') || ! empty($greeting) || $show('intro_text') || $show('secondary_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
-                                    <td align="center" style="padding:30px 20px; text-align:center; color:{{ $textColor }}; font-family:{{ $face }};">
-                                        @if (! empty($t['heading']))
+                                    <td align="center" style="padding:10px 20px 30px; text-align:center; color:{{ $textColor }}; font-family:{{ $face }};">
+                                        @if ($show('heading'))
                                             <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:{{ $headingColor }};">{{ $t['heading'] }}</h2>
                                         @endif
 
@@ -110,11 +125,11 @@
                                             <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{{ $greeting }}</p>
                                         @endif
 
-                                        @if (! empty($t['intro_text']))
+                                        @if ($show('intro_text'))
                                             <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $textColor }};">{!! $t['intro_text'] !!}</p>
                                         @endif
 
-                                        @if (! empty($t['secondary_text']))
+                                        @if ($show('secondary_text'))
                                             <p style="margin:0; font-size:16px; line-height:1.6; color:{{ $secondaryColor }};">{!! $t['secondary_text'] !!}</p>
                                         @endif
                                     </td>
@@ -124,14 +139,16 @@
                         @endif
 
                         {{-- Bottom CTA — same removal rule as the top one. --}}
-                        @if (! empty($t['cta_button_text']))
+                        @if ($show('cta_button_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
                                     <td align="center" style="padding:20px 20px 40px;">
                                         @include('mail.promotion.partials.cta-button', [
                                             'label' => $t['cta_button_text'],
-                                            'url'   => $t['hero_url'],
+                                            // Own destination, falling back to the banner
+                                            // link — existing rows keep their target.
+                                            'url'   => $val('cta_button_url') ?: $val('hero_url'),
                                             'color' => $buttonColor,
                                         ])
                                     </td>
@@ -141,7 +158,7 @@
                         @endif
 
                         {{-- Disclaimer — removable --}}
-                        @if (! empty($t['disclaimer_text']))
+                        @if ($show('disclaimer_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>

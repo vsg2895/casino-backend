@@ -88,6 +88,9 @@ class PromotionEmailService
             unsubscribeUrl: $unsubscribeUrl,
             oneClickUrl: Unsubscribe::oneClickUrl($token),
             greeting: EmailGreeting::line($fullName),
+            // Which optional blocks this template currently shows. Hiding one is a
+            // setting: the block's own text stays in the row untouched.
+            visibleBlocks: $template->visibleBlocks(),
         );
     }
 }

@@ -32,7 +32,8 @@ class SitePromotionEmail extends Model
      */
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url',
-        'hero_url', 'top_button_text', 'heading', 'cta_button_text', 'unsubscribe_label',
+        'hero_url', 'top_button_text', 'heading', 'cta_button_text', 'cta_button_url',
+        'unsubscribe_label',
     ];
 
     protected $fillable = [
@@ -48,8 +49,10 @@ class SitePromotionEmail extends Model
         'intro_text',
         'secondary_text',
         'cta_button_text',
+        'cta_button_url',
         'disclaimer_text',
         'unsubscribe_label',
+        'hidden_blocks',
         'button_color',
         'background_color',
         'heading_color',
@@ -78,7 +81,8 @@ class SitePromotionEmail extends Model
     protected function casts(): array
     {
         return [
-            'active' => 'boolean',
+            'active'        => 'boolean',
+            'hidden_blocks' => 'array',
         ];
     }
 
@@ -127,6 +131,62 @@ class SitePromotionEmail extends Model
      * @param  array<string, string>  $context
      * @return array<string, string>
      */
+    /**
+     * Every block an admin may hide, keyed by its own field name.
+     *
+     * THE ONE PLACE a block is declared optional here. `hidden_blocks` stores the
+     * subset switched off; each field keeps its own text, so hiding is reversible
+     * and restoring is a toggle, never a retype. Mirrors
+     * {@see VerificationPromotionEmail::OPTIONAL_BLOCKS} — one pattern for both
+     * promotion templates.
+     *
+     * The colours, `unsubscribe_label` and `active` are deliberately absent: they
+     * are structural, not content.
+     *
+     * @var list<string>
+     */
+    public const array OPTIONAL_BLOCKS = [
+        'preheader',
+        'hero_image_url',
+        'hero_url',
+        'top_button_text',
+        'heading',
+        'intro_text',
+        'secondary_text',
+        'cta_button_text',
+        'cta_button_url',
+        'disclaimer_text',
+    ];
+
+    /**
+     * Visibility flag per optional block, for the Blade layout.
+     *
+     * Everything not explicitly hidden is visible, which is what makes this safe
+     * to deploy: an existing row has no `hidden_blocks` and renders exactly as it
+     * does today. The same default covers the live preview, which builds an
+     * UNSAVED model where the attribute is simply absent.
+     *
+     * Unknown keys are ignored, so one left behind by a renamed field can never
+     * blank out a block that still exists.
+     *
+     * @return array<string, bool>
+     */
+    public function visibleBlocks(): array
+    {
+        $hidden = array_flip(array_filter(
+            (array) ($this->hidden_blocks ?? []),
+            static fn (mixed $key): bool => is_string($key),
+        ));
+
+        $flags = [];
+
+        foreach (self::OPTIONAL_BLOCKS as $block) {
+            $flags[$block] = ! isset($hidden[$block]);
+        }
+
+        return $flags;
+    }
+
     public function render(array $context): array
     {
         $replace = static function (string $value) use ($context): string {

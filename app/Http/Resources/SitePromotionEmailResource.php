@@ -28,8 +28,18 @@ class SitePromotionEmailResource extends JsonResource
             'intro_text'        => $this->intro_text,
             'secondary_text'    => $this->secondary_text,
             'cta_button_text'   => $this->cta_button_text,
+            'cta_button_url'    => $this->cta_button_url,
             'disclaimer_text'   => $this->disclaimer_text,
             'unsubscribe_label' => $this->unsubscribe_label,
+            // Blocks currently switched off. Their content is still stored, so the
+            // admin restores one by dropping it from this list — nothing to retype.
+            'hidden_blocks'     => array_values(array_keys(array_filter(
+                $this->visibleBlocks(),
+                static fn (bool $visible): bool => ! $visible,
+            ))),
+            // The full catalogue, so the editor knows what is hideable without
+            // duplicating the list on the client.
+            'optional_blocks'   => SitePromotionEmail::OPTIONAL_BLOCKS,
             // Palette. Each falls back to the design default so a row written
             // before these columns existed still returns a usable colour.
             ...collect(SitePromotionEmail::COLOR_DEFAULTS)

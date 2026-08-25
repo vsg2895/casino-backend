@@ -320,11 +320,14 @@ class VerificationPromotionEyebrowTest extends TestCase
         }
     }
 
-    public function test_no_other_template_model_gained_the_flag(): void
+    public function test_the_subscribe_and_verify_templates_did_not_gain_the_list(): void
     {
+        // Both promotion templates share the reversible-block mechanism by design.
+        // The subscribe and verify templates do NOT — they were never in scope, and
+        // this is the guard against the pattern spreading by accident.
         [$site] = $this->siteWithKey();
 
-        foreach ([$site->emailTemplateOrDefault(), $site->verifyEmailOrDefault(), $site->promotionEmailOrDefault()] as $template) {
+        foreach ([$site->emailTemplateOrDefault(), $site->verifyEmailOrDefault()] as $template) {
             $this->assertFalse(
                 $template->isFillable('hidden_blocks'),
                 $template::class . ' must not gain the optional-block list',
