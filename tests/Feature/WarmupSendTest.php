@@ -11,6 +11,7 @@ use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
+use App\Services\Mail\WarmupMailResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -352,11 +353,55 @@ class WarmupSendTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_the_verify_template_cannot_be_used_for_warmup(): void
+    public function test_every_catalogued_template_can_be_used_for_warmup(): void
     {
-        // Its payload is a confirmation link for a double opt-in that does not
-        // exist for a seed address — a call to action leading nowhere, which reads
-        // as phishing and costs exactly the reputation warmup is meant to earn.
+        // All four site templates are selectable. VERIFY is included at the
+        // operator's request despite its caveat (its confirmation link means
+        // nothing for a seed address) — see WarmupMailResolver::ALLOWED_TEMPLATES.
+        $this->useLocalTransport();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+
+        $types = [
+            EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            EmailTemplateCatalog::TYPE_PROMOTION,
+            EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION,
+            EmailTemplateCatalog::TYPE_VERIFY,
+        ];
+
+        foreach ($types as $type) {
+            WarmupEmail::query()->delete();
+            Cache::lock(SendWarmupCampaignJob::runLockKey(), 1)->forceRelease();
+            $this->addAddress("seed-{$type}@example.com");
+
+            $this->send([
+                'site_id'  => $site->id,
+                'template' => $type,
+            ])->assertAccepted();
+
+            $this->assertSame(
+                WarmupSendRecipient::STATUS_SENT,
+                WarmupSendRecipient::where('template', $type)->sole()->status,
+                "{$type} should render and send",
+            );
+        }
+    }
+
+    public function test_the_templates_endpoint_offers_all_four(): void
+    {
+        $this->actingAsAdmin();
+
+        $values = collect($this->getJson('/api/v1/admin/warmup-emails/templates')->assertOk()->json('data'))
+            ->pluck('value')
+            ->all();
+
+        $this->assertEqualsCanonicalizing(WarmupMailResolver::ALLOWED_TEMPLATES, $values);
+        $this->assertContains(EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION, $values);
+        $this->assertContains(EmailTemplateCatalog::TYPE_VERIFY, $values);
+    }
+
+    public function test_an_unknown_template_is_still_rejected(): void
+    {
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
@@ -364,10 +409,37 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_VERIFY,
+            'template' => 'not_a_real_template',
         ])->assertStatus(422)->assertJsonValidationErrors('template');
 
         Mail::assertNothingSent();
+    }
+
+    public function test_the_send_dialog_defaults_to_the_configured_site(): void
+    {
+        // The slug lives in config, not in the admin bundle, so the preselected
+        // site is an operator setting rather than a brand name baked into the SPA.
+        $this->actingAsAdmin();
+        $this->siteWithKey(['slug' => 'first-site', 'name' => 'First Site']);
+        [$preferred] = $this->siteWithKey(['slug' => 'winpalack', 'name' => 'Winpalack']);
+
+        config()->set('warmup.default_site_slug', 'winpalack');
+
+        $this->getJson('/api/v1/admin/warmup-emails/recipients')
+            ->assertOk()
+            ->assertJsonPath('data.default_site_id', $preferred->id);
+    }
+
+    public function test_an_unknown_default_site_slug_falls_back_to_no_preference(): void
+    {
+        $this->actingAsAdmin();
+        $this->siteWithKey();
+
+        config()->set('warmup.default_site_slug', 'a-site-that-does-not-exist');
+
+        $this->getJson('/api/v1/admin/warmup-emails/recipients')
+            ->assertOk()
+            ->assertJsonPath('data.default_site_id', null);
     }
 
     public function test_cooldown_must_be_within_one_and_three_hundred_and_sixty_five_days(): void

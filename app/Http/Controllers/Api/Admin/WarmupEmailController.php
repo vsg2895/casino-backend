@@ -151,7 +151,7 @@ class WarmupEmailController extends Controller
     }
 
     /**
-     * Templates a warmup run may use — the catalog, minus what warmup forbids.
+     * Templates a warmup run may use — the catalog, filtered by the warmup allow-list.
      *
      * Served from {@see WarmupMailResolver::ALLOWED_TEMPLATES} so the dropdown,
      * the validation rule and the send path all read ONE allow-list. Registering a
@@ -293,6 +293,7 @@ class WarmupEmailController extends Controller
                 'min_cooldown_days' => WarmupSend::MIN_COOLDOWN_DAYS,
                 'max_cooldown_days' => WarmupSend::MAX_COOLDOWN_DAYS,
                 'default_cooldown_days' => $this->defaultCooldownDays(),
+                'default_site_id'   => $this->defaultSiteId(),
             ],
         ]);
     }
@@ -373,6 +374,24 @@ class WarmupEmailController extends Controller
             WarmupSend::MAX_COOLDOWN_DAYS,
             max(WarmupSend::MIN_COOLDOWN_DAYS, $request->integer('cooldown_days')),
         );
+    }
+
+    /**
+     * Site the dialog opens on, resolved from config('warmup.default_site_slug').
+     *
+     * Resolved SERVER-side so the admin bundle never hard-codes a brand slug, and
+     * so a renamed or removed site degrades to "no preference" instead of leaving
+     * the dialog pointing at nothing.
+     */
+    private function defaultSiteId(): ?int
+    {
+        $slug = trim((string) config('warmup.default_site_slug', ''));
+
+        if ($slug === '') {
+            return null;
+        }
+
+        return Site::query()->where('slug', $slug)->where('active', true)->value('id');
     }
 
     private function defaultCooldownDays(): int

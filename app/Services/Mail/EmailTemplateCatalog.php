@@ -7,6 +7,9 @@ namespace App\Services\Mail;
 use App\Mail\Contracts\SenderOverridable;
 use App\Models\Newsletter;
 use App\Models\Site;
+use App\Models\Unsubscribe;
+use App\Models\VerificationPromotionEmail;
+use App\Services\PostVerificationPromotionEmailService;
 use App\Services\PromotionEmailService;
 use App\Services\SubscriptionEmailService;
 use App\Services\VerifyEmailService;
@@ -32,11 +35,13 @@ final class EmailTemplateCatalog
     public const string TYPE_SUBSCRIBE = 'subscribe';
     public const string TYPE_VERIFY = 'verify';
     public const string TYPE_PROMOTION = 'promotion';
+    public const string TYPE_PROMOTION_AFTER_VERIFICATION = 'promotion_after_verification';
 
     public function __construct(
         private readonly SubscriptionEmailService $subscription,
         private readonly VerifyEmailService $verify,
         private readonly PromotionEmailService $promotion,
+        private readonly PostVerificationPromotionEmailService $postVerification,
     ) {}
 
     /**
@@ -64,6 +69,21 @@ final class EmailTemplateCatalog
                 'description' => 'Marketing campaign template used by scheduled sends.',
                 'build'       => fn (Site $site, Newsletter $newsletter): Mailable&SenderOverridable
                     => $this->promotion->mailForSubscriber($site, $site->promotionEmailOrDefault(), $newsletter),
+            ],
+            self::TYPE_PROMOTION_AFTER_VERIFICATION => [
+                'label'       => 'Promotion after verification',
+                'description' => 'The global follow-up offer sent once a subscriber confirms their email.',
+                // The one GLOBAL template in the catalog: a single row serves every
+                // site, and the Site argument only resolves its {{site_name}} /
+                // {{site_url}} placeholders — exactly what the real send does.
+                'build'       => fn (Site $site, Newsletter $newsletter): Mailable&SenderOverridable
+                    => $this->postVerification->mailFor(
+                        $site,
+                        VerificationPromotionEmail::current(),
+                        $newsletter->email,
+                        $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_PROMOTION_AFTER_VERIFICATION),
+                        $newsletter->full_name,
+                    ),
             ],
         ];
     }

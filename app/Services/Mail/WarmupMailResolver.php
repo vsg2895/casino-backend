@@ -6,8 +6,11 @@ namespace App\Services\Mail;
 
 use App\Mail\Contracts\SenderOverridable;
 use App\Models\Site;
+use App\Models\VerificationPromotionEmail;
+use App\Services\PostVerificationPromotionEmailService;
 use App\Services\PromotionEmailService;
 use App\Services\SubscriptionEmailService;
+use App\Services\VerifyEmailService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Mail\Mailable;
 use InvalidArgumentException;
@@ -34,22 +37,28 @@ final class WarmupMailResolver
     /**
      * Templates a warmup send may use.
      *
-     * VERIFY is deliberately absent. Its whole payload is a confirmation link for
-     * a pending double opt-in, which does not exist for a warmup address — the
-     * mail would carry a call-to-action that leads nowhere. Sending that from a
-     * young mailbox reads as phishing and earns spam complaints, which destroys
-     * exactly the reputation warmup is built to earn.
+     * All four site templates are permitted. VERIFY carries a caveat worth
+     * knowing before selecting it: its payload is a confirmation link for a
+     * double opt-in that a seed address does not have, so the call to action
+     * resolves to nothing, and a "confirm your email" message to someone who
+     * never subscribed has the shape filters score as phishing. It is available
+     * because an operator asked for it; prefer SUBSCRIBE or PROMOTION for routine
+     * warming.
      *
      * @return list<string>
      */
     public const array ALLOWED_TEMPLATES = [
         EmailTemplateCatalog::TYPE_SUBSCRIBE,
         EmailTemplateCatalog::TYPE_PROMOTION,
+        EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION,
+        EmailTemplateCatalog::TYPE_VERIFY,
     ];
 
     public function __construct(
         private readonly SubscriptionEmailService $subscription,
         private readonly PromotionEmailService $promotion,
+        private readonly VerifyEmailService $verify,
+        private readonly PostVerificationPromotionEmailService $postVerification,
     ) {}
 
     public static function supports(string $type): bool
@@ -57,14 +66,6 @@ final class WarmupMailResolver
         return in_array($type, self::ALLOWED_TEMPLATES, true);
     }
 
-    /**
-     * The fully rendered mailable for one warmup address.
-     *
-     * Uses each site's STORED template (`…OrDefault()`), so what a warmup send
-     * puts on the wire is byte-for-byte what a real send of that template would
-     * produce — which is the point: warming a mailbox with mail that looks
-     * nothing like your real traffic teaches the receiving side nothing useful.
-     */
     /**
      * Site templates already resolved during this batch, keyed "{siteId}:{type}".
      *
@@ -81,6 +82,14 @@ final class WarmupMailResolver
      */
     private array $templates = [];
 
+    /**
+     * The fully rendered mailable for one warmup address.
+     *
+     * Uses each site's STORED template (`…OrDefault()`), so what a warmup send
+     * puts on the wire is byte-for-byte what a real send of that template would
+     * produce — which is the point: warming a mailbox with mail that looks
+     * nothing like your real traffic teaches the receiving side nothing useful.
+     */
     public function build(string $type, Site $site, string $email): Mailable&SenderOverridable
     {
         return match ($type) {
@@ -92,6 +101,18 @@ final class WarmupMailResolver
             EmailTemplateCatalog::TYPE_PROMOTION => $this->promotion->previewMail(
                 $site,
                 $this->template($site, $type, static fn (Site $s): Model => $s->promotionEmailOrDefault()),
+                $email,
+            ),
+            EmailTemplateCatalog::TYPE_VERIFY => $this->verify->previewMail(
+                $site,
+                $this->template($site, $type, static fn (Site $s): Model => $s->verifyEmailOrDefault()),
+                $email,
+            ),
+            // The one GLOBAL template here: not per-site, so the cache key is the
+            // type alone and the Site only resolves placeholders.
+            EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION => $this->postVerification->previewMail(
+                $site,
+                $this->template($site, $type, static fn (Site $s): Model => VerificationPromotionEmail::current()),
                 $email,
             ),
             default => throw new InvalidArgumentException(

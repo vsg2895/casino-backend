@@ -71,4 +71,14 @@ return [
     */
     'default_cooldown_days' => 1,
 
+    /*
+    | Site pre-selected in the "Send warmup" dialog.
+    |
+    | A slug rather than an id, so it survives a reseed (ids move, slugs do not),
+    | and env-overridable so the choice is an operator setting rather than a brand
+    | name baked into the admin bundle. An unknown or unregistered slug simply
+    | falls back to the first site — never an error.
+    */
+    'default_site_slug' => env('WARMUP_DEFAULT_SITE_SLUG', 'winpalack'),
+
 ];
