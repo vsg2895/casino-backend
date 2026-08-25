@@ -8,6 +8,7 @@ use App\Mail\Contracts\SenderOverridable;
 use App\Models\Site;
 use App\Services\PromotionEmailService;
 use App\Services\SubscriptionEmailService;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Mail\Mailable;
 use InvalidArgumentException;
 
@@ -64,22 +65,57 @@ final class WarmupMailResolver
      * produce — which is the point: warming a mailbox with mail that looks
      * nothing like your real traffic teaches the receiving side nothing useful.
      */
+    /**
+     * Site templates already resolved during this batch, keyed "{siteId}:{type}".
+     *
+     * Without it, `…OrDefault()` ran once PER RECIPIENT: a `firstOrCreate` query
+     * and a freshly hydrated model for every address, so a 100-address batch paid
+     * 100 redundant SELECTs and left 100 model graphs for the collector. The
+     * template cannot change mid-batch anyway — a run should render one consistent
+     * version of it — so resolving once is both cheaper and more correct.
+     *
+     * Scoped to the resolver instance, which the container builds per job, so the
+     * cache dies with the batch and never leaks across runs.
+     *
+     * @var array<string, Model>
+     */
+    private array $templates = [];
+
     public function build(string $type, Site $site, string $email): Mailable&SenderOverridable
     {
         return match ($type) {
             EmailTemplateCatalog::TYPE_SUBSCRIBE => $this->subscription->previewMail(
                 $site,
-                $site->emailTemplateOrDefault(),
+                $this->template($site, $type, static fn (Site $s): Model => $s->emailTemplateOrDefault()),
                 $email,
             ),
             EmailTemplateCatalog::TYPE_PROMOTION => $this->promotion->previewMail(
                 $site,
-                $site->promotionEmailOrDefault(),
+                $this->template($site, $type, static fn (Site $s): Model => $s->promotionEmailOrDefault()),
                 $email,
             ),
             default => throw new InvalidArgumentException(
                 "Template [{$type}] cannot be used for a warmup send.",
             ),
         };
+    }
+
+    /**
+     * Release the cached templates.
+     *
+     * Called by the batch job once its recipients are done. The resolver itself is
+     * short-lived, but a template row carries the full rendered copy of an email,
+     * and holding it until the container drops the instance keeps that alive for
+     * the rest of the job's teardown for no reason.
+     */
+    public function flushTemplates(): void
+    {
+        $this->templates = [];
+    }
+
+    /** @param callable(Site): Model $resolve */
+    private function template(Site $site, string $type, callable $resolve): Model
+    {
+        return $this->templates[$site->id . ':' . $type] ??= $resolve($site);
     }
 }

@@ -83,6 +83,12 @@ class SendWarmupBatchJob implements ShouldQueue
             return;
         }
 
+        // A queue worker is a long-lived process: anything retained here outlives
+        // the job. If the query log is on — a debug package, APP_DEBUG tooling, an
+        // earlier job that enabled it — every statement is kept in memory for the
+        // worker's whole life. Cheap insurance rather than a fix for a known leak.
+        DB::connection()->disableQueryLog();
+
         $site = Site::find($this->siteId);
 
         if ($site === null || ! WarmupMailResolver::supports($this->template)) {
@@ -116,6 +122,7 @@ class SendWarmupBatchJob implements ShouldQueue
         foreach ($this->emails as $email) {
             $email = (string) $email;
             $error = null;
+            $mailable = null;
 
             try {
                 $mailable = $resolver->build($this->template, $site, $email)
@@ -132,6 +139,14 @@ class SendWarmupBatchJob implements ShouldQueue
                     'email' => $email,
                     'error' => $error,
                 ]);
+            } finally {
+                // Drop the rendered message before building the next one. Each
+                // mailable holds a fully rendered HTML body — tens of kilobytes
+                // for these templates — and without this the previous recipient's
+                // copy stays reachable for the whole of the next iteration, so
+                // peak memory carries two bodies instead of one. In `finally` so a
+                // failed send releases it too.
+                unset($mailable);
             }
 
             $buffer[] = $this->row($email, $ids[$email] ?? null, $error);
@@ -143,6 +158,12 @@ class SendWarmupBatchJob implements ShouldQueue
         }
 
         $this->flush($buffer);
+
+        // Release what the loop no longer needs before the batch returns. A queue
+        // worker keeps this process alive across many jobs, so anything still
+        // referenced here is memory the NEXT batch starts with.
+        unset($buffer, $ids, $mailer);
+        $resolver->flushTemplates();
 
         // One line per batch, not per recipient.
         Log::info('Warmup batch processed', [
@@ -246,6 +267,13 @@ class SendWarmupBatchJob implements ShouldQueue
         }
 
         $this->markContacted($delivered, $latest);
+
+        // Mailables and their Symfony Email graphs contain reference cycles that
+        // refcounting alone cannot reclaim, so they sit in the GC root buffer
+        // until PHP decides to collect. Running it once per flush (every 25
+        // recipients by default) bounds how many accumulate, at a cost that is
+        // negligible beside 25 SMTP round-trips.
+        gc_collect_cycles();
     }
 
     /**

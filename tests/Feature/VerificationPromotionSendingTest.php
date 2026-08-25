@@ -9,7 +9,7 @@ use App\Mail\PostVerificationPromotionEmail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\Unsubscribe;
-use App\Models\VerificationPostVerificationPromotionEmail;
+use App\Models\VerificationPromotionEmail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
@@ -53,9 +53,9 @@ class VerificationPromotionSendingTest extends TestCase
         config()->set('mail.public_from_address', 'info@winpalack.test');
     }
 
-    private function configureSection(bool $active = true, int $delayMinutes = 5): VerificationPostVerificationPromotionEmail
+    private function configureSection(bool $active = true, int $delayMinutes = 5): VerificationPromotionEmail
     {
-        $config = VerificationPostVerificationPromotionEmail::current();
+        $config = VerificationPromotionEmail::current();
         $config->update([
             'active'          => $active,
             'delay_minutes'   => $delayMinutes,

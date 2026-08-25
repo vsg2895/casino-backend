@@ -15,6 +15,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -93,6 +94,10 @@ class SendWarmupCampaignJob implements ShouldQueue
 
     private function fanOut(WarmupRecipientService $recipients): void
     {
+        // Streams the whole list for a send-to-everyone run, so a retained query
+        // log would grow with the audience. See the same guard in the batch job.
+        DB::connection()->disableQueryLog();
+
         $site = Site::find($this->siteId);
 
         if ($site === null) {
@@ -145,6 +150,12 @@ class SendWarmupCampaignJob implements ShouldQueue
                     );
                     $queued += count($payload);
                 }
+
+                // The payloads are now owned by the queue; nothing here needs the
+                // chunk any more. On a whole-list run this closure is entered once
+                // per 500 addresses, so releasing eagerly keeps the fan-out's
+                // footprint flat instead of proportional to the list.
+                unset($emails);
             },
         );
 

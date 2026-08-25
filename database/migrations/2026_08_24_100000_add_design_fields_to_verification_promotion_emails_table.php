@@ -68,6 +68,17 @@ return new class extends Migration
         ];
 
         $backfill = collect([...$newFields, ...array_keys(VerificationPromotionEmail::COLOR_DEFAULTS)])
+            // A migration must not assume the model's CURRENT shape. This list is
+            // built from a live constant, and the model has moved on since:
+            // COLOR_DEFAULTS gained `footer_link_color` (added two migrations
+            // later, in 2026_08_24_140000) and `rating_stars` was dropped in
+            // 2026_08_24_130000. Running the chain from scratch therefore tried to
+            // UPDATE a column that does not exist yet and failed — so `migrate` on
+            // a fresh database, and every test run, was broken.
+            //
+            // Restricting the backfill to columns that exist AT THIS POINT keeps
+            // it correct however the model evolves afterwards.
+            ->filter(fn (string $field): bool => Schema::hasColumn('verification_promotion_emails', $field))
             ->mapWithKeys(fn (string $field): array => [$field => $defaults[$field] ?? null])
             ->put('footer_links', json_encode($defaults['footer_links'] ?? []))
             ->all();
