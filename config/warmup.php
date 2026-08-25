@@ -34,7 +34,7 @@ return [
     // so this is the granularity of failure and retry.
     'send_batch_size' => 100,
 
-    // Rows per database round-trip while streaming the rotation. Decoupled from
+    // Rows per database round-trip while streaming the selection. Decoupled from
     // send_batch_size for the same reason the promotion sender decouples them: a
     // long list costs few queries while the dispatched jobs stay small and
     // quickly retryable.
@@ -49,5 +49,26 @@ return [
     // connection's `retry_after` (config/queue.php), or a slow batch gets handed
     // to a second worker and the same addresses are mailed twice.
     'send_timeout' => 240,
+
+    /*
+    | Attempts buffered in memory before being flushed to `warmup_send_recipients`.
+    |
+    | This is the crash window: if a worker is killed mid-batch, at most this many
+    | delivered addresses lack a history row. Lower = safer, at one extra INSERT
+    | per this many recipients. Matches the promotion pipeline's
+    | `promotions.history_flush_size` so both audit trails behave the same way.
+    */
+    'history_flush_size' => 25,
+
+    /*
+    | Cooldown offered by default when the admin switches off "send to every
+    | address". One day is the mildest useful setting: it only prevents mailing
+    | the same seed address twice in one day, which no real mailbox does.
+    |
+    | The permitted RANGE is not configurable — it is a product rule and lives on
+    | WarmupSend::MIN_COOLDOWN_DAYS / MAX_COOLDOWN_DAYS so the validator, the API
+    | and the admin input all read one source.
+    */
+    'default_cooldown_days' => 1,
 
 ];

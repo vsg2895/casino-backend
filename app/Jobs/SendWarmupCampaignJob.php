@@ -37,7 +37,7 @@ use Throwable;
  *
  * NOT auto-retried ($tries = 1). A half-finished fan-out that restarted would
  * re-dispatch batches already in flight, mailing the same seed addresses twice
- * and skewing the rotation.
+ * and writing duplicate history rows for them.
  */
 class SendWarmupCampaignJob implements ShouldQueue
 {
@@ -60,7 +60,9 @@ class SendWarmupCampaignJob implements ShouldQueue
     public int $timeout;
 
     /**
-     * @param  int|null  $limit  Null means EVERY address on the list.
+     * @param  int|null  $limit         Null means EVERY eligible address.
+     * @param  int|null  $cooldownDays  Null disables the cooldown filter, which is
+     *                                  what a whole-list run means.
      */
     public function __construct(
         public readonly int $warmupSendId,
@@ -68,6 +70,7 @@ class SendWarmupCampaignJob implements ShouldQueue
         public readonly string $template,
         public readonly ?int $limit = null,
         public readonly ?string $lockOwner = null,
+        public readonly ?int $cooldownDays = null,
     ) {
         $this->onQueue(self::ON_QUEUE);
         $this->timeout = (int) config('warmup.fan_out_timeout', 900);
@@ -116,18 +119,34 @@ class SendWarmupCampaignJob implements ShouldQueue
 
         $queued = 0;
 
-        $recipients->eachChunk($this->limit, $readChunk, function (Collection $rows) use ($batchSize, &$queued): void {
-            // Reduce to a flat address list immediately — the hydrated rows are
-            // not needed past this point, and holding them while dispatching
-            // would keep a whole read chunk alive.
-            $emails = $rows->pluck('email')->all();
-            unset($rows);
+        $recipients->eachChunk(
+            $this->limit,
+            $this->cooldownDays,
+            $readChunk,
+            function (Collection $rows) use ($batchSize, &$queued): void {
+                // Reduce to a flat address list immediately — the hydrated rows are
+                // not needed past this point, and holding them while dispatching
+                // would keep a whole read chunk alive.
+                //
+                // Only the ADDRESS travels, not the row id: an address can be
+                // deleted between fan-out and delivery, and a stale id would make
+                // the history INSERT violate its foreign key. The batch job
+                // re-resolves ids at send time against the unique `email` index —
+                // one query per 100 recipients, next to 100 SMTP round-trips.
+                $emails = $rows->pluck('email')->all();
+                unset($rows);
 
-            foreach (array_chunk($emails, $batchSize) as $payload) {
-                SendWarmupBatchJob::dispatch($payload, $this->siteId, $this->template);
-                $queued += count($payload);
-            }
-        });
+                foreach (array_chunk($emails, $batchSize) as $payload) {
+                    SendWarmupBatchJob::dispatch(
+                        $payload,
+                        $this->siteId,
+                        $this->template,
+                        $this->warmupSendId,
+                    );
+                    $queued += count($payload);
+                }
+            },
+        );
 
         WarmupSend::query()->whereKey($this->warmupSendId)->update(['queued_count' => $queued]);
 
@@ -138,6 +157,7 @@ class SendWarmupCampaignJob implements ShouldQueue
             'recipients'     => $queued,
             'batch_size'     => $batchSize,
             'scope'          => $this->limit === null ? 'all' : $this->limit,
+            'cooldown_days'  => $this->cooldownDays,
         ]);
     }
 

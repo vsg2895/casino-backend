@@ -11,10 +11,12 @@ use App\Http\Requests\Admin\SendWarmupEmailsRequest;
 use App\Http\Requests\Admin\StoreWarmupEmailRequest;
 use App\Http\Requests\Admin\UpdateWarmupEmailRequest;
 use App\Http\Resources\WarmupEmailResource;
+use App\Http\Resources\WarmupSendRecipientResource;
 use App\Jobs\SendWarmupCampaignJob;
 use App\Models\Site;
 use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
+use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\WarmupMailResolver;
 use App\Services\WarmupImportService;
@@ -170,19 +172,18 @@ class WarmupEmailController extends Controller
      * addresses — or to the whole list when no count is given.
      *
      * The request only RECORDS the run and queues the fan-out; streaming the
-     * rotation and dispatching batches happens in {@see SendWarmupCampaignJob} on
+     * selection and dispatching batches happens in {@see SendWarmupCampaignJob} on
      * the low-priority queue, so a long list never occupies a php-fpm worker.
      *
      * Guarded by a cross-process lock rather than a disabled button: two
-     * concurrent runs would mail the same seed addresses twice and skew the
-     * rotation, and the guard has to hold across tabs and app servers. The lock is
-     * released by the fan-out job, and expires on its own if a worker dies.
+     * concurrent runs would mail the same seed addresses twice and start their
+     * cooldowns from the wrong moment, and the guard has to hold across tabs and
+     * app servers. The lock is released by the fan-out job, and expires on its own
+     * if a worker dies.
      */
     public function send(SendWarmupEmailsRequest $request, WarmupRecipientService $recipients): JsonResponse
     {
-        $available = $recipients->available();
-
-        if ($available === 0) {
+        if ($recipients->available() === 0) {
             return response()->json([
                 'ok'      => false,
                 'message' => 'The warmup list is empty. Add or import addresses first.',
@@ -192,6 +193,24 @@ class WarmupEmailController extends Controller
         $site = Site::findOrFail($request->integer('site_id'));
         $template = (string) $request->validated('template');
         $limit = $request->recipientLimit();
+        $cooldown = $request->cooldownDays();
+
+        // Counted BEFORE the lock so an unsatisfiable run never blocks a valid
+        // one. A cooldown that leaves nobody eligible is an ordinary outcome, not
+        // a validation error — the admin needs to be told, not corrected.
+        $recipientCount = $recipients->count($limit, $cooldown);
+
+        if ($recipientCount === 0) {
+            return response()->json([
+                'ok'      => false,
+                'message' => $cooldown === null
+                    ? 'No addresses are available to send to.'
+                    : sprintf(
+                        'Every address on the list has been contacted within the last %d day(s). Lower the cooldown or add more addresses.',
+                        $cooldown,
+                    ),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         $lock = Cache::lock(SendWarmupCampaignJob::runLockKey(), self::RUN_LOCK_SECONDS);
 
@@ -207,19 +226,19 @@ class WarmupEmailController extends Controller
             'user_id'         => $request->user()?->id,
             'template'        => $template,
             'requested_count' => $limit,
+            'cooldown_days'   => $cooldown,
         ]);
 
         // The owner token travels with the job so only that job can release this
         // exact lock — a slower earlier run can never free a newer one's.
-        SendWarmupCampaignJob::dispatch($send->id, $site->id, $template, $limit, $lock->owner());
-
-        $recipientCount = $recipients->count($limit);
+        SendWarmupCampaignJob::dispatch($send->id, $site->id, $template, $limit, $lock->owner(), $cooldown);
 
         Log::info('Warmup run queued', [
             'warmup_send_id' => $send->id,
             'site_id'        => $site->id,
             'template'       => $template,
             'scope'          => $limit === null ? 'all' : $limit,
+            'cooldown_days'  => $cooldown,
             'recipients'     => $recipientCount,
             'admin_id'       => $request->user()?->id,
         ]);
@@ -234,9 +253,136 @@ class WarmupEmailController extends Controller
                 $site->name,
                 $limit === null
                     ? "all {$recipientCount} address(es)"
-                    : "{$recipientCount} least-recently-contacted address(es)",
+                    : sprintf(
+                        '%d most recently added address(es)%s',
+                        $recipientCount,
+                        $cooldown === null
+                            ? ''
+                            : " not contacted in the last {$cooldown} day(s)",
+                    ),
             ),
         ], Response::HTTP_ACCEPTED);
+    }
+
+    /**
+     * Who a run with these settings would reach right now.
+     *
+     * Uses the SAME {@see WarmupRecipientService} the send uses, so the number the
+     * admin sees before clicking is the number that gets mailed. This is the same
+     * "preview the audience" contract as `schedules/{schedule}/recipients` and
+     * `newsletter-phones/recipients`.
+     *
+     * It also carries the cooldown bounds, so the admin's number input takes its
+     * min/max from the server rather than hard-coding them in two places.
+     */
+    public function recipients(Request $request, WarmupRecipientService $recipients): JsonResponse
+    {
+        $limit = $this->clampedCount($request);
+        $cooldown = $this->clampedCooldown($request);
+
+        $total = $recipients->available();
+        $eligible = $recipients->eligible($cooldown);
+
+        return response()->json([
+            'data' => [
+                'total'         => $total,
+                'eligible'      => $eligible,
+                'recipients'    => $limit === null ? $eligible : min($eligible, $limit),
+                'count'         => $limit,
+                'cooldown_days' => $cooldown,
+                'min_cooldown_days' => WarmupSend::MIN_COOLDOWN_DAYS,
+                'max_cooldown_days' => WarmupSend::MAX_COOLDOWN_DAYS,
+                'default_cooldown_days' => $this->defaultCooldownDays(),
+            ],
+        ]);
+    }
+
+    /**
+     * Per-address delivery history: which address, from which site, with which
+     * template, and when.
+     *
+     * Read-only and paginated, matching `promotion-history` and
+     * `newsletter-phones/history`. The site is eager-loaded so a page costs two
+     * queries rather than one per row.
+     */
+    public function history(Request $request): AnonymousResourceCollection
+    {
+        $perPage = min(
+            max($request->integer('per_page') ?: self::DEFAULT_PER_PAGE, 1),
+            self::MAX_PER_PAGE,
+        );
+
+        $query = $this->filteredHistory($request)
+            ->with('site:id,name,domain')
+            ->newest();
+
+        return WarmupSendRecipientResource::collection($query->paginate($perPage));
+    }
+
+    /** Total matching the current history filters, as a dedicated COUNT. */
+    public function historyCount(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filteredHistory($request)->count()]);
+    }
+
+    /**
+     * The history filter conditions, and nothing else. Shared by the listing and
+     * the count so the two can never disagree.
+     *
+     * @return Builder<WarmupSendRecipient>
+     */
+    private function filteredHistory(Request $request): Builder
+    {
+        return WarmupSendRecipient::query()
+            ->search($request->query('search'))
+            ->forSite($request->query('site_id'))
+            ->forTemplate($request->query('template'))
+            ->withStatus($request->query('status'));
+    }
+
+    /**
+     * Requested recipient cap from a preview query string, or null for "everyone".
+     *
+     * `filled()` + `integer()` rather than `query()` + a cast: it distinguishes an
+     * absent parameter from an explicit 0, and it is array-safe — `?count[]=1`
+     * would otherwise reach an `(int)` cast.
+     */
+    private function clampedCount(Request $request): ?int
+    {
+        if (! $request->filled('count')) {
+            return null;
+        }
+
+        return max(1, $request->integer('count'));
+    }
+
+    /**
+     * Cooldown from a preview query string, clamped to the permitted range.
+     *
+     * Clamped rather than validated: this is a read-only preview, and a nonsense
+     * value should show the admin a sane number instead of a 422. The send itself
+     * validates properly — see {@see SendWarmupEmailsRequest}.
+     */
+    private function clampedCooldown(Request $request): ?int
+    {
+        if (! $request->filled('cooldown_days')) {
+            return null;
+        }
+
+        return min(
+            WarmupSend::MAX_COOLDOWN_DAYS,
+            max(WarmupSend::MIN_COOLDOWN_DAYS, $request->integer('cooldown_days')),
+        );
+    }
+
+    private function defaultCooldownDays(): int
+    {
+        $default = (int) config('warmup.default_cooldown_days', WarmupSend::MIN_COOLDOWN_DAYS);
+
+        return min(
+            WarmupSend::MAX_COOLDOWN_DAYS,
+            max(WarmupSend::MIN_COOLDOWN_DAYS, $default),
+        );
     }
 
     /**

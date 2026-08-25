@@ -176,6 +176,13 @@ Route::prefix('v1')->group(function () {
         Route::get('warmup-emails/templates', [WarmupEmailController::class, 'templates']);
         Route::post('warmup-emails/import', [WarmupEmailController::class, 'import']);
         Route::post('warmup-emails/bulk-delete', [WarmupEmailController::class, 'bulkDestroy']);
+        // Who a run with the current settings would reach — the same query the
+        // send itself uses, so the preview can never promise a different number.
+        Route::get('warmup-emails/recipients', [WarmupEmailController::class, 'recipients']);
+        // Per-address delivery history: address, site, template, timestamp.
+        // Also what makes the cooldown auditable after the fact.
+        Route::get('warmup-emails/history', [WarmupEmailController::class, 'history']);
+        Route::get('warmup-emails/history/count', [WarmupEmailController::class, 'historyCount']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
         Route::apiResource('warmup-emails', WarmupEmailController::class)
             ->except(['show']);

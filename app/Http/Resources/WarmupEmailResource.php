@@ -15,8 +15,14 @@ class WarmupEmailResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'         => $this->id,
-            'email'      => $this->email,
+            'id'    => $this->id,
+            'email' => $this->email,
+
+            // When this address was last SUCCESSFULLY contacted; null = never.
+            // Exposed because it is what the cooldown filter reads — without it
+            // the admin cannot tell why an address was skipped by a run.
+            'last_sent_at' => $this->last_sent_at,
+
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
