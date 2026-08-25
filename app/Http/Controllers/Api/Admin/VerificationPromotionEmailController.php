@@ -75,7 +75,12 @@ class VerificationPromotionEmailController extends Controller
      */
     public function preview(UpdateVerificationPromotionEmailRequest $request): JsonResponse
     {
-        $site = $this->resolveSite($request->integer('site_id'));
+        // The editor sends the picker's value as `preview_site_id` (it is part of
+        // the saved payload now); `site_id` stays honoured for any caller still
+        // using the older transient key.
+        $site = $this->resolveSite(
+            $request->integer('preview_site_id') ?: $request->integer('site_id'),
+        );
 
         if ($site === null) {
             return response()->json([
@@ -104,7 +109,11 @@ class VerificationPromotionEmailController extends Controller
     {
         $to = $request->validated('to');
         $config = VerificationPromotionEmail::current();
-        $site = $this->resolveSite($request->integer('site_id'));
+        // This button sends the SAVED template, so it falls back to the SAVED
+        // preview site when the request does not name one.
+        $site = $this->resolveSite(
+            $request->integer('site_id') ?: $config->preview_site_id,
+        );
 
         if ($site === null) {
             return response()->json([

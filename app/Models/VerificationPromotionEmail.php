@@ -64,7 +64,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
      */
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url', 'hero_url',
-        'top_button_text', 'heading', 'cta_button_text', 'unsubscribe_label',
+        'top_button_text', 'heading', 'cta_button_text', 'cta_button_url', 'unsubscribe_label',
         'header_brand_text', 'eyebrow_text', 'confirmation_text',
         'highlight_text', 'copyright_text',
         // Footer legal/contact lines
@@ -106,8 +106,13 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'intro_text',
         'secondary_text',
         'cta_button_text',
+        'cta_button_url',
         'disclaimer_text',
         'unsubscribe_label',
+        'hidden_blocks',
+        // Which site the PREVIEW and test render against. Not ownership — this
+        // template is global; see the migration for why the name matters.
+        'preview_site_id',
         // New design components
         'header_brand_text',
         'eyebrow_text',
@@ -152,6 +157,8 @@ class VerificationPromotionEmail extends SitePromotionEmail
         return [
             'active'          => 'boolean',
             'delay_minutes'   => 'integer',
+            'preview_site_id' => 'integer',
+            'hidden_blocks'   => 'array',
             'sendgrid_key_id' => 'integer',
             'mailgun_key_id'  => 'integer',
             // Ordered list of {label,url} footer navigation links.
@@ -273,6 +280,75 @@ class VerificationPromotionEmail extends SitePromotionEmail
      * @param  array<string, string>  $context
      * @return array<string, mixed>
      */
+    /**
+     * Every block an admin may hide, keyed by its own field name.
+     *
+     * THE ONE PLACE a block is declared optional. `hidden_blocks` stores the
+     * subset currently switched off; the field's own column always keeps its
+     * text, so hiding is reversible and restoring is a toggle, never a retype.
+     *
+     * Adding another optional block is one entry here plus one guard in the
+     * Blade — no migration, no change to the mailable, and the admin form picks
+     * it up from the same list.
+     *
+     * @var list<string>
+     */
+    public const array OPTIONAL_BLOCKS = [
+        'preheader',
+        'header_brand_text',
+        'confirmation_text',
+        'eyebrow_text',
+        'heading',
+        'intro_text',
+        'hero_image_url',
+        'hero_url',
+        'top_button_text',
+        'highlight_text',
+        'cta_button_text',
+        'cta_button_url',
+        'secondary_text',
+        'disclaimer_text',
+        'responsible_notice_text',
+        'footer_tagline',
+        'affiliate_disclosure_text',
+        'reason_text',
+        'age_disclaimer_text',
+        'postal_address',
+        'contact_email',
+        'email_preferences_label',
+        'email_preferences_url',
+        'copyright_text',
+    ];
+
+    /**
+     * Visibility flag per optional block, for the Blade layout.
+     *
+     * Everything not explicitly hidden is visible, which is what makes this safe
+     * to deploy: an existing row has no `hidden_blocks` at all and therefore
+     * renders exactly as it does today. The same default covers the live preview,
+     * which builds an UNSAVED model where the attribute is simply absent.
+     *
+     * Unknown keys in the stored list are ignored rather than trusted, so a key
+     * left behind by a renamed field can never blank out a block that still exists.
+     *
+     * @return array<string, bool>
+     */
+    public function visibleBlocks(): array
+    {
+        $hidden = array_flip(array_filter(
+            (array) ($this->hidden_blocks ?? []),
+            static fn (mixed $key): bool => is_string($key),
+        ));
+
+        $flags = [];
+
+        foreach (self::OPTIONAL_BLOCKS as $block) {
+            $flags[$block] = ! isset($hidden[$block]);
+        }
+
+        return $flags;
+    }
+
     public function render(array $context): array
     {
         $replace = static function (string $value) use (&$context): string {

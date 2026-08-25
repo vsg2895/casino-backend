@@ -32,11 +32,16 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
         $hex = 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/';
 
         return [
-            // Preview/test only: which registered site the {{site_name}} /
-            // {{site_url}} placeholders resolve against. Never persisted — this
-            // template is global — so it is deliberately not in the model's
-            // $fillable and is stripped before the template is built.
+            // TRANSIENT: render this one preview against this site. Not a
+            // column, and stripped before the unsaved template model is built.
+            // Kept for backward compatibility with callers that still send it.
             'site_id'           => ['nullable', 'integer', 'exists:sites,id'],
+
+            // PERSISTED: the site the admin picked, remembered so reopening the
+            // editor does not reset it. Still only ever resolves the
+            // {{site_name}} / {{site_url}} placeholders for preview and test —
+            // the automatic send reads each subscriber's OWN site, never this.
+            'preview_site_id'   => ['nullable', 'integer', 'exists:sites,id'],
 
             // ── Template (identical to the per-site promotion editor) ────
             'from_name'         => ['required', 'string', 'max:120'],
@@ -49,6 +54,11 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'hero_url'          => ['nullable', 'string', 'max:500'],
             'top_button_text'   => ['nullable', 'string', 'max:80'],
             'cta_button_text'   => ['nullable', 'string', 'max:80'],
+            // Where the CTA points. A plain string, not `url`, for the same
+            // reason hero_url is: affiliate destinations carry tracking macros
+            // and {{site_url}} placeholders that the `url` rule rejects.
+            // Empty falls back to hero_url, then the site URL.
+            'cta_button_url'    => ['nullable', 'string', 'max:500'],
             'heading'           => ['nullable', 'string', 'max:150'],
             'intro_text'        => ['nullable', 'string', 'max:1000'],
             'secondary_text'    => ['nullable', 'string', 'max:1000'],
@@ -57,6 +67,14 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             // ── New design components ─────────────────────────────────────
             'header_brand_text'         => ['nullable', 'string', 'max:120'],
             'eyebrow_text'              => ['nullable', 'string', 'max:120'],
+
+            // Which optional blocks are switched OFF. Visibility only — every
+            // block's own text is stored separately and is never touched by
+            // hiding it, which is what makes removal reversible.
+            // `sometimes`, so a caller that omits the key leaves the stored
+            // selection alone rather than un-hiding everything.
+            'hidden_blocks'   => ['sometimes', 'array'],
+            'hidden_blocks.*' => ['string', Rule::in(VerificationPromotionEmail::OPTIONAL_BLOCKS)],
             'confirmation_text'         => ['nullable', 'string', 'max:200'],
             'highlight_text'            => ['nullable', 'string', 'max:120'],
             'responsible_notice_text'   => ['nullable', 'string', 'max:1000'],

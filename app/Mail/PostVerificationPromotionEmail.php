@@ -42,6 +42,14 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
         public readonly string $unsubscribeUrl,
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
+        /**
+         * Visibility flag per optional block, from
+         * {@see \App\Models\VerificationPromotionEmail::visibleBlocks()}.
+         * Defaulted so every existing caller keeps rendering everything.
+         *
+         * @var array<string, bool>
+         */
+        public readonly array $visibleBlocks = [],
     ) {}
 
     public function envelope(): Envelope
@@ -76,6 +84,7 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
                 'siteUrl'        => $this->siteUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'greeting'       => $this->greeting,
+                'visible'        => $this->visibleBlocks,
                 // Palette — already defaulted in VerificationPromotionEmail::render().
                 'canvas'         => $this->template['background_color'],
                 'bodyBg'         => $this->template['body_background_color'],

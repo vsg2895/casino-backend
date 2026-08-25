@@ -36,12 +36,26 @@ class VerificationPromotionEmailResource extends JsonResource
             'intro_text'        => $this->intro_text,
             'secondary_text'    => $this->secondary_text,
             'cta_button_text'   => $this->cta_button_text,
+            'cta_button_url'    => $this->cta_button_url,
             'disclaimer_text'   => $this->disclaimer_text,
             'unsubscribe_label' => $this->unsubscribe_label,
+            // Blocks currently switched off. Their text is still stored, so the
+            // admin restores one by removing it from this list — nothing to retype.
+            'hidden_blocks'     => array_values(array_keys(array_filter(
+                $this->visibleBlocks(),
+                static fn (bool $visible): bool => ! $visible,
+            ))),
+            // The full catalogue, so the editor knows what is hideable without
+            // duplicating the list on the client.
+            'optional_blocks'   => VerificationPromotionEmail::OPTIONAL_BLOCKS,
+            // The remembered preview site, so the editor reopens on the one the
+            // admin last chose instead of resetting to the first registered site.
+            'preview_site_id'   => $this->preview_site_id,
 
             // ── New design components ─────────────────────────────────────
             'header_brand_text'         => $this->header_brand_text,
             'eyebrow_text'              => $this->eyebrow_text,
+
             'confirmation_text'         => $this->confirmation_text,
             'highlight_text'            => $this->highlight_text,
             // Always an array so the admin editor can bind to it directly.
