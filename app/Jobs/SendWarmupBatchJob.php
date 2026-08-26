@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Models\Site;
 use App\Models\WarmupEmail;
+use App\Models\WarmupSend;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\WarmupMailResolver;
 use Illuminate\Bus\Queueable;
@@ -88,6 +89,18 @@ class SendWarmupBatchJob implements ShouldQueue
         // earlier job that enabled it — every statement is kept in memory for the
         // worker's whole life. Cheap insurance rather than a fix for a known leak.
         DB::connection()->disableQueryLog();
+
+        // The run may have been stopped after this batch was queued. Checked
+        // here rather than only at dispatch time, because a queue can hold work
+        // for far longer than the decision to stop takes.
+        if (WarmupSend::isCancelled($this->warmupSendId)) {
+            Log::info('Warmup batch skipped: the run was cancelled', [
+                'warmup_send_id' => $this->warmupSendId,
+                'batch_size'     => count($this->emails),
+            ]);
+
+            return;
+        }
 
         $site = Site::find($this->siteId);
 

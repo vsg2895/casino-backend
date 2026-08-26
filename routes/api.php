@@ -184,6 +184,9 @@ Route::prefix('v1')->group(function () {
         Route::get('warmup-emails/history', [WarmupEmailController::class, 'history']);
         Route::get('warmup-emails/history/count', [WarmupEmailController::class, 'historyCount']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
+        // Stop a wedged or unwanted run: cancels queued batches and frees the run
+        // lock, so a new run can start immediately.
+        Route::post('warmup-emails/cancel', [WarmupEmailController::class, 'cancel']);
         Route::apiResource('warmup-emails', WarmupEmailController::class)
             ->except(['show']);
 

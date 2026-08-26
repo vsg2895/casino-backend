@@ -141,6 +141,14 @@ class SendWarmupCampaignJob implements ShouldQueue
                 $emails = $rows->pluck('email')->all();
                 unset($rows);
 
+                // Checked per read chunk, not once at the top: a stop issued
+                // mid-fan-out must take effect on the batches not yet queued.
+                if (WarmupSend::isCancelled($this->warmupSendId)) {
+                    unset($emails);
+
+                    return;
+                }
+
                 foreach (array_chunk($emails, $batchSize) as $payload) {
                     SendWarmupBatchJob::dispatch(
                         $payload,

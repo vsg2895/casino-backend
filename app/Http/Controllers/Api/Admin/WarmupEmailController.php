@@ -221,17 +221,37 @@ class WarmupEmailController extends Controller
             ], Response::HTTP_CONFLICT);
         }
 
-        $send = WarmupSend::create([
-            'site_id'         => $site->id,
-            'user_id'         => $request->user()?->id,
-            'template'        => $template,
-            'requested_count' => $limit,
-            'cooldown_days'   => $cooldown,
-        ]);
+        // EVERYTHING between taking the lock and dispatching must release it on
+        // failure. Without this, an exception here (a column too small for the
+        // template key, a queue that will not accept the job) left the lock held
+        // with no job in existence to free it, and every later attempt answered
+        // "a warmup run is already in progress" until the 15-minute TTL expired.
+        try {
+            $send = WarmupSend::create([
+                'site_id'         => $site->id,
+                'user_id'         => $request->user()?->id,
+                'template'        => $template,
+                'requested_count' => $limit,
+                'cooldown_days'   => $cooldown,
+            ]);
 
-        // The owner token travels with the job so only that job can release this
-        // exact lock — a slower earlier run can never free a newer one's.
-        SendWarmupCampaignJob::dispatch($send->id, $site->id, $template, $limit, $lock->owner(), $cooldown);
+            // The owner token travels with the job so only that job can release
+            // this exact lock — a slower earlier run can never free a newer one's.
+            SendWarmupCampaignJob::dispatch($send->id, $site->id, $template, $limit, $lock->owner(), $cooldown);
+        } catch (Throwable $e) {
+            $lock->release();
+
+            Log::error('Warmup run could not be queued; the run lock was released', [
+                'site_id'  => $site->id,
+                'template' => $template,
+                'error'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'ok'      => false,
+                'message' => 'The warmup run could not be queued: ' . $e->getMessage(),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
 
         Log::info('Warmup run queued', [
             'warmup_send_id' => $send->id,
@@ -262,6 +282,90 @@ class WarmupEmailController extends Controller
                     ),
             ),
         ], Response::HTTP_ACCEPTED);
+    }
+
+    /**
+     * Stop the current warmup run and free the lock.
+     *
+     * THIS IS THE RECOVERY PATH, so it is built never to fail. It is the only way
+     * back from a wedged run, and an endpoint that 500s while clearing a wedge is
+     * worse than no endpoint at all — which is exactly what happened when it
+     * queried `cancelled_at` before that column had been migrated.
+     *
+     * Ordered by importance, and each step isolated from the next:
+     *
+     *  1. FREE THE LOCK. This is what actually unblocks the operator, and it
+     *     touches only the cache — no schema, no migration, nothing to be out of
+     *     date. It happens first so that a later failure cannot prevent it.
+     *     forceRelease, not release: the owner token belongs to the job, and the
+     *     case that matters most is precisely when no job exists to hold it.
+     *  2. MARK THE RUN CANCELLED, best effort. This stops queued batches from
+     *     sending. If the column is missing (code deployed ahead of its
+     *     migration) or the database is unhappy, it is logged and skipped — the
+     *     lock is already free, so the operator is unblocked either way.
+     *
+     * Always answers 200, and says honestly which of the two steps took effect.
+     */
+    public function cancel(): JsonResponse
+    {
+        // Step 1 — the part that must always work.
+        $lockFreed = true;
+
+        try {
+            Cache::lock(SendWarmupCampaignJob::runLockKey())->forceRelease();
+        } catch (Throwable $e) {
+            $lockFreed = false;
+            Log::error('Warmup cancel: could not free the run lock', ['error' => $e->getMessage()]);
+        }
+
+        // Step 2 — best effort, never allowed to fail the request.
+        $stoppedId = null;
+        $queuedWorkStopped = false;
+
+        try {
+            $stopped = WarmupSend::query()
+                ->whereNull('cancelled_at')
+                ->latest('id')
+                ->first();
+
+            if ($stopped !== null) {
+                $stopped->update(['cancelled_at' => now()]);
+                $stoppedId = $stopped->id;
+            }
+
+            $queuedWorkStopped = true;
+        } catch (Throwable $e) {
+            // The overwhelmingly likely cause is the `cancelled_at` migration not
+            // having run yet on this environment. Report it rather than hiding it.
+            Log::warning('Warmup cancel: could not mark the run cancelled', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'ok'                  => $lockFreed,
+            'warmup_send_id'      => $stoppedId,
+            'lock_freed'          => $lockFreed,
+            'queued_work_stopped' => $queuedWorkStopped,
+            'message'             => $this->cancelMessage($lockFreed, $queuedWorkStopped, $stoppedId),
+        ], $lockFreed ? Response::HTTP_OK : Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+
+    /** Plain-language summary of what the stop actually achieved. */
+    private function cancelMessage(bool $lockFreed, bool $queuedWorkStopped, ?int $stoppedId): string
+    {
+        if (! $lockFreed) {
+            return 'The run lock could not be cleared. Check that the cache store is reachable.';
+        }
+
+        if (! $queuedWorkStopped) {
+            return 'The lock is cleared, so a new run can start. Batches already queued could not be '
+                . 'stopped — run `php artisan migrate` to enable that.';
+        }
+
+        return $stoppedId === null
+            ? 'No run was in progress. The lock has been cleared, so a new run can start.'
+            : "Run #{$stoppedId} stopped. Queued batches will not send, and a new run can start.";
     }
 
     /**

@@ -37,21 +37,24 @@ final class WarmupMailResolver
     /**
      * Templates a warmup send may use.
      *
-     * All four site templates are permitted. VERIFY carries a caveat worth
-     * knowing before selecting it: its payload is a confirmation link for a
-     * double opt-in that a seed address does not have, so the call to action
-     * resolves to nothing, and a "confirm your email" message to someone who
-     * never subscribed has the shape filters score as phishing. It is available
-     * because an operator asked for it; prefer SUBSCRIBE or PROMOTION for routine
-     * warming.
+     * A POLICY list, deliberately narrower than what {@see build()} can render.
+     * Widening or narrowing warmup is therefore a one-line change here, with no
+     * risk of leaving a branch that renders something the send would reject.
+     *
+     * Excluded on purpose:
+     *  - SUBSCRIBE — a welcome message to an address that never subscribed.
+     *  - PROMOTION_AFTER_VERIFICATION — its whole premise is a subscriber who just
+     *    confirmed their email, which a seed address never did.
+     *
+     * VERIFY carries the same objection in principle and is nevertheless included
+     * at the operator's request: its confirmation link resolves to nothing for a
+     * seed address. Prefer PROMOTION for routine warming.
      *
      * @return list<string>
      */
     public const array ALLOWED_TEMPLATES = [
-        EmailTemplateCatalog::TYPE_SUBSCRIBE,
-        EmailTemplateCatalog::TYPE_PROMOTION,
-        EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION,
         EmailTemplateCatalog::TYPE_VERIFY,
+        EmailTemplateCatalog::TYPE_PROMOTION,
     ];
 
     public function __construct(

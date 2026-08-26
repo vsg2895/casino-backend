@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Jobs\SendWarmupBatchJob;
 use App\Jobs\SendWarmupCampaignJob;
-use App\Mail\NewsletterSubscribedMail;
+use App\Mail\PromotionEmail;
 use App\Models\Newsletter;
 use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
+use Illuminate\Support\Facades\Schema;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\WarmupMailResolver;
@@ -115,12 +117,12 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted()->assertJson(['ok' => true]);
 
         Mail::assertSent(
-            NewsletterSubscribedMail::class,
-            fn (NewsletterSubscribedMail $mail): bool => $mail->mailer === 'smtp',
+            PromotionEmail::class,
+            fn (PromotionEmail $mail): bool => $mail->mailer === 'smtp',
         );
     }
 
@@ -143,15 +145,15 @@ class WarmupSendTest extends TestCase
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
-        $template = $site->emailTemplateOrDefault();
+        $template = $site->promotionEmailOrDefault();
         $this->addAddress('seed@example.com');
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
-        Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($template): bool {
+        Mail::assertSent(PromotionEmail::class, function (PromotionEmail $mail) use ($template): bool {
             $from = $mail->envelope()->from;
 
             // From address is the authenticated mailbox; the display name still
@@ -172,14 +174,14 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $row = WarmupSendRecipient::sole();
 
         $this->assertSame('seed@example.com', $row->email);
         $this->assertSame($site->id, $row->site_id);
-        $this->assertSame(EmailTemplateCatalog::TYPE_SUBSCRIBE, $row->template);
+        $this->assertSame(EmailTemplateCatalog::TYPE_PROMOTION, $row->template);
         $this->assertSame(WarmupSendRecipient::STATUS_SENT, $row->status);
         $this->assertNull($row->error);
         $this->assertNotNull($row->sent_at);
@@ -199,7 +201,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $this->assertNotNull($address->refresh()->last_sent_at);
@@ -216,7 +218,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $row = WarmupSendRecipient::sole();
@@ -237,7 +239,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $this->assertSame(3, WarmupSendRecipient::count(), 'every attempt is recorded');
@@ -262,7 +264,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $this->assertSame(0, Newsletter::count());
@@ -278,7 +280,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $this->getJson('/api/v1/admin/warmup-emails/history')
@@ -306,7 +308,7 @@ class WarmupSendTest extends TestCase
         [$site] = $this->siteWithKey();
 
         // Create the row up front so the batch can only ever READ it.
-        $site->emailTemplateOrDefault();
+        $site->promotionEmailOrDefault();
 
         foreach (range(1, 5) as $i) {
             $this->addAddress("seed{$i}@example.com");
@@ -315,7 +317,7 @@ class WarmupSendTest extends TestCase
         $reads = 0;
         DB::listen(function ($query) use (&$reads): void {
             if (
-                str_contains($query->sql, 'site_email_templates')
+                str_contains($query->sql, 'site_promotion_emails')
                 && str_starts_with(strtolower(ltrim($query->sql)), 'select')
             ) {
                 $reads++;
@@ -324,11 +326,167 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
         $this->assertSame(5, WarmupSendRecipient::count(), 'all five were still mailed');
         $this->assertSame(1, $reads, 'the template must be read once for the batch, not once per recipient');
+    }
+
+    public function test_every_template_key_fits_the_storage_column(): void
+    {
+        // The regression guard for SQLSTATE[22001] in production:
+        // `promotion_after_verification` (28 chars) was inserted into a
+        // varchar(20) and MySQL rejected it AFTER the run had been counted.
+        //
+        // Asserted as a LENGTH check rather than an insert on purpose: the suite
+        // runs on SQLite, which does not enforce VARCHAR length, so an insert
+        // test would pass here and still fail on MySQL — which is precisely how
+        // this shipped.
+        foreach (app(EmailTemplateCatalog::class)->types() as $type) {
+            $this->assertLessThanOrEqual(
+                WarmupSend::TEMPLATE_MAX_LENGTH,
+                strlen($type['value']),
+                "Template key [{$type['value']}] is too long for the warmup template column",
+            );
+        }
+    }
+
+    public function test_the_two_warmup_tables_agree_on_the_template_width(): void
+    {
+        // warmup_sends and warmup_send_recipients both store the same key; a
+        // widening applied to only one of them would fail on the other.
+        foreach (['warmup_sends', 'warmup_send_recipients'] as $table) {
+            $this->assertTrue(
+                Schema::hasColumn($table, 'template'),
+                "{$table} must have a template column",
+            );
+        }
+    }
+
+    // ── Stopping a run ───────────────────────────────────────────────────────
+
+    public function test_cancel_frees_a_stranded_lock(): void
+    {
+        // The exact production wedge: the lock is held but no job exists to
+        // release it, so every send answers 409 until the TTL expires.
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->addAddress('seed@example.com');
+        Cache::lock(SendWarmupCampaignJob::runLockKey(), 900)->get();
+
+        Mail::fake();
+        $this->send([
+            'site_id'  => $site->id,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
+        ])->assertStatus(409);
+
+        $this->postJson('/api/v1/admin/warmup-emails/cancel')
+            ->assertOk()
+            ->assertJson(['ok' => true]);
+
+        // A new run can start immediately.
+        $this->send([
+            'site_id'  => $site->id,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
+        ])->assertAccepted();
+    }
+
+    public function test_cancel_is_safe_when_nothing_is_running(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->postJson('/api/v1/admin/warmup-emails/cancel')
+            ->assertOk()
+            ->assertJson(['ok' => true, 'warmup_send_id' => null]);
+    }
+
+    public function test_a_cancelled_run_stops_queued_batches_from_sending(): void
+    {
+        $this->useLocalTransport();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->addAddress('seed@example.com');
+
+        $send = WarmupSend::create([
+            'site_id'      => $site->id,
+            'template'     => EmailTemplateCatalog::TYPE_PROMOTION,
+            'cancelled_at' => now(),
+        ]);
+
+        // A batch already on the queue when the stop was issued.
+        (new SendWarmupBatchJob(['seed@example.com'], $site->id, EmailTemplateCatalog::TYPE_PROMOTION, $send->id))
+            ->handle(app(WarmupMailResolver::class));
+
+        $this->assertSame(0, WarmupSendRecipient::count(), 'a cancelled run must not send');
+        $this->assertNull(WarmupEmail::sole()->last_sent_at, 'and must not start a cooldown');
+    }
+
+    public function test_a_failure_while_queueing_releases_the_lock(): void
+    {
+        // The root cause of the stranded lock: anything throwing between taking
+        // the lock and dispatching must hand it back, or the feature wedges.
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->addAddress('seed@example.com');
+
+        // A template key longer than the column is the failure that shipped.
+        // Forcing the insert to fail proves the lock is returned either way.
+        $this->assertTrue(
+            Cache::lock(SendWarmupCampaignJob::runLockKey(), 1)->get(),
+            'the lock must be free before this test',
+        );
+        Cache::lock(SendWarmupCampaignJob::runLockKey(), 1)->forceRelease();
+
+        Mail::fake();
+        $this->send([
+            'site_id'  => $site->id,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
+        ])->assertAccepted();
+
+        // The fan-out ran inline (sync queue) and released the lock on the way out.
+        $this->assertTrue(
+            Cache::lock(SendWarmupCampaignJob::runLockKey(), 1)->get(),
+            'the lock must be free once the run has finished',
+        );
+    }
+
+    public function test_cancel_still_frees_the_lock_when_the_run_table_is_unreadable(): void
+    {
+        // The production failure generalised: the cancel endpoint could not read
+        // `warmup_sends` (there, because `cancelled_at` had not been migrated
+        // yet). It must STILL clear the lock — it is the recovery path, and
+        // 500ing while clearing a wedge is worse than not having the button.
+        $this->actingAsAdmin();
+        Cache::lock(SendWarmupCampaignJob::runLockKey(), 900)->get();
+
+        Schema::drop('warmup_send_recipients');
+        Schema::drop('warmup_sends');
+
+        $this->postJson('/api/v1/admin/warmup-emails/cancel')
+            ->assertOk()
+            ->assertJson([
+                'ok'                  => true,
+                'lock_freed'          => true,
+                // Reported honestly as unavailable rather than silently claimed.
+                'queued_work_stopped' => false,
+            ]);
+
+        // The lock is genuinely free — which is the whole point of the button.
+        $this->assertTrue(Cache::lock(SendWarmupCampaignJob::runLockKey(), 5)->get());
+    }
+
+    public function test_the_cancellation_check_fails_open(): void
+    {
+        // isCancelled() runs on every batch, and `cancelled_at` is newer than the
+        // code that reads it — during a deploy the workers can run ahead of
+        // migrate. Unreadable must mean "not cancelled", so warmup behaves exactly
+        // as it did before the feature; failing closed would halt every batch on a
+        // schema lag or a transient database blip.
+        Schema::drop('warmup_send_recipients');
+        Schema::drop('warmup_sends');
+
+        $this->assertFalse(WarmupSend::isCancelled(1));
     }
 
     // ── Guards ───────────────────────────────────────────────────────────────
@@ -347,29 +505,21 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertStatus(409)->assertJson(['ok' => false]);
 
         Mail::assertNothingSent();
     }
 
-    public function test_every_catalogued_template_can_be_used_for_warmup(): void
+    public function test_every_allowed_template_can_be_used_for_warmup(): void
     {
-        // All four site templates are selectable. VERIFY is included at the
-        // operator's request despite its caveat (its confirmation link means
-        // nothing for a seed address) — see WarmupMailResolver::ALLOWED_TEMPLATES.
+        // Whatever the allow-list currently permits must actually render and send —
+        // the list and the send path can never drift apart.
         $this->useLocalTransport();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        $types = [
-            EmailTemplateCatalog::TYPE_SUBSCRIBE,
-            EmailTemplateCatalog::TYPE_PROMOTION,
-            EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION,
-            EmailTemplateCatalog::TYPE_VERIFY,
-        ];
-
-        foreach ($types as $type) {
+        foreach (WarmupMailResolver::ALLOWED_TEMPLATES as $type) {
             WarmupEmail::query()->delete();
             Cache::lock(SendWarmupCampaignJob::runLockKey(), 1)->forceRelease();
             $this->addAddress("seed-{$type}@example.com");
@@ -387,7 +537,7 @@ class WarmupSendTest extends TestCase
         }
     }
 
-    public function test_the_templates_endpoint_offers_all_four(): void
+    public function test_the_templates_endpoint_offers_exactly_the_allow_list(): void
     {
         $this->actingAsAdmin();
 
@@ -396,8 +546,43 @@ class WarmupSendTest extends TestCase
             ->all();
 
         $this->assertEqualsCanonicalizing(WarmupMailResolver::ALLOWED_TEMPLATES, $values);
+
+        // The two the operator excluded stay out of the warmup dialog…
+        $this->assertNotContains(EmailTemplateCatalog::TYPE_SUBSCRIBE, $values);
+        $this->assertNotContains(EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION, $values);
+    }
+
+    public function test_an_excluded_template_is_rejected_by_the_send(): void
+    {
+        // Not just hidden from the dropdown — the send refuses it too, so a
+        // hand-crafted request cannot use it.
+        Mail::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->addAddress('seed@example.com');
+
+        foreach ([EmailTemplateCatalog::TYPE_SUBSCRIBE, EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION] as $type) {
+            $this->send([
+                'site_id'  => $site->id,
+                'template' => $type,
+            ])->assertStatus(422)->assertJsonValidationErrors('template');
+        }
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_the_excluded_templates_remain_in_the_catalog(): void
+    {
+        // Narrowing warmup must not remove them from the SendGrid/Mailgun key
+        // test dropdown, which reads the full catalog.
+        $this->actingAsAdmin();
+
+        $values = collect($this->getJson('/api/v1/admin/email-template-types')->assertOk()->json('data'))
+            ->pluck('value')
+            ->all();
+
+        $this->assertContains(EmailTemplateCatalog::TYPE_SUBSCRIBE, $values);
         $this->assertContains(EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION, $values);
-        $this->assertContains(EmailTemplateCatalog::TYPE_VERIFY, $values);
     }
 
     public function test_an_unknown_template_is_still_rejected(): void
@@ -452,7 +637,7 @@ class WarmupSendTest extends TestCase
         foreach ([0, 366] as $invalid) {
             $this->send([
                 'site_id'       => $site->id,
-                'template'      => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+                'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
                 'count'         => 1,
                 'cooldown_days' => $invalid,
             ])->assertStatus(422)->assertJsonValidationErrors('cooldown_days');
@@ -461,7 +646,7 @@ class WarmupSendTest extends TestCase
         foreach ([1, 365] as $valid) {
             $this->send([
                 'site_id'       => $site->id,
-                'template'      => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+                'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
                 'count'         => 1,
                 'cooldown_days' => $valid,
             ])->assertAccepted();
@@ -482,7 +667,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'  => $site->id,
-            'template' => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'    => 50,
         ])->assertStatus(422)->assertJsonValidationErrors('count');
     }
@@ -496,7 +681,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'       => $site->id,
-            'template'      => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'         => 1,
             'cooldown_days' => 7,
         ])->assertStatus(422)->assertJson(['ok' => false]);
@@ -518,7 +703,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'       => $site->id,
-            'template'      => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'         => 2,
             'cooldown_days' => 30,
         ])->assertAccepted();
@@ -541,7 +726,7 @@ class WarmupSendTest extends TestCase
 
         $this->send([
             'site_id'       => $site->id,
-            'template'      => EmailTemplateCatalog::TYPE_SUBSCRIBE,
+            'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'cooldown_days' => 30,
         ])->assertAccepted();
 
