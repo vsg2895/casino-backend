@@ -30,6 +30,11 @@ class UpdateSitePromotionEmailRequest extends FormRequest
             'subject'           => ['required', 'string', 'max:200'],
             // The opt-out link is a legal requirement on marketing mail, so its
             // label is the one piece of body copy that cannot be removed.
+            // Footer identity — address, monitored reply mailbox, copyright.
+            'postal_address'    => ['nullable', 'string', 'max:300'],
+            'contact_email'     => ['nullable', 'string', 'max:180'],
+            'copyright_text'    => ['nullable', 'string', 'max:200'],
+
             'unsubscribe_label' => ['required', 'string', 'max:80'],
 
             // ── Content blocks: every one is independently removable ─────

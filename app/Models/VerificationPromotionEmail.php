@@ -28,6 +28,18 @@ class VerificationPromotionEmail extends SitePromotionEmail
     protected $table = 'verification_promotion_emails';
 
     /** Upper bound for the delay: 30 days in minutes. See the update request. */
+    /**
+     * Intro paragraph sizing, in px.
+     *
+     * Declared here so the Form Request rule, the render fallback and the admin's
+     * number input all read ONE source. The range is deliberately narrow: body
+     * copy below 12px is unreadable on a phone, and above 32px stops being a
+     * paragraph.
+     */
+    public const int INTRO_TEXT_DEFAULT_SIZE = 16;
+    public const int INTRO_TEXT_MIN_SIZE = 12;
+    public const int INTRO_TEXT_MAX_SIZE = 32;
+
     public const int MAX_DELAY_MINUTES = 43200;
 
     /**
@@ -64,7 +76,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
      */
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url', 'hero_url',
-        'top_button_text', 'heading', 'cta_button_text', 'cta_button_url', 'unsubscribe_label',
+        'top_button_text', 'top_button_url', 'heading', 'cta_button_text', 'cta_button_url', 'unsubscribe_label',
         'header_brand_text', 'eyebrow_text', 'confirmation_text',
         'highlight_text', 'copyright_text',
         // Footer legal/contact lines
@@ -102,8 +114,11 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'hero_image_url',
         'hero_url',
         'top_button_text',
+        'top_button_url',
         'heading',
         'intro_text',
+        'intro_text_font_size',
+        'intro_text_background_color',
         'secondary_text',
         'cta_button_text',
         'cta_button_url',
@@ -157,7 +172,8 @@ class VerificationPromotionEmail extends SitePromotionEmail
         return [
             'active'          => 'boolean',
             'delay_minutes'   => 'integer',
-            'preview_site_id' => 'integer',
+            'preview_site_id'      => 'integer',
+            'intro_text_font_size' => 'integer',
             'hidden_blocks'   => 'array',
             'sendgrid_key_id' => 'integer',
             'mailgun_key_id'  => 'integer',
@@ -303,6 +319,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'hero_image_url',
         'hero_url',
         'top_button_text',
+        'top_button_url',
         'highlight_text',
         'cta_button_text',
         'cta_button_url',
@@ -386,6 +403,16 @@ class VerificationPromotionEmail extends SitePromotionEmail
             $value = trim((string) $this->{$field});
             $out[$field] = $value !== '' ? $value : $default;
         }
+
+        // Intro styling. The SIZE falls back to the layout's own 16px so the
+        // Blade never emits an empty font-size; the BACKGROUND stays null when
+        // unset, because null is what means "no panel" rather than "some default
+        // colour". Neither takes placeholders.
+        $size = (int) ($this->intro_text_font_size ?? 0);
+        $out['intro_text_font_size'] = $size > 0 ? $size : self::INTRO_TEXT_DEFAULT_SIZE;
+
+        $background = trim((string) $this->intro_text_background_color);
+        $out['intro_text_background_color'] = $background !== '' ? $background : null;
 
         // Footer navigation links: substitute placeholders in each label + url,
         // drop any entry missing either half. Left as raw strings — Blade escapes

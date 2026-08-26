@@ -27,6 +27,13 @@ class SiteVerifyEmailResource extends JsonResource
             'offer_text'        => $this->offer_text,
             'spam_notice'       => $this->spam_notice,
             'footer_note'       => $this->footer_note,
+            'postal_address'    => $this->postal_address,
+            'contact_email'     => $this->contact_email,
+            'hidden_blocks'     => array_values(array_keys(array_filter(
+                $this->visibleBlocks(),
+                static fn (bool $visible): bool => ! $visible,
+            ))),
+            'optional_blocks'   => SiteVerifyEmail::OPTIONAL_BLOCKS,
             'unsubscribe_label' => $this->unsubscribe_label,
             // Whether the footer link block is rendered. The label above is kept
             // either way, so the admin can restore the exact same link.

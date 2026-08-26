@@ -327,7 +327,9 @@ class VerificationPromotionEyebrowTest extends TestCase
         // this is the guard against the pattern spreading by accident.
         [$site] = $this->siteWithKey();
 
-        foreach ([$site->emailTemplateOrDefault(), $site->verifyEmailOrDefault()] as $template) {
+        // The verify template gained the same mechanism when its footer identity
+        // block was added, so only the subscribe template is expected to lack it.
+        foreach ([$site->emailTemplateOrDefault()] as $template) {
             $this->assertFalse(
                 $template->isFillable('hidden_blocks'),
                 $template::class . ' must not gain the optional-block list',

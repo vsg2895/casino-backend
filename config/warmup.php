@@ -72,13 +72,20 @@ return [
     'default_cooldown_days' => 1,
 
     /*
-    | Site pre-selected in the "Send warmup" dialog.
+    | The ONE site warmup sends as.
+    |
+    | Warmup exists to build the reputation of a single sending mailbox, and the
+    | operator warms it through one brand only — so this is pinned rather than
+    | chosen per run. The admin shows it read-only and the API does not accept a
+    | site at all, which means a stale admin bundle cannot send as a different
+    | brand either.
     |
     | A slug rather than an id, so it survives a reseed (ids move, slugs do not),
-    | and env-overridable so the choice is an operator setting rather than a brand
-    | name baked into the admin bundle. An unknown or unregistered slug simply
-    | falls back to the first site — never an error.
+    | and env-overridable so the choice stays an operator setting instead of a
+    | brand name baked into the code. If it names no active site the send fails
+    | loudly: rendering some other brand's template would put the wrong branding
+    | in real inboxes, which is worse than not sending.
     */
-    'default_site_slug' => env('WARMUP_DEFAULT_SITE_SLUG', 'winpalack'),
+    'site_slug' => env('WARMUP_SITE_SLUG', 'idevaffiliation'),
 
 ];

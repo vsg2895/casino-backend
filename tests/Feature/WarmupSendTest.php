@@ -112,11 +112,10 @@ class WarmupSendTest extends TestCase
 
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted()->assertJson(['ok' => true]);
 
@@ -144,12 +143,11 @@ class WarmupSendTest extends TestCase
 
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $template = $site->promotionEmailOrDefault();
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -169,11 +167,10 @@ class WarmupSendTest extends TestCase
     {
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -194,13 +191,12 @@ class WarmupSendTest extends TestCase
     {
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $address = $this->addAddress('seed@example.com');
 
         $this->assertNull($address->last_sent_at);
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -213,11 +209,10 @@ class WarmupSendTest extends TestCase
         // than serving an N-day cooldown it never earned.
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $address = $this->addAddress('bad@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -232,13 +227,12 @@ class WarmupSendTest extends TestCase
     {
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('good1@example.com');
         $this->addAddress('bad@example.com');
         $this->addAddress('good2@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -259,11 +253,10 @@ class WarmupSendTest extends TestCase
         // campaign. This is the regression guard for that.
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -274,12 +267,11 @@ class WarmupSendTest extends TestCase
     {
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('good@example.com');
         $this->addAddress('bad@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -305,7 +297,7 @@ class WarmupSendTest extends TestCase
         // left 100 model graphs behind. This is the guard against that returning.
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
 
         // Create the row up front so the batch can only ever READ it.
         $site->promotionEmailOrDefault();
@@ -325,7 +317,6 @@ class WarmupSendTest extends TestCase
         });
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -371,13 +362,12 @@ class WarmupSendTest extends TestCase
         // The exact production wedge: the lock is held but no job exists to
         // release it, so every send answers 409 until the TTL expires.
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
         Cache::lock(SendWarmupCampaignJob::runLockKey(), 900)->get();
 
         Mail::fake();
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertStatus(409);
 
@@ -387,7 +377,6 @@ class WarmupSendTest extends TestCase
 
         // A new run can start immediately.
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
     }
@@ -405,11 +394,10 @@ class WarmupSendTest extends TestCase
     {
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $send = WarmupSend::create([
-            'site_id'      => $site->id,
             'template'     => EmailTemplateCatalog::TYPE_PROMOTION,
             'cancelled_at' => now(),
         ]);
@@ -427,7 +415,7 @@ class WarmupSendTest extends TestCase
         // The root cause of the stranded lock: anything throwing between taking
         // the lock and dispatching must hand it back, or the feature wedges.
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         // A template key longer than the column is the failure that shipped.
@@ -440,7 +428,6 @@ class WarmupSendTest extends TestCase
 
         Mail::fake();
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertAccepted();
 
@@ -498,13 +485,12 @@ class WarmupSendTest extends TestCase
         // and app servers.
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         Cache::lock(SendWarmupCampaignJob::runLockKey(), 900)->get();
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
         ])->assertStatus(409)->assertJson(['ok' => false]);
 
@@ -517,7 +503,7 @@ class WarmupSendTest extends TestCase
         // the list and the send path can never drift apart.
         $this->useLocalTransport();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
 
         foreach (WarmupMailResolver::ALLOWED_TEMPLATES as $type) {
             WarmupEmail::query()->delete();
@@ -525,7 +511,6 @@ class WarmupSendTest extends TestCase
             $this->addAddress("seed-{$type}@example.com");
 
             $this->send([
-                'site_id'  => $site->id,
                 'template' => $type,
             ])->assertAccepted();
 
@@ -558,12 +543,11 @@ class WarmupSendTest extends TestCase
         // hand-crafted request cannot use it.
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         foreach ([EmailTemplateCatalog::TYPE_SUBSCRIBE, EmailTemplateCatalog::TYPE_PROMOTION_AFTER_VERIFICATION] as $type) {
             $this->send([
-                'site_id'  => $site->id,
                 'template' => $type,
             ])->assertStatus(422)->assertJsonValidationErrors('template');
         }
@@ -589,54 +573,83 @@ class WarmupSendTest extends TestCase
     {
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => 'not_a_real_template',
         ])->assertStatus(422)->assertJsonValidationErrors('template');
 
         Mail::assertNothingSent();
     }
 
-    public function test_the_send_dialog_defaults_to_the_configured_site(): void
+    public function test_the_pinned_site_is_published_for_the_dialog(): void
     {
-        // The slug lives in config, not in the admin bundle, so the preselected
-        // site is an operator setting rather than a brand name baked into the SPA.
+        // The slug lives in config, not in the admin bundle, so the site warmup
+        // sends as is an operator setting rather than a brand name baked into the SPA.
         $this->actingAsAdmin();
-        $this->siteWithKey(['slug' => 'first-site', 'name' => 'First Site']);
-        [$preferred] = $this->siteWithKey(['slug' => 'winpalack', 'name' => 'Winpalack']);
+        $this->siteWithKey(['slug' => 'some-other-site', 'name' => 'Other Site']);
+        [$pinned] = $this->siteWithKey(['slug' => 'idevaffiliation', 'name' => 'Idev Affiliation']);
 
-        config()->set('warmup.default_site_slug', 'winpalack');
+        config()->set('warmup.site_slug', 'idevaffiliation');
 
         $this->getJson('/api/v1/admin/warmup-emails/recipients')
             ->assertOk()
-            ->assertJsonPath('data.default_site_id', $preferred->id);
+            ->assertJsonPath('data.site_id', $pinned->id)
+            ->assertJsonPath('data.site_name', 'Idev Affiliation')
+            ->assertJsonPath('data.site_slug', 'idevaffiliation');
     }
 
-    public function test_an_unknown_default_site_slug_falls_back_to_no_preference(): void
+    public function test_the_send_ignores_any_site_supplied_by_the_caller(): void
     {
+        // The point of pinning: a hand-crafted request naming another brand must
+        // not be able to send that brand's template.
+        $this->useLocalTransport();
         $this->actingAsAdmin();
-        $this->siteWithKey();
+        [$other] = $this->siteWithKey(['slug' => 'some-other-site', 'name' => 'Other Site']);
+        [$pinned] = $this->siteWithKey(['slug' => 'idevaffiliation', 'name' => 'Idev Affiliation']);
 
-        config()->set('warmup.default_site_slug', 'a-site-that-does-not-exist');
+        config()->set('warmup.site_slug', 'idevaffiliation');
+        $this->addAddress('seed@example.com');
 
-        $this->getJson('/api/v1/admin/warmup-emails/recipients')
-            ->assertOk()
-            ->assertJsonPath('data.default_site_id', null);
+        $this->postJson('/api/v1/admin/warmup-emails/send', [
+            'site_id'  => $other->id,   // ignored
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
+        ])->assertAccepted();
+
+        $this->assertSame($pinned->id, WarmupSendRecipient::sole()->site_id);
+        $this->assertSame($pinned->id, WarmupSend::sole()->site_id);
+    }
+
+    public function test_a_run_is_refused_when_the_pinned_site_does_not_exist(): void
+    {
+        // Deliberately NOT a fallback to some other site: rendering another
+        // brand's template would put the wrong branding in real inboxes, which is
+        // worse than not sending.
+        Mail::fake();
+        $this->actingAsAdmin();
+        $this->siteWithKey(['slug' => 'some-other-site']);
+        $this->addAddress('seed@example.com');
+
+        config()->set('warmup.site_slug', 'a-site-that-does-not-exist');
+
+        $this->postJson('/api/v1/admin/warmup-emails/send', [
+            'template' => EmailTemplateCatalog::TYPE_PROMOTION,
+        ])->assertStatus(422)->assertJson(['ok' => false]);
+
+        Mail::assertNothingSent();
+        $this->assertSame(0, WarmupSend::count());
     }
 
     public function test_cooldown_must_be_within_one_and_three_hundred_and_sixty_five_days(): void
     {
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         foreach ([0, 366] as $invalid) {
             $this->send([
-                'site_id'       => $site->id,
                 'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
                 'count'         => 1,
                 'cooldown_days' => $invalid,
@@ -645,7 +658,6 @@ class WarmupSendTest extends TestCase
 
         foreach ([1, 365] as $valid) {
             $this->send([
-                'site_id'       => $site->id,
                 'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
                 'count'         => 1,
                 'cooldown_days' => $valid,
@@ -662,11 +674,10 @@ class WarmupSendTest extends TestCase
         // asking for 50 when a cooldown leaves 12 eligible is a valid request.
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('seed@example.com');
 
         $this->send([
-            'site_id'  => $site->id,
             'template' => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'    => 50,
         ])->assertStatus(422)->assertJsonValidationErrors('count');
@@ -676,11 +687,10 @@ class WarmupSendTest extends TestCase
     {
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('warmed@example.com', '2026-08-27 09:00:00');
 
         $this->send([
-            'site_id'       => $site->id,
             'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'         => 1,
             'cooldown_days' => 7,
@@ -697,12 +707,11 @@ class WarmupSendTest extends TestCase
     {
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('a@example.com');
         $this->addAddress('b@example.com');
 
         $this->send([
-            'site_id'       => $site->id,
             'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'count'         => 2,
             'cooldown_days' => 30,
@@ -721,11 +730,10 @@ class WarmupSendTest extends TestCase
         // header row honestly reflects that no filter was applied.
         Mail::fake();
         $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
+        [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
         $this->addAddress('a@example.com', '2026-08-27 09:00:00');
 
         $this->send([
-            'site_id'       => $site->id,
             'template'      => EmailTemplateCatalog::TYPE_PROMOTION,
             'cooldown_days' => 30,
         ])->assertAccepted();

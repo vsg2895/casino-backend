@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Newsletter;
+use App\Models\VerificationPromotionEmail;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 
@@ -24,6 +25,8 @@ class VerifyController extends Controller
 {
     public function verify(string $token): JsonResponse
     {
+        $justVerified = false;
+
         if (strlen($token) === 64) {
             $newsletter = Newsletter::where('unsubscribe_token', $token)->first();
 
@@ -35,9 +38,28 @@ class VerifyController extends Controller
                     'verified'    => true,
                     'verified_at' => Carbon::now(),
                 ])->save();
+
+                $justVerified = true;
             }
         }
 
-        return response()->json(['ok' => true]);
+        return response()->json([
+            'ok' => true,
+
+            // Whether the landing page may tell this subscriber a bonus email is
+            // on its way. BOTH conditions are required, and each rules out a way
+            // of lying to them:
+            //
+            //  - $justVerified — only the click that actually verified them
+            //    triggers a send. Re-opening the link, or an unknown token, must
+            //    not promise a second bonus that will never arrive.
+            //  - the feature being active — SendVerificationPromotionJob sends
+            //    nothing while it is switched off, so the page must not mention
+            //    an email at all.
+            //
+            // Short-circuited so the template row is only touched on a genuine
+            // first verification.
+            'bonus_email_expected' => $justVerified && VerificationPromotionEmail::current()->active,
+        ]);
     }
 }

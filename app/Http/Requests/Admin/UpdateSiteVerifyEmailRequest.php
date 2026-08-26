@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\SiteVerifyEmail;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateSiteVerifyEmailRequest extends FormRequest
 {
@@ -28,6 +30,15 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
             'offer_text'        => ['nullable', 'string', 'max:1000'],
             'spam_notice'       => ['nullable', 'string', 'max:1000'],
             'footer_note'       => ['nullable', 'string', 'max:1000'],
+            // Footer identity — a physical address and a monitored reply mailbox.
+            'postal_address'    => ['nullable', 'string', 'max:300'],
+            'contact_email'     => ['nullable', 'string', 'max:180'],
+
+            // Which optional blocks are switched OFF. Visibility only — each keeps
+            // its own text, which is what makes removal reversible.
+            'hidden_blocks'   => ['sometimes', 'array'],
+            'hidden_blocks.*' => ['string', Rule::in(SiteVerifyEmail::OPTIONAL_BLOCKS)],
+
             'unsubscribe_label' => ['required', 'string', 'max:80'],
             // `sometimes`, not `required`: an existing caller that does not send
             // the key leaves the stored value alone and keeps its current output.

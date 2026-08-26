@@ -73,30 +73,71 @@ class SendVerificationPromotionJob implements ShouldQueue
     {
         $config = VerificationPromotionEmail::current();
 
+        // EVERY gate below logs WHY it stopped.
+        //
+        // They used to return silently, which made "the promotion is not
+        // sending" undiagnosable in production: the sweep would report a job
+        // queued, the worker would report it processed, and the subscriber would
+        // get nothing, with no line anywhere saying which check refused. Five
+        // different causes looked identical from the outside. Each is now
+        // distinguishable from the log alone.
+        //
+        // Debug level, not warning: on a healthy system the "already claimed"
+        // branch is the normal outcome of a retry, and warning-level noise for
+        // expected behaviour trains people to ignore the channel.
+
         // Re-checked at send time, not just at dispatch: the admin may have
         // switched the feature off while this job sat in the queue.
         if (! $config->active) {
+            $this->skipped('the feature was switched off after this job was queued');
+
             return;
         }
 
         $newsletter = Newsletter::with('site')->find($this->newsletterId);
 
-        if ($newsletter === null || $newsletter->site === null) {
+        if ($newsletter === null) {
+            $this->skipped('the subscriber row no longer exists');
+
+            return;
+        }
+
+        if ($newsletter->site === null) {
+            // Sites soft-delete, so this is reachable without the row vanishing.
+            $this->skipped('the subscriber\'s site is missing or deleted', $newsletter->email);
+
             return;
         }
 
         // Re-verify every precondition here rather than trusting the sweep that
         // queued us — the row may have changed in between.
-        if (! $newsletter->verified || $newsletter->verification_promotion_sent_at !== null) {
+        if (! $newsletter->verified) {
+            $this->skipped('the subscriber is not verified', $newsletter->email);
+
+            return;
+        }
+
+        if ($newsletter->verification_promotion_sent_at !== null) {
+            // The normal outcome of a retry, and of two sweeps overlapping.
+            $this->skipped('the promotion was already claimed for this subscriber', $newsletter->email);
+
             return;
         }
 
         if ($this->delayNotElapsed($newsletter, $config)) {
+            $this->skipped(sprintf(
+                'the %d-minute delay has not elapsed (verified_at %s)',
+                (int) $config->delay_minutes,
+                $newsletter->verified_at?->toDateTimeString() ?? 'null',
+            ), $newsletter->email);
+
             return;
         }
 
         // Global opt-out: any unsubscribe, of any template, stops this send.
         if (Unsubscribe::hasAny($newsletter->site_id, $newsletter->email)) {
+            $this->skipped('the address has opted out of at least one stream', $newsletter->email);
+
             return;
         }
 
@@ -182,6 +223,21 @@ class SendVerificationPromotionJob implements ShouldQueue
      * A NULL verified_at (never confirmed, or a row predating the column) is
      * treated as "not elapsed", so it can never be sent to.
      */
+    /**
+     * Record why this subscriber was not sent to.
+     *
+     * One line, one reason, always naming the subscriber — so "why did MY
+     * address get nothing" is answerable from the log without reproducing it.
+     */
+    private function skipped(string $reason, ?string $email = null): void
+    {
+        Log::debug('Post-verification promotion skipped', [
+            'newsletter_id' => $this->newsletterId,
+            'email'         => $email,
+            'reason'        => $reason,
+        ]);
+    }
+
     private function delayNotElapsed(Newsletter $newsletter, VerificationPromotionEmail $config): bool
     {
         if ($newsletter->verified_at === null) {

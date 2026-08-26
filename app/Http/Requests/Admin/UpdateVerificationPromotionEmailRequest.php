@@ -53,6 +53,10 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'hero_image_url'    => ['nullable', 'url', 'max:500'],
             'hero_url'          => ['nullable', 'string', 'max:500'],
             'top_button_text'   => ['nullable', 'string', 'max:80'],
+            // Where the TOP button points. Plain string, not `url`, for the same
+            // reason hero_url and cta_button_url are. Empty falls back to
+            // hero_url, then the site.
+            'top_button_url'    => ['nullable', 'string', 'max:500'],
             'cta_button_text'   => ['nullable', 'string', 'max:80'],
             // Where the CTA points. A plain string, not `url`, for the same
             // reason hero_url is: affiliate destinations carry tracking macros
@@ -61,6 +65,15 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'cta_button_url'    => ['nullable', 'string', 'max:500'],
             'heading'           => ['nullable', 'string', 'max:150'],
             'intro_text'        => ['nullable', 'string', 'max:1000'],
+            // Intro styling. Bounds come from the model so this rule, the render
+            // fallback and the admin input cannot disagree. Null for either means
+            // "as before": default size, no panel.
+            'intro_text_font_size' => [
+                'nullable', 'integer',
+                'min:' . VerificationPromotionEmail::INTRO_TEXT_MIN_SIZE,
+                'max:' . VerificationPromotionEmail::INTRO_TEXT_MAX_SIZE,
+            ],
+            'intro_text_background_color' => ['nullable', 'string', $hex],
             'secondary_text'    => ['nullable', 'string', 'max:1000'],
             'disclaimer_text'   => ['nullable', 'string', 'max:1000'],
 
@@ -179,6 +192,11 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
             'delay_minutes.max'     => 'The delay cannot exceed 30 days (43200 minutes).',
             'button_color.regex'    => 'The button color must be a valid hex color (e.g. #75B636).',
             'accent_color.regex'    => 'The accent color must be a valid hex color (e.g. #f3a333).',
+            'intro_text_font_size.min' => 'The intro text size must be at least '
+                . VerificationPromotionEmail::INTRO_TEXT_MIN_SIZE . 'px.',
+            'intro_text_font_size.max' => 'The intro text size cannot exceed '
+                . VerificationPromotionEmail::INTRO_TEXT_MAX_SIZE . 'px.',
+            'intro_text_background_color.regex' => 'The intro background must be a valid hex color (e.g. #f3f4f6).',
         ];
     }
 }

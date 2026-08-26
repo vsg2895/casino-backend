@@ -14,9 +14,10 @@ use Illuminate\Validation\Validator;
 /**
  * The warmup send.
  *
- * Subject and body are gone: the message is a real site email template, chosen by
- * (site, template) and rendered at send time, so warmup traffic looks like the
- * operator's genuine mail instead of hand-typed prose.
+ * Subject and body are gone: the message is a real site email template rendered at
+ * send time, so warmup traffic looks like the operator's genuine mail instead of
+ * hand-typed prose. The SITE is not a parameter — warmup is pinned to
+ * config('warmup.site_slug') and the controller resolves it.
  *
  * `count` is OPTIONAL. Omitted (or null) means "every address on the list"; a
  * number takes that many, MOST RECENTLY ADDED first.
@@ -38,7 +39,8 @@ class SendWarmupEmailsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'site_id' => ['required', 'integer', Rule::exists('sites', 'id')->whereNull('deleted_at')],
+            // No site_id: warmup is pinned to config('warmup.site_slug') and the
+            // endpoint resolves it itself, so a caller cannot pick a brand.
 
             // Whitelist comes from the resolver, so the allowed set is declared
             // in exactly one place — the dropdown, this rule and the send path
@@ -64,8 +66,6 @@ class SendWarmupEmailsRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'site_id.required'  => 'Choose which site’s template to send.',
-            'site_id.exists'    => 'That site no longer exists.',
             'template.required' => 'Choose which email template to send.',
             'template.in'       => 'That template cannot be used for a warmup send.',
             'count.min'         => 'Enter at least 1 recipient, or leave it empty to send to everyone.',

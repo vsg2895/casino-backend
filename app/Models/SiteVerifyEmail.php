@@ -33,8 +33,11 @@ class SiteVerifyEmail extends Model
         'offer_text',
         'spam_notice',
         'footer_note',
+        'postal_address',
+        'contact_email',
         'unsubscribe_label',
         'unsubscribe_enabled',
+        'hidden_blocks',
         'copyright_text',
         'accent_color',
         'active',
@@ -44,6 +47,7 @@ class SiteVerifyEmail extends Model
     {
         return [
             'unsubscribe_enabled' => 'boolean',
+            'hidden_blocks'       => 'array',
             'active'              => 'boolean',
         ];
     }
@@ -73,6 +77,9 @@ class SiteVerifyEmail extends Model
             'offer_text'        => 'This makes sure we send your offers to the right inbox.',
             'spam_notice'       => "If you didn't request this, you can safely ignore this email.",
             'footer_note'       => 'You received this email because an address was registered at {{site_name}}.',
+            'postal_address'    => '123 Example Street, City 00000, Country',
+            // A MONITORED mailbox that accepts replies — never no-reply@.
+            'contact_email'     => 'info@' . $site->domain,
             'unsubscribe_label' => 'Unsubscribe',
             // The footer link is shown by default; the admin can remove and
             // restore it without losing the label above.
@@ -81,6 +88,46 @@ class SiteVerifyEmail extends Model
             'accent_color'      => '#4f1d96',
             'active'            => true,
         ];
+    }
+
+    /**
+     * Blocks an admin may hide without losing their content.
+     *
+     * Same convention as both promotion templates: `hidden_blocks` lists what is
+     * switched off, each field keeps its own text, so hiding is reversible and
+     * restoring is a toggle rather than a retype.
+     *
+     * @var list<string>
+     */
+    public const array OPTIONAL_BLOCKS = [
+        'postal_address',
+        'contact_email',
+        'copyright_text',
+    ];
+
+    /**
+     * Visibility flag per optional block, for the Blade layout.
+     *
+     * Everything not explicitly hidden is visible, so an existing row — and the
+     * live preview's unsaved model, where the attribute is simply absent —
+     * renders exactly as it does today. Unknown keys are ignored.
+     *
+     * @return array<string, bool>
+     */
+    public function visibleBlocks(): array
+    {
+        $hidden = array_flip(array_filter(
+            (array) ($this->hidden_blocks ?? []),
+            static fn (mixed $key): bool => is_string($key),
+        ));
+
+        $flags = [];
+
+        foreach (self::OPTIONAL_BLOCKS as $block) {
+            $flags[$block] = ! isset($hidden[$block]);
+        }
+
+        return $flags;
     }
 
     /**
@@ -102,7 +149,7 @@ class SiteVerifyEmail extends Model
 
         $out = [];
 
-        foreach (['from_name', 'from_email', 'subject', 'header_title', 'header_subtitle', 'heading', 'unsubscribe_label', 'copyright_text'] as $field) {
+        foreach (['from_name', 'from_email', 'subject', 'header_title', 'header_subtitle', 'heading', 'unsubscribe_label', 'postal_address', 'contact_email', 'copyright_text'] as $field) {
             $out[$field] = $replace((string) $this->{$field});
         }
 

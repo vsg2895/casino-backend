@@ -29,6 +29,9 @@ class SitePromotionEmailResource extends JsonResource
             'secondary_text'    => $this->secondary_text,
             'cta_button_url'    => $this->cta_button_url,
             'disclaimer_text'   => $this->disclaimer_text,
+            'postal_address'    => $this->postal_address,
+            'contact_email'     => $this->contact_email,
+            'copyright_text'    => $this->copyright_text,
             'unsubscribe_label' => $this->unsubscribe_label,
             // Blocks currently switched off. Their content is still stored, so the
             // admin restores one by dropping it from this list — nothing to retype.

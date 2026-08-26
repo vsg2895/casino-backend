@@ -159,6 +159,27 @@
                             </table>
                         @endif
 
+                        {{-- Footer identity — postal address · monitored contact, then
+                             the copyright line. Each hideable, each keeping its text. --}}
+                        @if ($show('postal_address') || $show('contact_email') || $show('copyright_text'))
+                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
+                                <tbody>
+                                <tr>
+                                    <td align="center" style="padding:0 20px 8px; text-align:center; font-family:{{ $face }};">
+                            @if ($show('postal_address') || $show('contact_email'))
+                                @php $addressLine = implode(', ', array_filter([$siteName, $t['postal_address'] ?? ''])); @endphp
+                                <p style="margin:0; font-size:11px; line-height:1.5; color:{{ $mutedColor }};">{{ $addressLine }}@if ($show('contact_email')) &nbsp;·&nbsp; <a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $accent }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</p>
+                            @endif
+
+                            @if ($show('copyright_text'))
+                                <p style="margin:8px 0 0; font-size:11px; color:{{ $mutedColor }};">{{ $t['copyright_text'] }}</p>
+                            @endif
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        @endif
+
                         {{-- Unsubscribe — structural, never removable --}}
                         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                             <tbody>

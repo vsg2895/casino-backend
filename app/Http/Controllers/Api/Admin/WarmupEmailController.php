@@ -190,7 +190,17 @@ class WarmupEmailController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $site = Site::findOrFail($request->integer('site_id'));
+        // Pinned, never chosen: warmup always sends as one brand. Resolved here
+        // rather than trusted from the request, so the API cannot be asked for a
+        // different site and a stale admin bundle cannot send as one.
+        $site = $this->warmupSite();
+
+        if ($site === null) {
+            return response()->json([
+                'ok'      => false,
+                'message' => $this->missingSiteMessage(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
         $template = (string) $request->validated('template');
         $limit = $request->recipientLimit();
         $cooldown = $request->cooldownDays();
@@ -397,7 +407,10 @@ class WarmupEmailController extends Controller
                 'min_cooldown_days' => WarmupSend::MIN_COOLDOWN_DAYS,
                 'max_cooldown_days' => WarmupSend::MAX_COOLDOWN_DAYS,
                 'default_cooldown_days' => $this->defaultCooldownDays(),
-                'default_site_id'   => $this->defaultSiteId(),
+                // The pinned warmup site, for the dialog to display read-only.
+                'site_id'           => $this->warmupSite()?->id,
+                'site_name'         => $this->warmupSite()?->name,
+                'site_slug'         => (string) config('warmup.site_slug', ''),
             ],
         ]);
     }
@@ -481,22 +494,45 @@ class WarmupEmailController extends Controller
     }
 
     /**
-     * Site the dialog opens on, resolved from config('warmup.default_site_slug').
+     * The one site warmup sends as, from config('warmup.site_slug').
      *
-     * Resolved SERVER-side so the admin bundle never hard-codes a brand slug, and
-     * so a renamed or removed site degrades to "no preference" instead of leaving
-     * the dialog pointing at nothing.
+     * Null when the configured slug names no ACTIVE site. Callers must treat that
+     * as a hard stop rather than falling back: rendering another brand's template
+     * would put the wrong branding in real inboxes, which is worse than not
+     * sending at all.
      */
-    private function defaultSiteId(): ?int
+    private function warmupSite(): ?Site
     {
-        $slug = trim((string) config('warmup.default_site_slug', ''));
-
-        if ($slug === '') {
-            return null;
+        // Memoised: recipients() reads it twice, and it is a query.
+        if ($this->warmupSiteResolved) {
+            return $this->warmupSite;
         }
 
-        return Site::query()->where('slug', $slug)->where('active', true)->value('id');
+        $this->warmupSiteResolved = true;
+        $slug = trim((string) config('warmup.site_slug', ''));
+
+        if ($slug !== '') {
+            $this->warmupSite = Site::query()->where('slug', $slug)->where('active', true)->first();
+        }
+
+        return $this->warmupSite;
     }
+
+    private ?Site $warmupSite = null;
+
+    private bool $warmupSiteResolved = false;
+
+    /** Why a warmup send cannot start, in terms the operator can act on. */
+    private function missingSiteMessage(): string
+    {
+        $slug = trim((string) config('warmup.site_slug', ''));
+
+        return $slug === ''
+            ? 'No warmup site is configured. Set WARMUP_SITE_SLUG in the environment.'
+            : "Warmup is configured to send as \"{$slug}\", but no active site has that slug. "
+                . 'Register or reactivate it, or change WARMUP_SITE_SLUG.';
+    }
+
 
     private function defaultCooldownDays(): int
     {

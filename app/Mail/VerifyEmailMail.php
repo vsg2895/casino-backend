@@ -47,6 +47,14 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
         public readonly bool $showUnsubscribe = true,
+        /**
+         * Visibility flag per optional block, from
+         * {@see \App\Models\SiteVerifyEmail::visibleBlocks()}. Defaulted so
+         * every existing caller keeps rendering everything.
+         *
+         * @var array<string, bool>
+         */
+        public readonly array $visibleBlocks = [],
     ) {}
 
     public function envelope(): Envelope
@@ -102,6 +110,7 @@ class VerifyEmailMail extends Mailable implements SenderOverridable
                 'verifyUrl'      => $this->verifyUrl,
                 'greeting'       => $this->greeting,
                 'showUnsubscribe' => $this->showUnsubscribe,
+                'visible'        => $this->visibleBlocks,
                 'accent'         => $this->template['accent_color'],
             ],
         );

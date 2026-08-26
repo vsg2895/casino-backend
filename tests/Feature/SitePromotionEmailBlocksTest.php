@@ -165,7 +165,9 @@ class SitePromotionEmailBlocksTest extends TestCase
         [$site] = $this->siteWithKey();
         Newsletter::create(['site_id' => $site->id, 'email' => 'x@example.com']);
 
-        foreach ([$site->emailTemplateOrDefault(), $site->verifyEmailOrDefault()] as $other) {
+        // Verify has it too now (its footer identity block is hideable); the
+        // subscribe template is the one that must stay without.
+        foreach ([$site->emailTemplateOrDefault()] as $other) {
             $this->assertFalse(
                 $other->isFillable('hidden_blocks'),
                 $other::class . ' must not gain the optional-block list',

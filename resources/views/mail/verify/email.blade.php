@@ -9,6 +9,13 @@
 {{-- Body fields (intro/offer/spam/footer notes) are pre-escaped + **bold** converted
      in SiteVerifyEmail::render(), so they are emitted with {!! !!}. All other
      strings come through {{ }} and are escaped by Blade. --}}
+@php
+    // OPTIONAL BLOCKS — the footer identity lines. Hidden by the admin switching
+    // them OFF, never by clearing their text, so restoring is a toggle rather
+    // than a retype. Absent from $visible means visible, which keeps existing
+    // rows rendering unchanged.
+    $show = fn (string $key): bool => (($visible[$key] ?? true)) && ! empty($t[$key]);
+@endphp
 <body style="margin:0; padding:0; background-color:#f3f4f6; -webkit-font-smoothing:antialiased; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
     @if (! empty($t['header_subtitle']))
         <span style="display:none!important; visibility:hidden; opacity:0; height:0; width:0; font-size:0; color:transparent;">
@@ -114,11 +121,22 @@
                         </td>
                     </tr>
 
+                    {{-- Footer identity — postal address · monitored contact. Each
+                         hideable, each keeping its text. --}}
+                    @if ($show('postal_address') || $show('contact_email'))
+                        <tr>
+                            <td style="padding:16px 32px 0; text-align:center;">
+                                @php $addressLine = implode(', ', array_filter([$siteName, $t['postal_address'] ?? ''])); @endphp
+                                <p style="margin:0; font-size:11px; line-height:1.5; color:#9ca3af;">{{ $addressLine }}@if ($show('contact_email')) &nbsp;·&nbsp; <a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $accent }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</p>
+                            </td>
+                        </tr>
+                    @endif
+
                     {{-- Copyright — removable --}}
-                    @if (! empty($t['copyright_text']))
+                    @if ($show('copyright_text'))
                         <tr>
                             <td style="padding:18px 32px; background-color:#f9fafb; border-top:1px solid #f0f1f3;">
-                                @if (! empty($t['copyright_text']))
+                                @if ($show('copyright_text'))
                                     <p style="margin:0; font-size:11px; color:#9ca3af; text-align:center;">
                                         {{ $t['copyright_text'] }}
                                     </p>

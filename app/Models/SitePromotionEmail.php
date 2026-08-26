@@ -33,7 +33,7 @@ class SitePromotionEmail extends Model
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url',
         'hero_url', 'top_button_text', 'heading', 'cta_button_url',
-        'unsubscribe_label',
+        'postal_address', 'contact_email', 'copyright_text', 'unsubscribe_label',
     ];
 
     protected $fillable = [
@@ -50,6 +50,9 @@ class SitePromotionEmail extends Model
         'secondary_text',
         'cta_button_url',
         'disclaimer_text',
+        'postal_address',
+        'contact_email',
+        'copyright_text',
         'unsubscribe_label',
         'hidden_blocks',
         'button_color',
@@ -112,6 +115,12 @@ class SitePromotionEmail extends Model
             'intro_text'        => 'Join our platform and receive **100 FS** as part of your welcome package. **No deposit required** — just register and start playing.',
             'secondary_text'    => 'A trusted, licensed platform built for players who value transparency, security, and seamless gameplay.',
             'disclaimer_text'   => "This is a one-time invitation to join {{site_name}}. If you're not interested, you can simply disregard this message.",
+            // Footer identity: a physical address and a MONITORED reply mailbox
+            // are what commercial mail is expected to carry, and their absence is
+            // a spam signal in its own right.
+            'postal_address'    => '123 Example Street, City 00000, Country',
+            'contact_email'     => 'info@' . $site->domain,
+            'copyright_text'    => '© {{year}} {{site_name}}',
             'unsubscribe_label' => 'Unsubscribe',
             ...self::COLOR_DEFAULTS,
             'active'            => true,
@@ -153,6 +162,9 @@ class SitePromotionEmail extends Model
         'secondary_text',
         'cta_button_url',
         'disclaimer_text',
+        'postal_address',
+        'contact_email',
+        'copyright_text',
     ];
 
     /**

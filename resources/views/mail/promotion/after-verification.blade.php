@@ -98,9 +98,50 @@
                                 <p style="margin:0 0 16px 0; font-size:16px; color:{{ $textColor }}; line-height:1.6;">{{ $greeting }}</p>
                             @endif
 
+                            {{-- Intro paragraph. Size is operator-controlled (falling
+                                 back to 16px), and a background colour turns it into a
+                                 padded panel like the responsible-gambling notice.
+                                 Unset background = the plain paragraph, so an existing
+                                 row gains no stray box. --}}
                             @if ($show('intro_text'))
-                                <p style="margin:0; font-size:16px; color:{{ $textColor }}; line-height:1.6;">{!! $t['intro_text'] !!}</p>
+                                @php $introSize = $t['intro_text_font_size'] ?? 16; @endphp
+                                @if (! empty($t['intro_text_background_color']))
+                                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} background-color:{{ $t['intro_text_background_color'] }}; border-radius:6px;">
+                                        <tr>
+                                            <td style="padding:16px 20px;">
+                                                <p style="margin:0; font-size:{{ $introSize }}px; color:{{ $textColor }}; line-height:1.6;">{!! $t['intro_text'] !!}</p>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                @else
+                                    <p style="margin:0; font-size:{{ $introSize }}px; color:{{ $textColor }}; line-height:1.6;">{!! $t['intro_text'] !!}</p>
+                                @endif
                             @endif
+                        </td>
+                    </tr>
+                @endif
+
+                {{-- TOP button — ABOVE the banner, so the offer has a call to action
+                     before the image rather than two stacked underneath it. The lower
+                     CTA stays below the banner, giving one action either side.
+                     Its label was editable, stored and returned by the API long before
+                     this markup existed, so anything typed there rendered nowhere;
+                     that is what this block fixes. Removable like every other block,
+                     with its own destination falling back to the banner link then the
+                     site. --}}
+                @if ($show('top_button_text'))
+                    <tr>
+                        {{-- 4px above, 20px below: the body block already contributes
+                             20px underneath its text, and the banner that follows has
+                             none of its own. --}}
+                        <td align="center" style="padding:4px 32px 20px; font-family:{{ $face }};">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{{ $block }}">
+                                <tr>
+                                    <td align="center" style="border-radius:6px; background-color:{{ $buttonColor }};">
+                                        <a href="{{ $val('top_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:inline-block; padding:14px 32px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold;">{{ $t['top_button_text'] }}</a>
+                                    </td>
+                                </tr>
+                            </table>
                         </td>
                     </tr>
                 @endif

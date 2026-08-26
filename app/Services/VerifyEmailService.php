@@ -121,6 +121,8 @@ class VerifyEmailService
             // Whether the footer link block is rendered. Coalesced on the model so
             // an unsaved preview template and a legacy row both mean "shown".
             showUnsubscribe: $template->showsUnsubscribeLink(),
+            // Which optional footer blocks this template currently shows.
+            visibleBlocks: $template->visibleBlocks(),
         );
     }
 }
