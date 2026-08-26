@@ -8,7 +8,9 @@ use App\Jobs\SendVerificationPromotionJob;
 use App\Models\Newsletter;
 use App\Models\VerificationPromotionEmail;
 use App\Support\ClockFacts;
+use Carbon\CarbonInterface;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -76,18 +78,7 @@ class DispatchVerificationPromotions extends Command
         $cutoff = Carbon::now()->subMinutes(max(0, (int) $config->delay_minutes));
         $limit = (int) ($this->option('limit') ?? config('promotions.verification_dispatch_limit', 1000));
 
-        $candidates = Newsletter::query()
-            ->whereNull('verification_promotion_sent_at')   // never claimed
-            ->whereNotNull('verified_at')                   // actually clicked the link
-            ->where('verified', true)                       // defensive: flag agrees
-            ->where('verified_at', '<=', $cutoff)           // delay since the click has elapsed
-            // Honour a global opt-out — any template's opt-out excludes the
-            // address, exactly as the send job re-checks with Unsubscribe::hasAny.
-            ->whereNotExists(function (Builder $query): void {
-                $query->from('unsubscribes')
-                    ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id');
-            })
+        $candidates = $this->eligible($cutoff)
             ->orderBy('id')
             ->limit($limit)
             // id AND email: the id is what the job needs, the email is what
@@ -96,16 +87,23 @@ class DispatchVerificationPromotions extends Command
             ->get(['id', 'email']);
 
         if ($candidates->isEmpty()) {
-            // Also logged: "the sweep ran and found nobody" and "the sweep never
-            // ran at all" look identical from the outside otherwise, and they
-            // have completely different causes.
+            // "The sweep ran and found nobody" and "the sweep never ran at all"
+            // look identical from the outside otherwise, and they have
+            // completely different causes.
+            //
+            // The funnel is computed HERE and nowhere else. It costs a handful
+            // of COUNTs, which is not worth paying every minute on the happy
+            // path — but this is the exact moment somebody wants to know WHY
+            // nobody was picked, so the breakdown is worth its price precisely
+            // when the count is zero.
             Log::info('Post-verification promotion sweep found no eligible subscribers', [
                 'delay_minutes' => (int) $config->delay_minutes,
                 // Both, so the rule is legible without doing the subtraction by
                 // hand — and so a `verified_at` copied out of the admin can be
                 // compared against a cutoff in the SAME timezone as this line.
-                'now'    => Carbon::now()->toDateTimeString(),
-                'cutoff' => $cutoff->toDateTimeString(),
+                'now'      => Carbon::now()->toDateTimeString(),
+                'cutoff'   => $cutoff->toDateTimeString(),
+                'audience' => $this->funnel($cutoff),
             ]);
             $this->info('No subscribers are eligible right now.');
 
@@ -122,11 +120,70 @@ class DispatchVerificationPromotions extends Command
             'count'         => $candidates->count(),
             'delay_minutes' => (int) $config->delay_minutes,
             'cutoff'        => $cutoff->toDateTimeString(),
+            // Whether this run hit the per-run ceiling. If it did, more
+            // subscribers are waiting and the next tick picks them up — worth
+            // knowing before concluding that a count looks too low.
+            'limit'         => $limit,
+            'limit_reached' => $candidates->count() === $limit,
             'emails'        => $emails,
         ]);
 
         $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Subscribers who should receive the promotion right now.
+     *
+     * THE one definition of eligibility — the dispatch query and the funnel's
+     * final row are the same builder, so the diagnosis can never describe a
+     * different rule from the one that actually runs.
+     *
+     * @return EloquentBuilder<Newsletter>
+     */
+    private function eligible(CarbonInterface $cutoff): EloquentBuilder
+    {
+        return Newsletter::query()
+            ->whereNull('verification_promotion_sent_at')   // never claimed
+            ->whereNotNull('verified_at')                   // actually clicked the link
+            ->where('verified', true)                       // defensive: flag agrees
+            ->where('verified_at', '<=', $cutoff)           // delay since the click has elapsed
+            // Honour a global opt-out — any template's opt-out excludes the
+            // address, exactly as the send job re-checks with Unsubscribe::hasAny.
+            ->whereNotExists(function (Builder $query): void {
+                $query->from('unsubscribes')
+                    ->whereColumn('unsubscribes.email', 'newsletters.email')
+                    ->whereColumn('unsubscribes.site_id', 'newsletters.site_id');
+            });
+    }
+
+    /**
+     * How many subscribers survive each condition, in order.
+     *
+     * Each row is the previous one plus ONE more condition, so the row where the
+     * number collapses to zero names the reason nobody is being sent to. That is
+     * the whole point: "0 eligible" on its own is not an answer, and reading it
+     * off the database by hand at 2am is how mistakes get made.
+     *
+     * `already_sent` is the one row that is expected to grow — it is everyone
+     * who has already received the promotion, which is a success total, not a
+     * problem.
+     *
+     * @return array<string, int>
+     */
+    private function funnel(CarbonInterface $cutoff): array
+    {
+        $verified = Newsletter::query()->where('verified', true);
+
+        return [
+            'subscribers'      => Newsletter::query()->count(),
+            'verified'         => (clone $verified)->count(),
+            'with_verified_at' => (clone $verified)->whereNotNull('verified_at')->count(),
+            'delay_elapsed'    => (clone $verified)->whereNotNull('verified_at')
+                ->where('verified_at', '<=', $cutoff)->count(),
+            'already_sent'     => (clone $verified)->whereNotNull('verification_promotion_sent_at')->count(),
+            'eligible_now'     => $this->eligible($cutoff)->count(),
+        ];
     }
 }

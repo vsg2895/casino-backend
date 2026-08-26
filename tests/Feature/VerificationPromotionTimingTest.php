@@ -12,6 +12,7 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
@@ -136,29 +137,121 @@ class VerificationPromotionTimingTest extends TestCase
 
     // ── Observability ────────────────────────────────────────────────────────
 
-    /**
-     * Both every-minute sweeps must carry an explicit overlap expiry. Without
-     * one the mutex lives for 24 hours, so a killed run mutes the command for a
-     * day while logging nothing at all — which is precisely how "cron is
-     * clearly running but this never sends" happens.
-     */
-    public function test_every_minute_sweeps_have_a_bounded_overlap_mutex(): void
+    private function scheduledEvent(string $signature): Event
     {
-        $events = collect(app(Schedule::class)->events());
+        $event = collect(app(Schedule::class)->events())->first(
+            static fn (Event $event): bool => str_contains((string) $event->command, $signature),
+        );
 
-        foreach (['promotions:dispatch-verification', 'promotions:dispatch-due'] as $signature) {
-            $event = $events->first(
-                static fn (Event $event): bool => str_contains((string) $event->command, $signature),
-            );
+        $this->assertInstanceOf(Event::class, $event, "{$signature} is not scheduled.");
 
-            $this->assertInstanceOf(Event::class, $event, "{$signature} is not scheduled.");
-            $this->assertTrue($event->withoutOverlapping, "{$signature} allows overlapping runs.");
-            $this->assertLessThanOrEqual(
-                60,
-                $event->expiresAt,
-                "{$signature} holds its overlap mutex for {$event->expiresAt} minutes; a stranded lock would mute it for that long.",
-            );
-        }
+        return $event;
+    }
+
+    /**
+     * The post-verification sweep must take NO overlap mutex.
+     *
+     * Overlapping runs are already harmless — the job claims each subscriber
+     * with a conditional UPDATE, so a double dispatch cannot become a double
+     * send. The mutex therefore protected nothing, while a stranded one muted
+     * the command entirely and silently. Its TTL is fixed when the lock is
+     * taken, so a shorter expiry cannot rescue a lock that is already stuck;
+     * only not taking one makes the sweep self-healing.
+     */
+    public function test_the_verification_sweep_takes_no_overlap_mutex(): void
+    {
+        $event = $this->scheduledEvent('promotions:dispatch-verification');
+
+        $this->assertFalse(
+            $event->withoutOverlapping,
+            'The post-verification sweep must not take an overlap mutex: a stranded lock silently mutes it, '
+            .'and the atomic claim in SendVerificationPromotionJob already prevents double sends.',
+        );
+    }
+
+    /**
+     * The campaign sweep keeps its mutex — a fan-out of tens of thousands of
+     * emails is genuinely worth serialising — but the expiry must stay bounded.
+     * Laravel's default with no argument is 24 hours, which turns one killed run
+     * into a day-long silent outage.
+     */
+    public function test_the_campaign_sweep_has_a_bounded_overlap_mutex(): void
+    {
+        $event = $this->scheduledEvent('promotions:dispatch-due');
+
+        $this->assertTrue($event->withoutOverlapping);
+        $this->assertLessThanOrEqual(
+            60,
+            $event->expiresAt,
+            "promotions:dispatch-due holds its overlap mutex for {$event->expiresAt} minutes; "
+            .'a stranded lock would mute it for that long.',
+        );
+    }
+
+    // ── Audience reporting ───────────────────────────────────────────────────
+
+    /**
+     * When nobody is eligible, the log must say how many subscribers reached
+     * each stage — otherwise "0 eligible" is a fact with no explanation.
+     */
+    public function test_the_sweep_logs_the_audience_funnel_when_nobody_is_eligible(): void
+    {
+        Queue::fake();
+        Log::spy();
+
+        $this->enableSection(delayMinutes: 30);
+        $this->subscriberVerifiedMinutesAgo(1);   // verified, but far too recently
+
+        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context = []): bool {
+                if ($message !== 'Post-verification promotion sweep found no eligible subscribers') {
+                    return false;
+                }
+
+                return ($context['audience']['subscribers'] ?? null) === 1
+                    && ($context['audience']['verified'] ?? null) === 1
+                    && ($context['audience']['with_verified_at'] ?? null) === 1
+                    // The delay has NOT elapsed — this is the row that explains it.
+                    && ($context['audience']['delay_elapsed'] ?? null) === 0
+                    && ($context['audience']['eligible_now'] ?? null) === 0;
+            })
+            ->once();
+    }
+
+    /** When subscribers ARE queued, the log must report how many. */
+    public function test_the_sweep_logs_how_many_subscribers_were_queued(): void
+    {
+        Queue::fake();
+        Log::spy();
+
+        $this->enableSection(delayMinutes: 5);
+        $this->subscriberVerifiedMinutesAgo(10);
+
+        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []): bool => $message === 'Post-verification promotions queued'
+                && ($context['count'] ?? null) === 1
+                && ($context['limit_reached'] ?? null) === false)
+            ->once();
+    }
+
+    /** The heartbeat fires before any check, so silence means "never ran". */
+    public function test_the_sweep_logs_a_heartbeat_even_while_the_feature_is_disabled(): void
+    {
+        Queue::fake();
+        Log::spy();
+
+        VerificationPromotionEmail::current()->update(['active' => false]);
+
+        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []): bool => $message === 'Post-verification promotion sweep running'
+                && array_key_exists('drift_seconds', $context))
+            ->once();
     }
 
     /** The clock context must be readable, and must never throw. */

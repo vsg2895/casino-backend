@@ -247,6 +247,14 @@ class DiagnoseVerificationPromotions extends Command
             return;
         }
 
+        if (! $event->withoutOverlapping) {
+            // The post-verification sweep is deliberately here: it cannot be
+            // muted by a stranded lock because it never takes one.
+            $this->row($signature, 'no mutex (cannot be blocked)', true);
+
+            return;
+        }
+
         try {
             $held = $event->mutex->exists($event);
         } catch (Throwable $e) {

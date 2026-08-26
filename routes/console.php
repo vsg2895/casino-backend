@@ -35,9 +35,19 @@ Schedule::command('promotions:dispatch-due')
 // `newsletters.verified_at + delay_minutes` has elapsed. Every minute so the
 // promotion lands close to the intended delay after the subscriber clicked
 // their verify link, rather than drifting on a coarse tick.
+//
+// DELIBERATELY NO `withoutOverlapping()`. This sweep only SELECTS and
+// dispatches; every candidate is claimed atomically inside the job with a
+// conditional UPDATE on `verification_promotion_sent_at`, so overlapping runs
+// cannot double-send — the guarantee is in InnoDB, not in a cache lock.
+//
+// The mutex therefore bought nothing, while its failure mode was total: a
+// stranded lock silently muted this command, and because the lock's TTL is
+// fixed WHEN IT IS TAKEN, shipping a shorter expiry does not shorten one that
+// is already stuck. Removing it means a killed run costs one missed minute
+// instead of needing `schedule:clear-cache` to recover.
 Schedule::command('promotions:dispatch-verification')
-    ->everyMinute()
-    ->withoutOverlapping(5);
+    ->everyMinute();
 
 // Provision upcoming monthly partitions for the promotion history table.
 Schedule::command('promotions:manage-history-partitions')
