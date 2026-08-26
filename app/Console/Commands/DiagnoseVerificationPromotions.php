@@ -10,8 +10,11 @@ use App\Models\PromotionEmailHistory;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Support\ClockFacts;
 use App\Support\Mail\MailCredential;
 use Illuminate\Console\Command;
+use Illuminate\Console\Scheduling\Event;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
@@ -43,6 +46,31 @@ class DiagnoseVerificationPromotions extends Command
         $config = VerificationPromotionEmail::current();
         $delay = max(0, (int) $config->delay_minutes);
         $cutoff = Carbon::now()->subMinutes($delay);
+
+        $this->line('');
+        $this->info('── 0. Clocks ──');
+        // FIRST, because a timing complaint is almost always read off two
+        // screens in two timezones. The admin renders timestamps in the
+        // BROWSER's zone; everything below — and every line in laravel.log — is
+        // in app.timezone. A constant offset between them is presentation, not
+        // a bug. A drift between PHP and the database is a real one.
+        $clock = ClockFacts::forLog();
+        $drift = $clock['drift_seconds'];
+        $this->row('App timezone', $clock['timezone'], true);
+        $this->row('PHP now (' . $clock['timezone'] . ')', $clock['now'], true);
+        $this->row('Database now (UTC)', $clock['db_now_utc'], $clock['db_now_utc'] !== 'unavailable');
+        // Informational, never a failure: nothing in this feature reads a time
+        // from the database, so its session zone cannot affect eligibility.
+        $this->row('Database session timezone', $clock['db_timezone'] . '  (informational)', null);
+        $this->row(
+            'Clock skew, app vs database',
+            $drift === null
+                ? 'unknown (database clock unreadable)'
+                : "{$drift}s" . ($drift > ClockFacts::DRIFT_TOLERANCE_SECONDS ? '  <- the two machines disagree' : ''),
+            $drift !== null && $drift <= ClockFacts::DRIFT_TOLERANCE_SECONDS,
+        );
+        $this->line('    <fg=gray>The admin shows times in YOUR BROWSER\'s timezone. A fixed offset from the values</>');
+        $this->line('    <fg=gray>above is display only: verified_at is stored and compared in ' . $clock['timezone'] . ' throughout.</>');
 
         $this->line('');
         $this->info('── 1. Feature configuration ──');
@@ -92,6 +120,17 @@ class DiagnoseVerificationPromotions extends Command
         } catch (Throwable $e) {
             $this->row('Queue readable', 'NO  <- '.$e->getMessage(), false);
         }
+
+        $this->line('');
+        $this->info('── 3b. Scheduler overlap mutex ──');
+        // The silent killer. `withoutOverlapping()` holds a cache mutex that is
+        // released in a shutdown handler; a run that is KILLED rather than
+        // finished leaves it behind, and every later tick then exits before
+        // handle() — logging nothing at all. The other sweep has its own mutex
+        // and keeps running, which is exactly what makes this look like "cron
+        // works but this one command does not".
+        $this->reportMutex('promotions:dispatch-verification');
+        $this->reportMutex('promotions:dispatch-due');
 
         $this->line('');
         $this->info('── 4. Subscriber funnel (all sites) ──');
@@ -185,6 +224,46 @@ class DiagnoseVerificationPromotions extends Command
                 ->where('site_id', $n->site_id)->orderByDesc('id')->first();
             $this->row('  Last promotion history', $history === null ? 'none' : "{$history->status} on {$history->sent_date}".($history->error ? " ({$history->error})" : ''), null);
         }
+    }
+
+    /**
+     * Report whether a scheduled command is registered, and whether its
+     * `withoutOverlapping` mutex is currently held.
+     *
+     * The mutex name is derived from the event's own command string, which is
+     * built from the running PHP binary's path — so it is asked of the Schedule
+     * rather than reconstructed here, where it would be wrong on any host whose
+     * paths differ from this one.
+     */
+    private function reportMutex(string $signature): void
+    {
+        $event = collect(app(Schedule::class)->events())->first(
+            static fn (Event $event): bool => str_contains((string) $event->command, $signature),
+        );
+
+        if (! $event instanceof Event) {
+            $this->row($signature, 'NOT SCHEDULED  <- absent from routes/console.php', false);
+
+            return;
+        }
+
+        try {
+            $held = $event->mutex->exists($event);
+        } catch (Throwable $e) {
+            $this->row($signature . ' mutex', 'unreadable  <- ' . $e->getMessage(), null);
+
+            return;
+        }
+
+        $this->row(
+            $signature . ' mutex',
+            $held
+                // Ambiguous for exactly as long as a run takes, which is under a
+                // second — so on a second consecutive HELD it is stale.
+                ? 'HELD  <- stale, or a run is in flight; if it persists: php artisan schedule:clear-cache'
+                : 'free',
+            ! $held,
+        );
     }
 
     private function row(string $label, string $value, ?bool $ok): void

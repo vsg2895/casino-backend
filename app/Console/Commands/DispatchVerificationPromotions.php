@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Jobs\SendVerificationPromotionJob;
 use App\Models\Newsletter;
 use App\Models\VerificationPromotionEmail;
+use App\Support\ClockFacts;
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
@@ -48,6 +49,15 @@ class DispatchVerificationPromotions extends Command
 
     public function handle(): int
     {
+        // FIRST STATEMENT IN THE METHOD, on purpose. Every other log line here
+        // is conditional on getting past some check, so their absence is
+        // ambiguous: a stranded `withoutOverlapping` mutex, a cron that stopped,
+        // and a sweep that ran and found nobody all produce the same silence.
+        // This one line separates "the sweep did not run" from everything else,
+        // and carries the clock context that a timing report is always really
+        // about — see {@see ClockFacts}.
+        Log::info('Post-verification promotion sweep running', ClockFacts::forLog());
+
         $config = VerificationPromotionEmail::current();
 
         if (! $config->active) {
@@ -91,7 +101,11 @@ class DispatchVerificationPromotions extends Command
             // have completely different causes.
             Log::info('Post-verification promotion sweep found no eligible subscribers', [
                 'delay_minutes' => (int) $config->delay_minutes,
-                'cutoff'        => $cutoff->toDateTimeString(),
+                // Both, so the rule is legible without doing the subtraction by
+                // hand — and so a `verified_at` copied out of the admin can be
+                // compared against a cutoff in the SAME timezone as this line.
+                'now'    => Carbon::now()->toDateTimeString(),
+                'cutoff' => $cutoff->toDateTimeString(),
             ]);
             $this->info('No subscribers are eligible right now.');
 

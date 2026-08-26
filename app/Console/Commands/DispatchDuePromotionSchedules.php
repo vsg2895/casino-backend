@@ -6,10 +6,10 @@ namespace App\Console\Commands;
 
 use App\Jobs\SendScheduledPromotionJob;
 use App\Models\EmailSchedule;
+use App\Support\ClockFacts;
 use Carbon\CarbonInterface;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -41,8 +41,15 @@ class DispatchDuePromotionSchedules extends Command
         // to last_run_at, and what the claim compares against.
         $minute = $now->copy()->startOfMinute();
         $dispatched = 0;
-Log::info('Command running');
-Log::info('Command running within minute : ' . Carbon::now());
+
+        // Heartbeat. Same shape as the post-verification sweep's, so one grep
+        // over the log shows whether the scheduler is ticking at all — and the
+        // clock context answers the timing question these reports are usually
+        // really about (see {@see ClockFacts}).
+        Log::info('Promotion schedule sweep running', ClockFacts::forLog() + [
+            'matching_minute' => $minute->format('H:i'),
+        ]);
+
         EmailSchedule::query()
             ->where('active', true)
             // Narrow in SQL on the (active, time) index instead of loading every
