@@ -40,7 +40,7 @@ class DispatchDuePromotionSchedules extends Command
         // to last_run_at, and what the claim compares against.
         $minute = $now->copy()->startOfMinute();
         $dispatched = 0;
-
+Log::info('Command running');
         EmailSchedule::query()
             ->where('active', true)
             // Narrow in SQL on the (active, time) index instead of loading every
