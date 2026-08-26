@@ -9,6 +9,7 @@ use App\Models\EmailSchedule;
 use Carbon\CarbonInterface;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -41,6 +42,7 @@ class DispatchDuePromotionSchedules extends Command
         $minute = $now->copy()->startOfMinute();
         $dispatched = 0;
 Log::info('Command running');
+Log::info('Command running within minute : ' . Carbon::now());
         EmailSchedule::query()
             ->where('active', true)
             // Narrow in SQL on the (active, time) index instead of loading every
