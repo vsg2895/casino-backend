@@ -44,6 +44,16 @@
     //         as a value rather than a guard (links).
     $show = fn (string $key): bool => ($visible[$key] ?? true) && ! empty($t[$key]);
     $val  = fn (string $key): string => ($visible[$key] ?? true) ? (string) ($t[$key] ?? '') : '';
+
+    // BOTH BUTTONS ARE THIS WIDE — the one above the banner and the one below
+    // it. Fixed rather than shrink-to-fit on purpose: sized to their labels, the
+    // two came out visibly different widths ("Get Bonus" against "Claim My 100
+    // Free Spins") and read as two unrelated controls stacked down the email.
+    //
+    // One number, used twice. 280px sits inside the 600px body's 536px of
+    // content at every width, so it never has to wrap or scroll, and it is wide
+    // enough for the longest label in use. Change it here and both move.
+    $btnWidth = 280;
 @endphp
 <body style="margin:0; padding:0; background-color:{{ $canvas }}; font-family:{{ $face }};">
 
@@ -111,7 +121,7 @@
                             @endif
 
                             @if ($show('heading'))
-                                <h1 style="margin:0 0 16px 0; font-size:26px; color:{{ $headingColor }}; line-height:1.3;">{{ $t['heading'] }}</h1>
+                                <h1 style="margin:0 0 10px 0; font-size:26px; color:{{ $headingColor }}; line-height:1.3;">{{ $t['heading'] }}</h1>
                             @endif
 
                             @if (! empty($greeting))
@@ -126,9 +136,20 @@
                             @if ($show('intro_text'))
                                 @php $introSize = $t['intro_text_font_size'] ?? 16; @endphp
                                 @if (! empty($t['intro_text_background_color']))
+                                    {{-- PANEL FORM. The padding here is what sets this
+                                         paragraph in from the heading above it — a panel
+                                         cannot have its text flush with its own edge. It
+                                         is kept small (10px/12px, not 16px/20px) so the
+                                         indent reads as a panel rather than as a
+                                         misalignment.
+
+                                         If you want the intro to start on EXACTLY the
+                                         same left edge as the heading, clear the
+                                         background colour: that renders the plain
+                                         paragraph below, with no wrapper and no inset. --}}
                                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} background-color:{{ $t['intro_text_background_color'] }}; border-radius:6px;">
                                         <tr>
-                                            <td style="padding:16px 20px;">
+                                            <td style="padding:10px 12px;">
                                                 <p style="margin:0; font-size:{{ $introSize }}px; color:{{ $textColor }}; line-height:1.6;">{!! $t['intro_text'] !!}</p>
                                             </td>
                                         </tr>
@@ -155,10 +176,14 @@
                              20px underneath its text, and the banner that follows has
                              none of its own. --}}
                         <td align="center" style="padding:4px 32px 20px; font-family:{{ $face }};">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{{ $block }}">
+                            {{-- Fixed width, and `display:block` on the anchor so it
+                                 fills the cell: that is what makes this button and the
+                                 one below the banner identical regardless of label
+                                 length, while keeping the whole pill clickable. --}}
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} margin:0 auto;">
                                 <tr>
-                                    <td align="center" style="border-radius:6px; background-color:{{ $buttonColor }};">
-                                        <a href="{{ $val('top_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:inline-block; padding:14px 32px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold;">{{ $t['top_button_text'] }}</a>
+                                    <td align="center" width="{{ $btnWidth }}" style="width:{{ $btnWidth }}px; border-radius:6px; background-color:{{ $buttonColor }};">
+                                        <a href="{{ $val('top_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['top_button_text'] }}</a>
                                     </td>
                                 </tr>
                             </table>
@@ -194,13 +219,14 @@
                                  keeps it visually attached to the ticket it belongs to.
                                  Removable. --}}
                             @if ($show('cta_button_text'))
+                                {{-- Same fixed width as the top button — see $btnWidth. --}}
                                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} margin:0 auto 12px;">
                                     <tr>
-                                        <td align="center" style="border-radius:6px; background-color:{{ $buttonColor }};">
+                                        <td align="center" width="{{ $btnWidth }}" style="width:{{ $btnWidth }}px; border-radius:6px; background-color:{{ $buttonColor }};">
                                             {{-- Own destination, falling back to the banner link
                                                  and then the site. Existing rows have no
                                                  cta_button_url, so they keep their current target. --}}
-                                            <a href="{{ $val('cta_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:inline-block; padding:14px 32px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold;">{{ $t['cta_button_text'] }}</a>
+                                            <a href="{{ $val('cta_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['cta_button_text'] }}</a>
                                         </td>
                                     </tr>
                                 </table>

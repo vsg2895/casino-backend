@@ -65,9 +65,15 @@ class PromotionIntroStylingTest extends TestCase
             'intro_text_background_color' => '#f3f4f6',
         ]);
 
+        // Counted on the panel's BACKGROUND COLOUR rather than on its padding.
+        // The padding is a styling value that gets tuned (it has already moved
+        // from 16px/20px to 10px/12px to reduce how far the panel sets the
+        // paragraph in from the heading); pinning it here made this test fail
+        // for a reason that had nothing to do with what it is checking. The
+        // colour is what actually distinguishes a panel from a plain paragraph.
         $this->assertSame(
-            substr_count($without, 'padding:16px 20px') + 1,
-            substr_count($with, 'padding:16px 20px'),
+            substr_count($without, 'background-color:#f3f4f6') + 1,
+            substr_count($with, 'background-color:#f3f4f6'),
             'a background must add exactly one panel, and none without it',
         );
 
