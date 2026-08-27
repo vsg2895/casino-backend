@@ -31,7 +31,7 @@ final class LegalPageContent
      *
      * @return array<int, array{slug:string,title:string,meta_title:string,meta_description:string,status:string,content:string}>
      */
-    public static function forBrand(string $brand, string $domain): array
+    public static function forBrand(string $brand, string $domain, ?string $positioning = null): array
     {
         $url      = 'https://' . $domain;
         $support  = 'support@' . $domain;
@@ -464,11 +464,50 @@ HTML,
         ];
 
         // Stamp common metadata and publish status on every page.
-        return array_map(static function (array $page): array {
+        //
+        // The positioning clause is appended HERE rather than woven into each of
+        // the eleven descriptions above, so there is exactly one place that
+        // decides how a brand's angle reaches a meta description — and so adding
+        // a twelfth page cannot forget to do it.
+        $suffix = self::positioningClause($positioning);
+
+        return array_map(static function (array $page) use ($suffix): array {
             $page['status'] = 'published';
+            $page['meta_description'] = trim($page['meta_description'] . $suffix);
 
             return $page;
         }, $pages);
+    }
+
+    /**
+     * The trailing sentence that makes one brand's legal pages read differently
+     * from another's, or '' when the site has not set a positioning.
+     *
+     * These eleven pages are generated from ONE template for every site, so
+     * without this their descriptions differ only by the brand name — the same
+     * string on every domain, which is cross-site duplicate content on the pages
+     * search engines are most likely to compare.
+     *
+     * An empty positioning returns '', which reproduces the previous output
+     * byte for byte. That is what makes this safe to deploy against sites that
+     * have not filled the field in yet.
+     */
+    private static function positioningClause(?string $positioning): string
+    {
+        $clause = trim((string) $positioning);
+
+        if ($clause === '') {
+            return '';
+        }
+
+        // Punctuate for the operator: the field is a sentence fragment in the
+        // admin ("Roulette and live table games, reviewed by players"), and a
+        // description that runs two sentences together reads like a bug.
+        if (! str_ends_with($clause, '.') && ! str_ends_with($clause, '!') && ! str_ends_with($clause, '?')) {
+            $clause .= '.';
+        }
+
+        return ' ' . $clause;
     }
 
     /** The canonical ordered list of standard page slugs. */

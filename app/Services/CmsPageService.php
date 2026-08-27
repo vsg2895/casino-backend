@@ -69,7 +69,7 @@ class CmsPageService
     {
         $created = 0;
 
-        foreach (LegalPageContent::forBrand($site->name, $site->domain) as $page) {
+        foreach (LegalPageContent::forBrand($site->name, $site->domain, $site->positioning) as $page) {
             $model = CmsPage::firstOrCreate(
                 ['site_id' => $site->id, 'slug' => $page['slug']],
                 $page,

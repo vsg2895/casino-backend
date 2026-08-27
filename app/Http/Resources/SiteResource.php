@@ -17,6 +17,7 @@ class SiteResource extends JsonResource
             'name'             => $this->name,
             'slug'             => $this->slug,
             'domain'           => $this->domain,
+            'positioning'      => $this->positioning,
             'revalidation_url' => $this->revalidation_url,
             'settings'         => $this->settings,
             'active'           => $this->active,

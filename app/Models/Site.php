@@ -22,6 +22,7 @@ class Site extends Model
         'name',
         'slug',
         'domain',
+        'positioning',
         'api_key',
         'revalidation_url',
         'settings',

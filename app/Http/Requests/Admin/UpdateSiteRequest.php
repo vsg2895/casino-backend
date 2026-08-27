@@ -22,6 +22,10 @@ class UpdateSiteRequest extends FormRequest
         return [
             'name'             => ['sometimes', 'string', 'max:255'],
             'domain'           => ['sometimes', 'string', 'max:253', Rule::unique('sites', 'domain')->ignore($siteId)->withoutTrashed()],
+            // One short sentence saying what makes this brand different. It is
+            // woven into every generated legal page's meta description, so the
+            // eleven standard pages stop reading identically across domains.
+            'positioning'      => ['nullable', 'string', 'max:200'],
             'revalidation_url' => ['nullable', 'url', 'max:500'],
             'settings'         => ['nullable', 'array'],
             'active'           => ['sometimes', 'boolean'],
