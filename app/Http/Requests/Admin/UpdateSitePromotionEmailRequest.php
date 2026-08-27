@@ -46,6 +46,11 @@ class UpdateSitePromotionEmailRequest extends FormRequest
             'hero_image_url'    => ['nullable', 'url', 'max:500'],
             'hero_url'          => ['nullable', 'string', 'max:500'],
             'top_button_text'   => ['nullable', 'string', 'max:80'],
+            // The top button's own destination. A plain string for the same
+            // reason as the others below — see the note there. Empty falls back
+            // to cta_button_url, then hero_url, so a row that never had one
+            // keeps the target it already had.
+            'top_button_url'    => ['nullable', 'string', 'max:500'],
             // Where the buttons point. A plain string, not `url`, for the same
             // reason hero_url is: affiliate destinations carry tracking macros and
             // {{site_url}} placeholders the `url` rule rejects. Empty falls back

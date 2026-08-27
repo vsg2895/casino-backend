@@ -59,18 +59,30 @@
             <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"><tr><td><![endif]-->
             <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ $bodyBg }}" style="{{ $block }} background-color:{{ $bodyBg }}; border-radius:8px; overflow:hidden; max-width:600px; width:100%;">
 
-                {{-- Header brand band — removable.
-                     Vertical padding is deliberately tight, and ASYMMETRIC. This
-                     band and the confirmation strip below it are usually set to
-                     the SAME colour, so they read as one block and the gap
-                     between the brand and the confirmation line is this band's
-                     BOTTOM padding plus that strip's TOP padding — two values
-                     that add up. Keeping the outer edges (14px above the brand,
-                     8px below the confirmation) while trimming the two inner
-                     ones closes the gap without cramping the block. --}}
-                @if ($show('header_brand_text'))
+                @php
+                    // THE TWO GREEN BANDS. The brand band and the confirmation
+                    // strip below it are usually set to the same colour, so they
+                    // read as ONE block — and the gap between their two lines of
+                    // text is this band's BOTTOM padding plus that strip's TOP
+                    // padding, two values that add together.
+                    //
+                    // So they are tightened toward each other ONLY while both
+                    // render. Whichever one stands alone takes symmetric padding
+                    // instead: an inner value tuned to sit against a neighbour
+                    // leaves the text visibly off-centre in its own band once
+                    // that neighbour is removed — which is exactly what removing
+                    // the confirmation line used to do to the brand.
+                    $brandShown   = $show('header_brand_text');
+                    $confirmShown = $show('confirmation_text');
+
+                    $brandPadBottom  = $confirmShown ? '3px' : '14px';
+                    $confirmPadTop   = $brandShown ? '2px' : '8px';
+                @endphp
+
+                {{-- Header brand band — removable --}}
+                @if ($brandShown)
                     <tr>
-                        <td style="background-color:{{ $headerColor }}; padding:14px 32px 3px; text-align:center;">
+                        <td style="background-color:{{ $headerColor }}; padding:14px 32px {{ $brandPadBottom }}; text-align:center;">
                             <a href="{{ $val('hero_url') ?: $siteUrl }}" target="_blank" rel="nofollow sponsored noopener" style="color:#ffffff; font-size:20px; font-weight:bold; letter-spacing:0.5px; text-decoration:none; text-transform:uppercase;">{{ $t['header_brand_text'] }}</a>
                         </td>
                     </tr>
@@ -79,9 +91,9 @@
                 {{-- Confirmation strip — one thin line stating the fact the reader
                      already knows (their email is confirmed), so the heading can
                      talk about the offer instead. Removable. --}}
-                @if ($show('confirmation_text'))
+                @if ($confirmShown)
                     <tr>
-                        <td style="background-color:{{ $accent }}; padding:2px 24px 8px; text-align:center;">
+                        <td style="background-color:{{ $accent }}; padding:{{ $confirmPadTop }} 24px 8px; text-align:center;">
                             <span style="font-size:12px; font-weight:bold; color:#ffffff; letter-spacing:0.3px;">{{ $t['confirmation_text'] }}</span>
                         </td>
                     </tr>

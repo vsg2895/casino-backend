@@ -99,6 +99,31 @@
                             </table>
                         @endif
 
+                        {{-- TOP button — ABOVE the banner, so the offer has a call to
+                             action before the image rather than only after it. Matches
+                             the post-verification promotion, which reads the same way.
+                             Removable, with its own destination falling back to the CTA
+                             link and then the offer link, so a row that predates
+                             `top_button_url` keeps pointing exactly where it did. --}}
+                        @if ($show('top_button_text'))
+                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
+                                <tbody>
+                                <tr>
+                                    {{-- 4px above, 20px below: the body block already
+                                         contributes space underneath its text, and the
+                                         banner that follows has none of its own. --}}
+                                    <td align="center" style="padding:4px 20px 20px;">
+                                        @include('mail.promotion.partials.cta-button', [
+                                            'label' => $t['top_button_text'],
+                                            'url'   => $val('top_button_url') ?: ($val('cta_button_url') ?: $val('hero_url')),
+                                            'color' => $buttonColor,
+                                        ])
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        @endif
+
                         {{-- Hero image — dropped entirely when the admin clears it.
                              Linked to the offer only when an offer URL is set. --}}
                         @if ($show('hero_image_url'))
@@ -116,32 +141,6 @@
                                                  alt="{{ $val('heading') ?: $siteName }}"
                                                  style="display:block; width:100%; max-width:600px; height:auto; border:0;">
                                         @endif
-                                    </td>
-                                </tr>
-                                </tbody>
-                            </table>
-                        @endif
-
-                        {{-- The CTA — the template's only button, sitting under the
-                             banner. Omitted (with its spacing) when the label is cleared.
-                             Independent of the offer link: without one it renders as an
-                             unlinked pill. --}}
-                        @if ($show('top_button_text'))
-                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
-                                <tbody>
-                                <tr>
-                                    {{-- 20px below, not 40: paired with the body's
-                                         reduced top padding this closes a 70px band of
-                                         empty canvas that read as the email ending. --}}
-                                    <td align="center" style="padding:20px;">
-                                        @include('mail.promotion.partials.cta-button', [
-                                            'label' => $t['top_button_text'],
-                                            // The template's single button, so it takes the
-                                            // CTA's own destination and falls back to the
-                                            // offer link — existing rows keep their target.
-                                            'url'   => $val('cta_button_url') ?: $val('hero_url'),
-                                            'color' => $buttonColor,
-                                        ])
                                     </td>
                                 </tr>
                                 </tbody>

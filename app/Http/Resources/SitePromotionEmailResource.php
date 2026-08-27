@@ -24,6 +24,7 @@ class SitePromotionEmailResource extends JsonResource
             'hero_image_url'    => $this->hero_image_url,
             'hero_url'          => $this->hero_url,
             'top_button_text'   => $this->top_button_text,
+            'top_button_url'    => $this->top_button_url,
             'heading'           => $this->heading,
             'intro_text'        => $this->intro_text,
             'secondary_text'    => $this->secondary_text,

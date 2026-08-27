@@ -32,7 +32,7 @@ class SitePromotionEmail extends Model
      */
     private const array PLAIN_FIELDS = [
         'from_name', 'from_email', 'subject', 'preheader', 'hero_image_url',
-        'hero_url', 'top_button_text', 'heading', 'cta_button_url',
+        'hero_url', 'top_button_text', 'top_button_url', 'heading', 'cta_button_url',
         'postal_address', 'contact_email', 'copyright_text', 'unsubscribe_label',
     ];
 
@@ -45,6 +45,7 @@ class SitePromotionEmail extends Model
         'hero_image_url',
         'hero_url',
         'top_button_text',
+        'top_button_url',
         'heading',
         'intro_text',
         'secondary_text',
@@ -157,6 +158,7 @@ class SitePromotionEmail extends Model
         'hero_image_url',
         'hero_url',
         'top_button_text',
+        'top_button_url',
         'heading',
         'intro_text',
         'secondary_text',
