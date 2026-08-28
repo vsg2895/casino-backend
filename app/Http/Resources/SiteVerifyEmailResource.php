@@ -46,6 +46,8 @@ class SiteVerifyEmailResource extends JsonResource
             'button_text_max_size'   => SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE,
             'button_text_default_size' => SiteVerifyEmail::BUTTON_TEXT_DEFAULT_SIZE,
             'accent_color'      => $this->accent_color,
+            'footer_text_color' => $this->footer_text_color,
+            'footer_text_color_default' => SiteVerifyEmail::DEFAULT_FOOTER_TEXT_COLOR,
             'active'            => $this->active,
             'from_domain'       => (string) config('services.sendgrid.from_domain', 'example.com'),
             'created_at'        => $this->created_at,

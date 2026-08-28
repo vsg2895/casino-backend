@@ -39,6 +39,7 @@ class SiteVerifyEmail extends Model
         'unsubscribe_enabled',
         'hidden_blocks',
         'verify_button_text',
+        'footer_text_color',
         'button_text_font_size',
         'copyright_text',
         'accent_color',
@@ -63,6 +64,15 @@ class SiteVerifyEmail extends Model
      * silently — subscribers simply never confirm, and nothing logs an error.
      */
     public const string DEFAULT_BUTTON_TEXT = 'Verify My Email';
+
+    /**
+     * Footer text colour when the admin has not chosen one.
+     *
+     * This is the grey the three footer lines have always rendered at, so an
+     * untouched row is unchanged. Links in the footer keep `accent_color` —
+     * see the migration for why they are not covered by this.
+     */
+    public const string DEFAULT_FOOTER_TEXT_COLOR = '#9ca3af';
 
     public const int BUTTON_TEXT_DEFAULT_SIZE = 15;
     public const int BUTTON_TEXT_MIN_SIZE = 12;
@@ -185,6 +195,12 @@ class SiteVerifyEmail extends Model
         }
 
         $out['accent_color'] = $this->accent_color;
+
+        // Colours never take placeholders. Falls back to the design default so
+        // an unsaved preview — and a row written before the column existed —
+        // still emits a real colour rather than empty CSS.
+        $footerColor = trim((string) $this->footer_text_color);
+        $out['footer_text_color'] = $footerColor !== '' ? $footerColor : self::DEFAULT_FOOTER_TEXT_COLOR;
 
         // Coalesced AFTER placeholder substitution, so a label of only
         // whitespace — or one whose placeholders resolved to nothing — still

@@ -58,6 +58,9 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
                 'max:' . SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE,
             ],
             'accent_color'      => ['required', 'string', 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            // Nullable, not required: a cleared colour means "use the default",
+            // never "render with no colour".
+            'footer_text_color' => ['nullable', 'string', 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'active'            => ['required', 'boolean'],
         ];
     }
@@ -72,6 +75,7 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
                 . SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE . 'px.',
 
             'accent_color.regex' => 'The accent color must be a valid hex color (e.g. #4f1d96).',
+            'footer_text_color.regex' => 'The footer text color must be a valid hex color (e.g. #9ca3af).',
         ];
     }
 }

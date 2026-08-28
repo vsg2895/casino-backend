@@ -162,6 +162,73 @@ class SiteEmailButtonSizeTest extends TestCase
         $this->assertStringContainsString('{{unknown_token_that_stays}}', $html);
     }
 
+    // ── Footer text colour ───────────────────────────────────────────────────
+
+    public function test_the_footer_text_colour_applies_to_all_three_footer_lines(): void
+    {
+        $html = $this->renderVerify([
+            'footer_text_color' => '#112233',
+            'footer_note'       => 'You received this email because an address was registered.',
+            'postal_address'    => '25 Regent Street, London SW1Y 4PH',
+            'contact_email'     => 'info@example.com',
+            'copyright_text'    => 'Copyright line',
+            'hidden_blocks'     => [],
+        ]);
+
+        // note + address/contact + copyright
+        $this->assertSame(3, substr_count($html, 'color:#112233'));
+    }
+
+    /** Unset keeps the grey these lines have always rendered at. */
+    public function test_an_unset_footer_colour_falls_back_to_the_default(): void
+    {
+        $html = $this->renderVerify(['footer_text_color' => null, 'hidden_blocks' => []]);
+
+        $this->assertStringContainsString(
+            'color:' . SiteVerifyEmail::DEFAULT_FOOTER_TEXT_COLOR,
+            $html,
+        );
+    }
+
+    /**
+     * Footer LINKS must keep the accent colour. A grey unsubscribe link that
+     * matches the text around it stops reading as a link.
+     */
+    public function test_footer_links_keep_the_accent_colour(): void
+    {
+        [$site] = $this->siteWithKey();
+        $template = $site->verifyEmailOrDefault();
+        $template->update([
+            'footer_text_color' => '#112233',
+            'accent_color'      => '#ff0000',
+            'contact_email'     => 'info@example.com',
+            'hidden_blocks'     => [],
+        ]);
+
+        $html = app(VerifyEmailService::class)
+            ->previewMail($site, $template->refresh(), 'fan@example.com')
+            ->render();
+
+        $at = strpos($html, 'mailto:info@example.com');
+        $this->assertNotFalse($at);
+        $anchor = (int) strrpos(substr($html, 0, $at), '<a ');
+        $this->assertStringContainsString('color:#ff0000', substr($html, $anchor, $at - $anchor + 200));
+    }
+
+    public function test_an_invalid_footer_colour_is_rejected(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $template = $site->verifyEmailOrDefault();
+
+        $payload = $template->only(array_diff($template->getFillable(), ['site_id', 'hidden_blocks']));
+        $payload['footer_text_color'] = 'not-a-colour';
+
+        $this->putJson("/api/v1/admin/sites/{$site->id}/verify-email", $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('footer_text_color');
+    }
+
     // ── Bounds are enforced by the API, not merely suggested by the input ────
 
     public function test_an_out_of_range_verify_size_is_rejected(): void

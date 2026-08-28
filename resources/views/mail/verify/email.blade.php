@@ -15,6 +15,18 @@
     // than a retype. Absent from $visible means visible, which keeps existing
     // rows rendering unchanged.
     $show = fn (string $key): bool => (($visible[$key] ?? true)) && ! empty($t[$key]);
+
+    // Footer text colour — one value for all three footer lines. Coalesced on
+    // the model, so this is always a real colour.
+    $footerColor = $t['footer_text_color'] ?? '#9ca3af';
+
+    // The gap between the footer note and the address line is this cell's
+    // BOTTOM padding plus the identity row's TOP padding — two values that add
+    // up, which is what made it read as a break rather than a footer. They are
+    // tightened toward each other ONLY while the identity row renders; with it
+    // hidden the body keeps its full 32px, or the email would end abruptly.
+    $identityShown = $show('postal_address') || $show('contact_email');
+    $bodyPadBottom = $identityShown ? '18px' : '32px';
 @endphp
 <body style="margin:0; padding:0; background-color:#f3f4f6; -webkit-font-smoothing:antialiased; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
     @if (! empty($t['header_subtitle']))
@@ -48,7 +60,7 @@
 
                     {{-- Body --}}
                     <tr>
-                        <td style="padding:32px;">
+                        <td style="padding:32px 32px {{ $bodyPadBottom }};">
                             @if (! empty($t['heading']))
                                 <h1 style="margin:0 0 18px; font-size:22px; font-weight:700; color:#111827;">
                                     {{ $t['heading'] }}
@@ -90,6 +102,9 @@
                                         </td>
                                     </tr>
                                 </table>
+                                {{-- The paste-the-link fallback under the button. Deliberately NOT tied to
+                                     footer_text_color: it sits in the body, and a setting called
+                                     "footer text colour" recolouring it would be a surprise. --}}
                                 <p style="margin:12px 0 0; font-size:12px; line-height:1.6; color:#9ca3af; word-break:break-all;">
                                     Or paste this link into your browser:<br>
                                     <a href="{{ $verifyUrl }}" style="color:{{ $accent }};">{{ $verifyUrl }}</a>
@@ -102,7 +117,7 @@
 
                             {{-- Footer note + unsubscribe --}}
                             @if (! empty($t['footer_note']))
-                                <p style="margin:24px 0 8px; font-size:12px; line-height:1.6; color:#9ca3af;">
+                                <p style="margin:24px 0 8px; font-size:12px; line-height:1.6; color:{{ $footerColor }};">
                                     {!! $t['footer_note'] !!}
                                 </p>
                             @endif
@@ -123,11 +138,11 @@
 
                     {{-- Footer identity — postal address · monitored contact. Each
                          hideable, each keeping its text. --}}
-                    @if ($show('postal_address') || $show('contact_email'))
+                    @if ($identityShown)
                         <tr>
-                            <td style="padding:16px 32px 0; text-align:center;">
+                            <td style="padding:6px 32px 0; text-align:center;">
                                 @php $addressLine = implode(', ', array_filter([$siteName, $t['postal_address'] ?? ''])); @endphp
-                                <p style="margin:0; font-size:11px; line-height:1.5; color:#9ca3af;">{{ $addressLine }}@if ($show('contact_email')) &nbsp;·&nbsp; <a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $accent }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</p>
+                                <p style="margin:0; font-size:11px; line-height:1.5; color:{{ $footerColor }};">{{ $addressLine }}@if ($show('contact_email')) &nbsp;·&nbsp; <a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $accent }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</p>
                             </td>
                         </tr>
                     @endif
@@ -135,9 +150,9 @@
                     {{-- Copyright — removable --}}
                     @if ($show('copyright_text'))
                         <tr>
-                            <td style="padding:18px 32px; background-color:#f9fafb; border-top:1px solid #f0f1f3;">
+                            <td style="padding:12px 32px; background-color:#f9fafb; border-top:1px solid #f0f1f3;">
                                 @if ($show('copyright_text'))
-                                    <p style="margin:0; font-size:11px; color:#9ca3af; text-align:center;">
+                                    <p style="margin:0; font-size:11px; color:{{ $footerColor }}; text-align:center;">
                                         {{ $t['copyright_text'] }}
                                     </p>
                                 @endif
