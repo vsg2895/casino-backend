@@ -46,6 +46,7 @@ class SitePromotionEmail extends Model
         'hero_url',
         'top_button_text',
         'top_button_url',
+        'button_text_font_size',
         'heading',
         'intro_text',
         'secondary_text',
@@ -86,6 +87,7 @@ class SitePromotionEmail extends Model
         return [
             'active'        => 'boolean',
             'hidden_blocks' => 'array',
+            'button_text_font_size' => 'integer',
         ];
     }
 
@@ -153,6 +155,18 @@ class SitePromotionEmail extends Model
      *
      * @var list<string>
      */
+    /**
+     * Button label sizing, in px.
+     *
+     * DEFAULT 18, not 16: this template's CTA partial has always rendered at
+     * 18px. Each template falls back to whatever its own layout already used, so
+     * no existing email changes size on deploy — which is why this constant and
+     * SiteVerifyEmail's differ rather than sharing one value.
+     */
+    public const int BUTTON_TEXT_DEFAULT_SIZE = 18;
+    public const int BUTTON_TEXT_MIN_SIZE = 12;
+    public const int BUTTON_TEXT_MAX_SIZE = 24;
+
     public const array OPTIONAL_BLOCKS = [
         'preheader',
         'hero_image_url',
@@ -226,6 +240,11 @@ class SitePromotionEmail extends Model
             $value = trim((string) $this->{$field});
             $out[$field] = $value !== '' ? $value : $default;
         }
+
+        // Coalesced so the CTA partial never receives an empty size, and an
+        // untouched row keeps the 18px it has always rendered at.
+        $size = (int) ($this->button_text_font_size ?? 0);
+        $out['button_text_font_size'] = $size > 0 ? $size : self::BUTTON_TEXT_DEFAULT_SIZE;
 
         return $out;
     }

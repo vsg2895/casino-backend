@@ -39,6 +39,12 @@ class SiteVerifyEmailResource extends JsonResource
             // either way, so the admin can restore the exact same link.
             'unsubscribe_enabled' => $this->showsUnsubscribeLink(),
             'copyright_text'    => $this->copyright_text,
+            'verify_button_text'     => $this->verify_button_text,
+            'verify_button_text_default' => SiteVerifyEmail::DEFAULT_BUTTON_TEXT,
+            'button_text_font_size'  => $this->button_text_font_size,
+            'button_text_min_size'   => SiteVerifyEmail::BUTTON_TEXT_MIN_SIZE,
+            'button_text_max_size'   => SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE,
+            'button_text_default_size' => SiteVerifyEmail::BUTTON_TEXT_DEFAULT_SIZE,
             'accent_color'      => $this->accent_color,
             'active'            => $this->active,
             'from_domain'       => (string) config('services.sendgrid.from_domain', 'example.com'),

@@ -46,6 +46,17 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
             // never discards the wording needed to restore it.
             'unsubscribe_enabled' => ['sometimes', 'boolean'],
             'copyright_text'    => ['nullable', 'string', 'max:200'],
+            // Button label size. Bounds come from the model so this rule, the
+            // render fallback and the admin input cannot disagree. Null means
+            // "as before": the size this template has always rendered at.
+            // NULLABLE, not required: clearing it restores the default caption
+            // rather than rejecting the save or shipping an empty button.
+            'verify_button_text' => ['nullable', 'string', 'max:80'],
+            'button_text_font_size' => [
+                'nullable', 'integer',
+                'min:' . SiteVerifyEmail::BUTTON_TEXT_MIN_SIZE,
+                'max:' . SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE,
+            ],
             'accent_color'      => ['required', 'string', 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'active'            => ['required', 'boolean'],
         ];
@@ -55,6 +66,11 @@ class UpdateSiteVerifyEmailRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'button_text_font_size.min' => 'The button text size must be at least '
+                . SiteVerifyEmail::BUTTON_TEXT_MIN_SIZE . 'px.',
+            'button_text_font_size.max' => 'The button text size cannot exceed '
+                . SiteVerifyEmail::BUTTON_TEXT_MAX_SIZE . 'px.',
+
             'accent_color.regex' => 'The accent color must be a valid hex color (e.g. #4f1d96).',
         ];
     }

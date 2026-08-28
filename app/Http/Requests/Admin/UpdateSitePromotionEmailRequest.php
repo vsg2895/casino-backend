@@ -34,6 +34,14 @@ class UpdateSitePromotionEmailRequest extends FormRequest
             'postal_address'    => ['nullable', 'string', 'max:300'],
             'contact_email'     => ['nullable', 'string', 'max:180'],
             'copyright_text'    => ['nullable', 'string', 'max:200'],
+            // Button label size. Bounds come from the model so this rule, the
+            // render fallback and the admin input cannot disagree. Null means
+            // "as before": the size this template has always rendered at.
+            'button_text_font_size' => [
+                'nullable', 'integer',
+                'min:' . SitePromotionEmail::BUTTON_TEXT_MIN_SIZE,
+                'max:' . SitePromotionEmail::BUTTON_TEXT_MAX_SIZE,
+            ],
 
             'unsubscribe_label' => ['required', 'string', 'max:80'],
 
@@ -89,6 +97,11 @@ class UpdateSitePromotionEmailRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'button_text_font_size.min' => 'The button text size must be at least '
+                . SitePromotionEmail::BUTTON_TEXT_MIN_SIZE . 'px.',
+            'button_text_font_size.max' => 'The button text size cannot exceed '
+                . SitePromotionEmail::BUTTON_TEXT_MAX_SIZE . 'px.',
+
             'button_color.regex'         => 'The button color must be a valid hex color (e.g. #75B636).',
             'accent_color.regex'         => 'The accent color must be a valid hex color (e.g. #f3a333).',
             'background_color.regex'     => 'The background color must be a valid hex color (e.g. #000000).',

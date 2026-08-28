@@ -117,6 +117,7 @@
                                             'label' => $t['top_button_text'],
                                             'url'   => $val('top_button_url') ?: ($val('cta_button_url') ?: $val('hero_url')),
                                             'color' => $buttonColor,
+                                            'size'  => $t['button_text_font_size'] ?? null,
                                         ])
                                     </td>
                                 </tr>

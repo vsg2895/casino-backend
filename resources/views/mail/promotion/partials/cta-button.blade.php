@@ -11,10 +11,15 @@
     @param  string       $label  Button text (already placeholder-substituted).
     @param  string|null  $url    Offer destination, or empty for no link.
     @param  string       $color  Fill colour (hex).
+    @param  int|null     $size   Label size in px. Optional: the single caller
+                                 passes the template's own setting, and the 18px
+                                 default reproduces what this partial has always
+                                 rendered, so omitting it changes nothing.
 --}}
 @php
+    $labelSize = $size ?? 18;
     $face = "'DM Sans',-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
-    $type = "padding:14px 48px; font-family:{$face}; font-size:18px; font-weight:600; color:#ffffff; -webkit-text-fill-color:#ffffff;";
+    $type = "padding:14px 48px; font-family:{$face}; font-size:{$labelSize}px; font-weight:600; color:#ffffff; -webkit-text-fill-color:#ffffff;";
 @endphp
 <table role="presentation" align="center" border="0" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:0;">
     <tbody>

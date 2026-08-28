@@ -33,6 +33,10 @@ class SitePromotionEmailResource extends JsonResource
             'postal_address'    => $this->postal_address,
             'contact_email'     => $this->contact_email,
             'copyright_text'    => $this->copyright_text,
+            'button_text_font_size'  => $this->button_text_font_size,
+            'button_text_min_size'   => SitePromotionEmail::BUTTON_TEXT_MIN_SIZE,
+            'button_text_max_size'   => SitePromotionEmail::BUTTON_TEXT_MAX_SIZE,
+            'button_text_default_size' => SitePromotionEmail::BUTTON_TEXT_DEFAULT_SIZE,
             'unsubscribe_label' => $this->unsubscribe_label,
             // Blocks currently switched off. Their content is still stored, so the
             // admin restores one by dropping it from this list — nothing to retype.

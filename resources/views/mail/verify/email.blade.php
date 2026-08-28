@@ -84,8 +84,8 @@
                                     <tr>
                                         <td align="center" style="border-radius:10px; background-color:{{ $accent }};">
                                             <a href="{{ $verifyUrl }}" target="_blank" rel="noopener"
-                                               style="display:inline-block; padding:13px 30px; font-size:15px; font-weight:700; color:#ffffff; text-decoration:none; border-radius:10px;">
-                                                Verify My Email
+                                               style="display:inline-block; padding:13px 30px; font-size:{{ $t['button_text_font_size'] ?? 15 }}px; font-weight:700; color:#ffffff; text-decoration:none; border-radius:10px;">
+                                                {{ $t['verify_button_text'] }}
                                             </a>
                                         </td>
                                     </tr>

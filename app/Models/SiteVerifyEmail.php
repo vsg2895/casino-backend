@@ -38,16 +38,42 @@ class SiteVerifyEmail extends Model
         'unsubscribe_label',
         'unsubscribe_enabled',
         'hidden_blocks',
+        'verify_button_text',
+        'button_text_font_size',
         'copyright_text',
         'accent_color',
         'active',
     ];
+
+    /**
+     * Button label sizing, in px.
+     *
+     * DEFAULT 15, not 16: this template's button has always rendered at 15px,
+     * and the fallback must reproduce what the layout already did or every
+     * existing site's verify email changes size on deploy.
+     *
+     * Declared here so the Form Request rule, the render fallback and the
+     * admin's number input all read ONE source.
+     */
+    /**
+     * The button label when the admin has not set one, or has cleared it.
+     *
+     * Clearing restores this rather than removing the button: the button IS the
+     * email's purpose, and a verify message with no visible call to action fails
+     * silently — subscribers simply never confirm, and nothing logs an error.
+     */
+    public const string DEFAULT_BUTTON_TEXT = 'Verify My Email';
+
+    public const int BUTTON_TEXT_DEFAULT_SIZE = 15;
+    public const int BUTTON_TEXT_MIN_SIZE = 12;
+    public const int BUTTON_TEXT_MAX_SIZE = 24;
 
     protected function casts(): array
     {
         return [
             'unsubscribe_enabled' => 'boolean',
             'hidden_blocks'       => 'array',
+            'button_text_font_size' => 'integer',
             'active'              => 'boolean',
         ];
     }
@@ -81,6 +107,7 @@ class SiteVerifyEmail extends Model
             // A MONITORED mailbox that accepts replies — never no-reply@.
             'contact_email'     => 'info@' . $site->domain,
             'unsubscribe_label' => 'Unsubscribe',
+            'verify_button_text' => self::DEFAULT_BUTTON_TEXT,
             // The footer link is shown by default; the admin can remove and
             // restore it without losing the label above.
             'unsubscribe_enabled' => true,
@@ -149,7 +176,7 @@ class SiteVerifyEmail extends Model
 
         $out = [];
 
-        foreach (['from_name', 'from_email', 'subject', 'header_title', 'header_subtitle', 'heading', 'unsubscribe_label', 'postal_address', 'contact_email', 'copyright_text'] as $field) {
+        foreach (['from_name', 'from_email', 'subject', 'header_title', 'header_subtitle', 'heading', 'unsubscribe_label', 'verify_button_text', 'postal_address', 'contact_email', 'copyright_text'] as $field) {
             $out[$field] = $replace((string) $this->{$field});
         }
 
@@ -158,6 +185,17 @@ class SiteVerifyEmail extends Model
         }
 
         $out['accent_color'] = $this->accent_color;
+
+        // Coalesced AFTER placeholder substitution, so a label of only
+        // whitespace — or one whose placeholders resolved to nothing — still
+        // falls back to a real caption instead of an empty button.
+        $label = trim($out['verify_button_text'] ?? '');
+        $out['verify_button_text'] = $label !== '' ? $label : self::DEFAULT_BUTTON_TEXT;
+
+        // Coalesced here so the Blade never emits an empty font-size, and an
+        // untouched row keeps the 15px it has always rendered at.
+        $size = (int) ($this->button_text_font_size ?? 0);
+        $out['button_text_font_size'] = $size > 0 ? $size : self::BUTTON_TEXT_DEFAULT_SIZE;
 
         return $out;
     }
