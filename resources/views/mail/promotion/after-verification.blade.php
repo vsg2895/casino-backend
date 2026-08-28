@@ -54,6 +54,11 @@
     // content at every width, so it never has to wrap or scroll, and it is wide
     // enough for the longest label in use. Change it here and both move.
     $btnWidth = 280;
+
+    // Label size for BOTH buttons, operator-controlled, falling back to 16px.
+    // Coalesced on the model, so an untouched row and an unsaved preview both
+    // arrive here with a real number rather than an empty font-size.
+    $btnSize = $t['button_text_font_size'] ?? 16;
 @endphp
 <body style="margin:0; padding:0; background-color:{{ $canvas }}; font-family:{{ $face }};">
 
@@ -183,7 +188,7 @@
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} margin:0 auto;">
                                 <tr>
                                     <td align="center" width="{{ $btnWidth }}" style="width:{{ $btnWidth }}px; border-radius:6px; background-color:{{ $buttonColor }};">
-                                        <a href="{{ $val('top_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['top_button_text'] }}</a>
+                                        <a href="{{ $val('top_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:{{ $btnSize }}px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['top_button_text'] }}</a>
                                     </td>
                                 </tr>
                             </table>
@@ -226,7 +231,7 @@
                                             {{-- Own destination, falling back to the banner link
                                                  and then the site. Existing rows have no
                                                  cta_button_url, so they keep their current target. --}}
-                                            <a href="{{ $val('cta_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:16px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['cta_button_text'] }}</a>
+                                            <a href="{{ $val('cta_button_url') ?: ($val('hero_url') ?: $siteUrl) }}" target="_blank" rel="nofollow sponsored noopener" style="display:block; padding:14px 12px; font-size:{{ $btnSize }}px; color:#ffffff; text-decoration:none; font-weight:bold; text-align:center;">{{ $t['cta_button_text'] }}</a>
                                         </td>
                                     </tr>
                                 </table>

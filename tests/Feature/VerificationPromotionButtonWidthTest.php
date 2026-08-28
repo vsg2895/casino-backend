@@ -100,6 +100,58 @@ class VerificationPromotionButtonWidthTest extends TestCase
         $this->assertSame('280', $this->widthOfButtonContaining($html, $long));
     }
 
+    // ── Label size ───────────────────────────────────────────────────────────
+
+    /** One setting drives BOTH buttons, so they stay a matched pair. */
+    public function test_a_custom_button_size_applies_to_both_buttons(): void
+    {
+        $html = $this->render([
+            'top_button_text'       => 'Get Bonus',
+            'cta_button_text'       => 'See My Offer',
+            'button_text_font_size' => 22,
+        ]);
+
+        foreach (['Get Bonus', 'See My Offer'] as $label) {
+            $at = strpos($html, $label);
+            $anchor = (int) strrpos(substr($html, 0, $at), '<a ');
+            $markup = substr($html, $anchor, $at - $anchor);
+
+            $this->assertStringContainsString('font-size:22px', $markup, "the '{$label}' label ignored the size");
+        }
+    }
+
+    /** Unset falls back to the layout's own 16px — an existing row is unchanged. */
+    public function test_an_unset_button_size_falls_back_to_the_default(): void
+    {
+        $html = $this->render([
+            'top_button_text'       => 'Get Bonus',
+            'cta_button_text'       => 'See My Offer',
+            'button_text_font_size' => null,
+        ]);
+
+        $at = strpos($html, 'See My Offer');
+        $anchor = (int) strrpos(substr($html, 0, $at), '<a ');
+
+        $this->assertStringContainsString(
+            'font-size:' . VerificationPromotionEmail::BUTTON_TEXT_DEFAULT_SIZE . 'px',
+            substr($html, $anchor, $at - $anchor),
+        );
+    }
+
+    /** The bounds are enforced by the API, not just suggested by the input. */
+    public function test_a_size_outside_the_bounds_is_rejected(): void
+    {
+        $this->actingAsAdmin();
+        $config = VerificationPromotionEmail::current();
+
+        $payload = $config->only(array_diff($config->getFillable(), ['hidden_blocks']));
+
+        $this->putJson('/api/v1/admin/verification-promotion', [
+            ...$payload,
+            'button_text_font_size' => VerificationPromotionEmail::BUTTON_TEXT_MAX_SIZE + 1,
+        ])->assertStatus(422)->assertJsonValidationErrors('button_text_font_size');
+    }
+
     // ── The intro panel, which is what set the paragraph in from the heading ──
 
     /** No background colour: the plain paragraph, flush with the heading. */

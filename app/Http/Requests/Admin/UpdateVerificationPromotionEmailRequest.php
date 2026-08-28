@@ -74,6 +74,14 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
                 'max:' . VerificationPromotionEmail::INTRO_TEXT_MAX_SIZE,
             ],
             'intro_text_background_color' => ['nullable', 'string', $hex],
+
+            // Button label size — ONE value for BOTH buttons, so they stay a
+            // matched pair. Bounds from the model, same as the intro's.
+            'button_text_font_size' => [
+                'nullable', 'integer',
+                'min:' . VerificationPromotionEmail::BUTTON_TEXT_MIN_SIZE,
+                'max:' . VerificationPromotionEmail::BUTTON_TEXT_MAX_SIZE,
+            ],
             'secondary_text'    => ['nullable', 'string', 'max:1000'],
             'disclaimer_text'   => ['nullable', 'string', 'max:1000'],
 
@@ -196,6 +204,10 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
                 . VerificationPromotionEmail::INTRO_TEXT_MIN_SIZE . 'px.',
             'intro_text_font_size.max' => 'The intro text size cannot exceed '
                 . VerificationPromotionEmail::INTRO_TEXT_MAX_SIZE . 'px.',
+            'button_text_font_size.min' => 'The button text size must be at least '
+                . VerificationPromotionEmail::BUTTON_TEXT_MIN_SIZE . 'px.',
+            'button_text_font_size.max' => 'The button text size cannot exceed '
+                . VerificationPromotionEmail::BUTTON_TEXT_MAX_SIZE . 'px.',
             'intro_text_background_color.regex' => 'The intro background must be a valid hex color (e.g. #f3f4f6).',
         ];
     }

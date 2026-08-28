@@ -40,6 +40,22 @@ class VerificationPromotionEmail extends SitePromotionEmail
     public const int INTRO_TEXT_MIN_SIZE = 12;
     public const int INTRO_TEXT_MAX_SIZE = 32;
 
+    /**
+     * Button label sizing, in px — ONE value for BOTH buttons.
+     *
+     * They already share a fixed width so they read as one repeated call to
+     * action; letting their labels differ in size would undo that. Same
+     * single-source rule as the intro sizing above: the Form Request rule, the
+     * render fallback and the admin's number input all read these.
+     *
+     * The range is narrower than the intro's: a button label under 12px is hard
+     * to hit accurately on a phone, and over 24px starts wrapping inside a
+     * 280px-wide pill.
+     */
+    public const int BUTTON_TEXT_DEFAULT_SIZE = 16;
+    public const int BUTTON_TEXT_MIN_SIZE = 12;
+    public const int BUTTON_TEXT_MAX_SIZE = 24;
+
     public const int MAX_DELAY_MINUTES = 43200;
 
     /**
@@ -118,6 +134,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'heading',
         'intro_text',
         'intro_text_font_size',
+        'button_text_font_size',
         'intro_text_background_color',
         'secondary_text',
         'cta_button_text',
@@ -174,6 +191,7 @@ class VerificationPromotionEmail extends SitePromotionEmail
             'delay_minutes'   => 'integer',
             'preview_site_id'      => 'integer',
             'intro_text_font_size' => 'integer',
+            'button_text_font_size' => 'integer',
             'hidden_blocks'   => 'array',
             'sendgrid_key_id' => 'integer',
             'mailgun_key_id'  => 'integer',
@@ -413,6 +431,11 @@ class VerificationPromotionEmail extends SitePromotionEmail
 
         $background = trim((string) $this->intro_text_background_color);
         $out['intro_text_background_color'] = $background !== '' ? $background : null;
+
+        // Button label size — same coalescing as the intro's, so the Blade never
+        // emits an empty font-size and an untouched row keeps today's 16px.
+        $buttonSize = (int) ($this->button_text_font_size ?? 0);
+        $out['button_text_font_size'] = $buttonSize > 0 ? $buttonSize : self::BUTTON_TEXT_DEFAULT_SIZE;
 
         // Footer navigation links: substitute placeholders in each label + url,
         // drop any entry missing either half. Left as raw strings — Blade escapes
