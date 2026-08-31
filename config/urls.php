@@ -27,5 +27,8 @@ return [
         'idevaffiliation' => env('SITE_URL_IDEVAFFILIATION', 'https://idevaffiliation.com'),
         'winpalack'       => env('SITE_URL_WINPALACK', 'https://winpalack.com'),
         'roulettingo'     => env('SITE_URL_ROULETTINGO', 'https://roulettingo.com'),
+        'viglinksi'       => env('SITE_URL_VIGLINKSI', 'https://viglinksi.com'),
+        'nongambles'      => env('SITE_URL_NONGAMBLES', 'https://nongambles.com'),
+        'crogambline'     => env('SITE_URL_CROGAMBLINE', 'https://crogambline.com'),
     ],
 ];
