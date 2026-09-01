@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Throwable;
 
 /**
  * One warmup delivery attempt — which address was mailed, from which site, with
@@ -113,6 +115,58 @@ class WarmupSendRecipient extends Model
     public function scopeWithStatus(Builder $query, mixed $status): Builder
     {
         return in_array($status, self::STATUSES, true) ? $query->where('status', $status) : $query;
+    }
+
+    /**
+     * Lower bound of the `sent_at` history filter, inclusive from midnight.
+     */
+    public function scopeSentFrom(Builder $query, mixed $from): Builder
+    {
+        $date = self::asDay($from);
+
+        return $date === null ? $query : $query->where('sent_at', '>=', $date->startOfDay());
+    }
+
+    /**
+     * Upper bound of the `sent_at` history filter, inclusive of the whole day.
+     *
+     * Expressed as "< the day AFTER $to" rather than "<= $to" on purpose.
+     * `sent_at` is a DATETIME, so `<= '2026-09-01'` compares against
+     * `2026-09-01 00:00:00` and would silently drop every send made during that
+     * day — the sibling promotion-history filter can use `<=` only because its
+     * column is a plain DATE. The half-open form is also index-friendly, which
+     * `whereDate()` would not be: wrapping the column in a function makes
+     * `warmup_recipients_sent_index` unusable.
+     *
+     * Both bounds are UTC days, matching config('app.timezone') and the stored
+     * column. The table renders `sent_at` in the browser's zone, so for an admin
+     * outside UTC a row near midnight can display on the adjacent day.
+     */
+    public function scopeSentUntil(Builder $query, mixed $to): Builder
+    {
+        $date = self::asDay($to);
+
+        return $date === null ? $query : $query->where('sent_at', '<', $date->addDay()->startOfDay());
+    }
+
+    /**
+     * A filter value parsed to a date, or null when it is absent or unparseable.
+     *
+     * Null rather than an exception: these are read-only list filters, and a
+     * malformed `?sent_from=whatever` should return the unfiltered list, not a
+     * 500. The send path validates properly.
+     */
+    private static function asDay(mixed $value): ?Carbon
+    {
+        if (! is_scalar($value) || trim((string) $value) === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse(trim((string) $value));
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

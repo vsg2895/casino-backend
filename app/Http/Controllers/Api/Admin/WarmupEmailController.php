@@ -455,7 +455,9 @@ class WarmupEmailController extends Controller
             ->search($request->query('search'))
             ->forSite($request->query('site_id'))
             ->forTemplate($request->query('template'))
-            ->withStatus($request->query('status'));
+            ->withStatus($request->query('status'))
+            ->sentFrom($request->query('sent_from'))
+            ->sentUntil($request->query('sent_to'));
     }
 
     /**
