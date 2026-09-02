@@ -8,6 +8,8 @@ use Symfony\Component\Mailer\Exception\HttpTransportException;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
+use Symfony\Component\Mime\Part\DataPart;
+use Symfony\Component\Mime\Part\Multipart\FormDataPart;
 use Symfony\Contracts\HttpClient\Exception\ExceptionInterface as HttpExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
@@ -18,7 +20,8 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * because that bridge is not installed and adding a Composer dependency was out
  * of scope for this change. The surface we need is small and stable.
  *
- * Posts to the **messages.mime** endpoint, not the form-field one. That matters:
+ * Posts to the **messages.mime** endpoint, not the form-field one. That endpoint
+ * accepts multipart/form-data ONLY — see doSend() — and that matters:
  * promotion mail carries RFC 8058 `List-Unsubscribe` / `List-Unsubscribe-Post`
  * headers, which is what makes Gmail and Apple Mail render a native unsubscribe
  * button. The field-based endpoint would require re-mapping every header by
@@ -58,17 +61,38 @@ final class MailgunApiTransport extends AbstractTransport
             $envelope->getRecipients(),
         );
 
+        // The messages.mime endpoint accepts ONLY multipart/form-data. Passing a
+        // plain array as `body` makes symfony/http-client encode it as
+        // application/x-www-form-urlencoded, which Mailgun rejects outright:
+        //
+        //   400 "Invalid request content type. Expecting 'multipart/form-data'
+        //        but got 'application/x-www-form-urlencoded'"
+        //
+        // So the body is built as a FormDataPart and streamed, with its prepared
+        // Content-Type (including the generated boundary) passed as a header.
+        //
+        // Each recipient is its own integer-keyed single-element array, which is
+        // how FormDataPart emits REPEATED `to` fields. A string key with an array
+        // value would produce `to[0]`, `to[1]` instead, which Mailgun does not
+        // accept — and comma-joining is unsafe here because a display name may
+        // itself contain a comma ("Doe, John" <j@x.com>).
+        $fields = [];
+        foreach ($recipients as $recipient) {
+            $fields[] = ['to' => $recipient];
+        }
+        // Filename `message.mime` and no explicit content type, matching
+        // symfony/mailgun-mailer's own transport.
+        $fields['message'] = new DataPart($message->toString(), 'message.mime');
+
+        $form = new FormDataPart($fields);
+
         try {
             $response = $this->client->request('POST', $this->endpoint(), [
                 // Mailgun authenticates with HTTP basic auth, username literally
                 // "api" and the private key as the password.
                 'auth_basic' => ['api', $this->apiKey],
-                'body' => [
-                    // Envelope recipients, so BCC is honoured without appearing
-                    // in the MIME headers.
-                    'to' => $recipients,
-                    'message' => $message->toString(),
-                ],
+                'headers' => $form->getPreparedHeaders()->toArray(),
+                'body' => $form->bodyToIterable(),
             ]);
 
             $statusCode = $response->getStatusCode();

@@ -26,8 +26,16 @@ class MailgunKeyResource extends JsonResource
             'name'       => $this->name,
             'domain'     => $this->domain,
             'region'     => $this->region,
+            // Sender identity, recorded for reference only — no send path reads
+            // it. Both may legitimately be null.
+            'from_address' => $this->from_address,
+            'from_name'    => $this->from_name,
             'masked_key' => $this->maskedKey(),
             'status'     => $this->status,
+            // Whether this credential can AUTHENTICATE. Deliberately not tied
+            // to sender identity — a credential with no from_address is
+            // complete, because the site template supplies one.
+            'can_authenticate' => $this->canAuthenticate(),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

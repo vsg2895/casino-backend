@@ -24,9 +24,19 @@ class UpdateMailgunKeyRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name'    => ['required', 'string', 'max:120'],
+            'name'    => [
+                'required', 'string', 'max:120',
+                // Ignore this row, or saving an unchanged name would collide
+                // with itself.
+                Rule::unique('mailgun_keys', 'name')->ignore($this->route('mailgun_key')),
+            ],
             'domain'  => ['required', 'string', 'max:255', 'regex:/^(?!https?:\/\/)[a-z0-9.-]+\.[a-z]{2,}$/i'],
             'api_key' => ['nullable', 'string', 'min:20', 'max:500'],
+            // Sender identity — OPTIONAL, recorded for reference only; no send
+            // path reads it. Still validated as a real address so a stored value
+            // is never malformed.
+            'from_address' => ['nullable', 'email:rfc', 'max:255'],
+            'from_name'    => ['nullable', 'string', 'max:120'],
             'region'  => ['sometimes', Rule::in(MailgunKey::REGIONS)],
             'status'  => ['sometimes', Rule::in(MailgunKey::STATUSES)],
         ];

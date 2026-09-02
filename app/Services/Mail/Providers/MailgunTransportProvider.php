@@ -53,14 +53,18 @@ final class MailgunTransportProvider implements PromotionTransportProvider
      */
     public function mailerForKey(MailgunKey $key): Mailer
     {
-        $plainKey = (string) $key->api_key; // decrypted via the model cast
-        $domain = trim((string) $key->domain);
-
-        if ($plainKey === '' || $domain === '') {
+        // Completeness is the MODEL's definition, so the admin badge and this
+        // guard can never disagree about what "usable" means. Sender identity is
+        // deliberately not part of it: a credential with no from_address is
+        // complete, because the site template supplies the sender.
+        if (! $key->canAuthenticate()) {
             throw new PromotionMailerException(
-                "Mailgun key #{$key->id} is missing its domain or API key; cannot authenticate.",
+                "Mailgun credential #{$key->id} is missing its domain or API key; cannot authenticate.",
             );
         }
+
+        $plainKey = (string) $key->api_key; // decrypted via the model cast
+        $domain = trim((string) $key->domain);
 
         $name = 'mailgun_key_' . $key->id;
         config()->set("mail.mailers.{$name}", [

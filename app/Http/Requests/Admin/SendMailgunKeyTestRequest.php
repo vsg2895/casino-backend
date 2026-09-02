@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Services\Mail\EmailTemplateCatalog;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -26,10 +27,22 @@ class SendMailgunKeyTestRequest extends FormRequest
     {
         return [
             'to'       => ['required', 'string', 'email', 'max:180'],
-            'site_id'  => ['required', 'integer', 'exists:sites,id'],
-            // Whitelist comes from the catalog, so a future template is
-            // accepted here the moment it is registered.
-            'template' => ['required', 'string', Rule::in(app(EmailTemplateCatalog::class)->keys())],
+            // Optional for the MAILGUN test only: that dialog has no website
+            // picker, so the controller falls back to the first active site.
+            // SendGrid's own test request still requires it — see
+            // SendSendgridKeyTestRequest, which is deliberately not changed.
+            'site_id'  => ['nullable', 'integer', 'exists:sites,id'],
+            // Catalog keys, PLUS this screen's own connection test. The test is
+            // deliberately not in the catalog — that is shared with the SendGrid
+            // dialog and the warmup picker, and this option belongs to neither.
+            'template' => [
+                'required',
+                'string',
+                Rule::in([
+                    MailgunKeyController::TEMPLATE_CONNECTION_TEST,
+                    ...app(EmailTemplateCatalog::class)->keys(),
+                ]),
+            ],
             // Optional — drives the "Dear {name}," greeting, as in the per-site tests.
             'name'     => ['nullable', 'string', 'max:255'],
         ];

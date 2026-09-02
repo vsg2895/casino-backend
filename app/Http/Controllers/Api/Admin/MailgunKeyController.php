@@ -9,9 +9,12 @@ use App\Http\Requests\Admin\SendMailgunKeyTestRequest;
 use App\Http\Requests\Admin\StoreMailgunKeyRequest;
 use App\Http\Requests\Admin\UpdateMailgunKeyRequest;
 use App\Http\Resources\MailgunKeyResource;
+use App\Mail\MailgunCredentialTestMail;
+use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\MailgunKey;
 use App\Models\Site;
+use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\PromotionMailerFactory;
 use Illuminate\Http\JsonResponse;
@@ -25,12 +28,29 @@ use Throwable;
  * Admin CRUD for stored Mailgun credentials used by scheduled promotion sends.
  *
  * The raw key is write-only: accepted on create/update, never returned (the
- * Resource exposes only a masked preview). Deleting a key nulls it out on any
- * schedule that referenced it (FK nullOnDelete) — those schedules then fail
- * gracefully at send time until a new key is chosen.
+ * Resource exposes only a masked preview).
+ *
+ * A credential still referenced by a schedule or by the Promotion After
+ * Verification settings CANNOT be deleted — see {@see destroy()}. The foreign
+ * keys are nullOnDelete, so the delete would otherwise succeed and leave the
+ * referencing row silently pointing at nothing until its next run failed.
+ *
+ * Credentials may also carry a sender identity (from_address / from_name),
+ * recorded for reference only — no send path reads it. Every send takes its
+ * sender from the site template's own from_email.
  */
 class MailgunKeyController extends Controller
 {
+    /**
+     * This screen's own connection-test template.
+     *
+     * Not an EmailTemplateCatalog key on purpose: that catalog is shared with
+     * the SendGrid test dialog and the warmup template picker, and this option
+     * is specific to Mailgun credentials. Keeping it here leaves both of those
+     * untouched.
+     */
+    public const string TEMPLATE_CONNECTION_TEST = 'mailgun_connection_test';
+
     public function index(Request $request): AnonymousResourceCollection
     {
         $query = MailgunKey::query()->latest();
@@ -64,19 +84,61 @@ class MailgunKeyController extends Controller
         return new MailgunKeyResource($mailgunKey);
     }
 
+    /**
+     * Delete a credential, unless something still sends through it.
+     *
+     * The foreign keys are nullOnDelete, so a delete would SUCCEED and quietly
+     * leave the referencing schedule pointing at nothing — it would then fail at
+     * its next run with "credential missing", long after the admin who deleted
+     * it had moved on. Refusing up front, and naming what still uses it, turns a
+     * delayed silent breakage into an immediate answerable error.
+     */
     public function destroy(MailgunKey $mailgunKey): JsonResponse
     {
+        $blockers = $this->referencesTo($mailgunKey);
+
+        if ($blockers !== []) {
+            return response()->json([
+                'message' => 'This credential is still in use by ' . implode(' and ', $blockers)
+                    . '. Point those at another credential first.',
+            ], Response::HTTP_CONFLICT);
+        }
+
         $mailgunKey->delete();
 
         return response()->json(null, Response::HTTP_NO_CONTENT);
     }
 
     /**
+     * Human-readable list of what still references this credential.
+     *
+     * @return list<string>
+     */
+    private function referencesTo(MailgunKey $mailgunKey): array
+    {
+        $blockers = [];
+
+        $schedules = EmailSchedule::query()->where('mailgun_key_id', $mailgunKey->id)->pluck('name');
+        if ($schedules->isNotEmpty()) {
+            $blockers[] = 'schedule "' . $schedules->implode('", "') . '"';
+        }
+
+        $verification = VerificationPromotionEmail::query()
+            ->where('mailgun_key_id', $mailgunKey->id)
+            ->exists();
+        if ($verification) {
+            $blockers[] = 'the Promotion After Verification settings';
+        }
+
+        return $blockers;
+    }
+
+    /**
      * Send a REAL site email template THROUGH this stored key to prove it works.
      *
-     * The admin picks the template (see {@see EmailTemplateCatalog}) and the
-     * website it should be rendered for, so the test exercises the exact content
-     * a live send would produce — not placeholder text.
+     * The admin picks the template (see {@see EmailTemplateCatalog}); the site
+     * is resolved below rather than chosen, so the test exercises the exact
+     * content a live send would produce — not placeholder text.
      *
      * Unlike the per-site test buttons (which always use the .env SMTP mailer,
      * see {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}), this one
@@ -96,7 +158,28 @@ class MailgunKeyController extends Controller
     ): JsonResponse {
         $to = (string) $request->validated('to');
         $type = (string) $request->validated('template');
-        $site = Site::findOrFail($request->integer('site_id'));
+
+        // The connection test renders no site content, so it short-circuits
+        // everything below: no site to resolve, no subscriber to register.
+        if ($type === self::TEMPLATE_CONNECTION_TEST) {
+            return $this->sendConnectionTest($mailgunKey, $to, $mailers);
+        }
+
+        // No website picker in this dialog. Every template in the catalog
+        // renders a specific site's content, so one still has to be chosen —
+        // the first ACTIVE site, ordered by id so the choice is stable between
+        // runs rather than whatever the database happened to return first.
+        // The success message names the site that was used, so the admin is
+        // never left guessing which content they received.
+        $site = Site::query()->where('active', true)->orderBy('id')->first()
+            ?? Site::query()->orderBy('id')->first();
+
+        if ($site === null) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'No website is registered yet, so there is no template content to render.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         // Register the recipient against the selected site so the rendered
         // template carries that subscriber's REAL per-stream tokens — the
@@ -139,6 +222,48 @@ class MailgunKeyController extends Controller
                 $to,
                 $mailgunKey->name,
             ),
+        ]);
+    }
+
+    /**
+     * Send the plain connection test through this credential.
+     *
+     * Nothing site-specific is touched, so a failure here is unambiguous: the
+     * credential, its domain, its region or its sender. The credential's own
+     * from_address is used when it has one — there is no site template behind
+     * this message to inherit a sender from.
+     */
+    private function sendConnectionTest(
+        MailgunKey $mailgunKey,
+        string $to,
+        PromotionMailerFactory $mailers,
+    ): JsonResponse {
+        try {
+            $mailers->mailerForMailgunKey($mailgunKey)->to($to)->send(
+                new MailgunCredentialTestMail(
+                    (string) $mailgunKey->name,
+                    (string) $mailgunKey->domain,
+                    (string) $mailgunKey->region,
+                    $mailgunKey->from_address,
+                    $mailgunKey->from_name,
+                ),
+            );
+        } catch (Throwable $e) {
+            Log::warning('Mailgun connection test failed', [
+                'mailgun_key_id' => $mailgunKey->id,
+                'to'             => $to,
+                'error'          => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'ok'      => false,
+                'message' => 'Connection test failed: ' . $e->getMessage(),
+            ], Response::HTTP_BAD_GATEWAY);
+        }
+
+        return response()->json([
+            'ok'      => true,
+            'message' => sprintf('Connection test sent to %s using "%s".', $to, $mailgunKey->name),
         ]);
     }
 

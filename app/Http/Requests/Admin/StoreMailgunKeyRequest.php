@@ -20,7 +20,7 @@ class StoreMailgunKeyRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name'    => ['required', 'string', 'max:120'],
+            'name'    => ['required', 'string', 'max:120', Rule::unique('mailgun_keys', 'name')],
             // The sending domain registered in Mailgun (e.g. mg.example.com).
             // Validated as a hostname, not a URL — a scheme here is a common
             // mistake that only surfaces later as an opaque API 404.
@@ -28,6 +28,11 @@ class StoreMailgunKeyRequest extends FormRequest
             // Mailgun private keys are long opaque strings; keep the check loose
             // but reject obviously-empty/short values, as the SendGrid rule does.
             'api_key' => ['required', 'string', 'min:20', 'max:500'],
+            // Sender identity — OPTIONAL, recorded for reference only; no send
+            // path reads it. Still validated as a real address so a stored value
+            // is never malformed.
+            'from_address' => ['nullable', 'email:rfc', 'max:255'],
+            'from_name'    => ['nullable', 'string', 'max:120'],
             'region'  => ['sometimes', Rule::in(MailgunKey::REGIONS)],
             'status'  => ['sometimes', Rule::in(MailgunKey::STATUSES)],
         ];
