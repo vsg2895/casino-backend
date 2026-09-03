@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
+use App\Http\Controllers\Api\Admin\MailgunReceiverController;
 use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\NewsletterPhoneController;
@@ -29,6 +30,8 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
 use App\Http\Controllers\Api\Public\CmsPageController as PublicCmsPageController;
+use App\Http\Controllers\Api\Public\MailgunUnsubscribeController;
+use App\Http\Controllers\Api\Public\MailgunWebhookController;
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
@@ -204,6 +207,30 @@ Route::prefix('v1')->group(function () {
             ->except(['show']);
         Route::patch('mailgun-keys/{mailgun_key}/toggle', [MailgunKeyController::class, 'toggle']);
         Route::post('mailgun-keys/{mailgun_key}/test', [MailgunKeyController::class, 'test']);
+
+        // ── Mailgun receivers ────────────────────────────────────────────────
+        // Literal segments declared BEFORE the apiResource, or {mailgun_receiver}
+        // swallows "count", "import" and "bulk" as ids — the ordering rule the
+        // existing resources in this file follow.
+        Route::get('mailgun-receivers/count', [MailgunReceiverController::class, 'count']);
+        Route::post('mailgun-receivers/import', [MailgunReceiverController::class, 'import']);
+        Route::get('mailgun-receivers/imports/{mailgun_receiver_import}', [MailgunReceiverController::class, 'importStatus']);
+        Route::post('mailgun-receivers/bulk', [MailgunReceiverController::class, 'bulk']);
+        Route::apiResource('mailgun-receivers', MailgunReceiverController::class)
+            ->parameters(['mailgun-receivers' => 'mailgun_receiver'])
+            ->except(['show']);
+
+        // Per-credential receiver targeting. Nested under the credential because
+        // the credential IS the configuration — there is no separate schedule.
+        Route::get('mailgun-keys/{mailgun_key}/receiver-settings', [MailgunKeyController::class, 'receiverSettings']);
+        Route::put('mailgun-keys/{mailgun_key}/receiver-settings', [MailgunKeyController::class, 'updateReceiverSettings']);
+        Route::get('mailgun-keys/{mailgun_key}/receiver-preview', [MailgunKeyController::class, 'previewReceiverBatch']);
+        // Renders the message from UNSAVED fields, which is why it is a POST —
+        // the draft template travels in the body, as the other template previews do.
+        Route::post('mailgun-keys/{mailgun_key}/receiver-message-preview', [MailgunKeyController::class, 'previewReceiverMessage']);
+        // Re-seeds the form from the source site's promotion template.
+        Route::get('mailgun-keys/{mailgun_key}/receiver-template-source', [MailgunKeyController::class, 'receiverTemplateSource']);
+        Route::post('mailgun-keys/{mailgun_key}/receiver-run', [MailgunKeyController::class, 'runReceiverCampaign']);
         // Templates available to that test (drives the admin dropdown).
         Route::get('email-template-types', [EmailTemplateTypeController::class, 'index']);
 
@@ -238,6 +265,24 @@ Route::prefix('v1')->group(function () {
     // send neither the site key nor the slug.
     Route::post('unsubscribe/{token}', [PublicUnsubscribeController::class, 'oneClick'])
         ->middleware('throttle:60,1');
+
+    // ── Mailgun receiver unsubscribe (keyless, token is the credential) ──────
+    // POST acts immediately: it is the List-Unsubscribe-Post target.
+    // GET only RENDERS a confirm page — mail clients and scanners prefetch GET
+    // links, and an acting GET would unsubscribe people who never clicked. Same
+    // reasoning as the newsletter routes above.
+    Route::post('mailgun-unsubscribe/{token}', [MailgunUnsubscribeController::class, 'oneClick'])
+        ->middleware('throttle:60,1');
+    Route::get('mailgun-unsubscribe/{token}', [MailgunUnsubscribeController::class, 'show'])
+        ->middleware('throttle:60,1');
+    Route::post('mailgun-unsubscribe/{token}/confirm', [MailgunUnsubscribeController::class, 'confirm'])
+        ->middleware('throttle:60,1');
+
+    // Mailgun delivery events. Public by necessity — Mailgun sends no bearer
+    // token — so the HMAC signature is the only authentication; see the
+    // controller. Throttled generously: a large send produces many events.
+    Route::post('mailgun-webhook', MailgunWebhookController::class)
+        ->middleware('throttle:600,1');
 
     // ── Double opt-in verify (keyless, token is the credential) ──────────────
     // Target of the verify link in the verify email. POST-only for parity with

@@ -47,6 +47,17 @@ class MailgunKey extends Model
         'from_address',
         'from_name',
         'status',
+        // Receiver targeting. Mass-assignable because the settings modal saves
+        // them as one validated array — every value arriving here has been
+        // through UpdateMailgunReceiverSettingsRequest.
+        'send_enabled',
+        'batch_size',
+        'selection_order',
+        'cooldown_days',
+        'only_active',
+        'message_subject',
+        'message_html',
+        'message_template',
     ];
 
     /** Keep the decryptable key out of array/JSON output by default. */
@@ -55,7 +66,14 @@ class MailgunKey extends Model
     protected function casts(): array
     {
         return [
-            'api_key' => 'encrypted',
+            'api_key'          => 'encrypted',
+            'send_enabled'     => 'boolean',
+            'only_active'      => 'boolean',
+            'batch_size'       => 'integer',
+            'cooldown_days'    => 'integer',
+            'last_run_at'      => 'datetime',
+            // The authored fields behind message_html — see MailgunReceiverTemplate.
+            'message_template' => 'array',
         ];
     }
 

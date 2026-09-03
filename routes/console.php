@@ -50,6 +50,13 @@ Schedule::command('promotions:dispatch-verification')
     ->everyMinute();
 
 // Provision upcoming monthly partitions for the promotion history table.
+// Mailgun receiver sends. Hourly rather than every minute: the cooldown is
+// expressed in DAYS, so a finer tick would only re-check a set that cannot have
+// changed. No withoutOverlapping() — the command only dispatches, and the
+// duplicate guard lives in the database, so a stranded lock would be a bigger
+// risk than an overlapping tick.
+Schedule::command('mailgun:dispatch-receivers')->hourly();
+
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();

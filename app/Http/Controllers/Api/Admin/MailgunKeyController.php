@@ -8,7 +8,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendMailgunKeyTestRequest;
 use App\Http\Requests\Admin\StoreMailgunKeyRequest;
 use App\Http\Requests\Admin\UpdateMailgunKeyRequest;
+use App\Http\Requests\Admin\UpdateMailgunReceiverSettingsRequest;
 use App\Http\Resources\MailgunKeyResource;
+use App\Http\Resources\MailgunReceiverResource;
+use App\Jobs\SendMailgunReceiverCampaignJob;
 use App\Mail\MailgunCredentialTestMail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
@@ -17,6 +20,8 @@ use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Services\MailgunReceiverSelector;
+use App\Support\Mail\MailgunReceiverTemplate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -265,6 +270,169 @@ class MailgunKeyController extends Controller
             'ok'      => true,
             'message' => sprintf('Connection test sent to %s using "%s".', $to, $mailgunKey->name),
         ]);
+    }
+
+    /**
+     * Read this credential's receiver targeting, with a LIVE eligible count.
+     *
+     * The count comes from MailgunReceiverSelector — the same object the sending
+     * job uses — so the number in the modal is the number that will be mailed.
+     */
+    public function receiverSettings(MailgunKey $mailgunKey, MailgunReceiverSelector $selector): JsonResponse
+    {
+        $seed = $this->templateSeed();
+
+        return response()->json(['data' => [
+            'send_enabled'    => (bool) $mailgunKey->send_enabled,
+            'batch_size'      => (int) $mailgunKey->batch_size,
+            'selection_order' => (string) $mailgunKey->selection_order,
+            'cooldown_days'   => $mailgunKey->cooldown_days === null ? null : (int) $mailgunKey->cooldown_days,
+            'message_subject' => $mailgunKey->message_subject ?? $seed['subject'],
+            // The authored fields. A credential that has never been configured
+            // opens on the source site's promotion template rather than a blank
+            // form; one that HAS been configured gets exactly what was saved, so
+            // the seed can never overwrite authored copy. `message_html` is the
+            // rendered output and is NOT returned — nothing in the admin edits
+            // it directly any more.
+            'message_template' => $mailgunKey->message_template === null
+                ? $seed['template']
+                : MailgunReceiverTemplate::merged($mailgunKey->message_template),
+            // Named so the modal can say where the starting copy came from.
+            'template_source' => $seed['site_name'],
+            'last_run_at'     => $mailgunKey->last_run_at,
+            'eligible_count'  => $selector->eligible($mailgunKey),
+            'next_batch_count' => $selector->batchCount($mailgunKey),
+            'blocked_reason'  => SendMailgunReceiverCampaignJob::blockedReason($mailgunKey),
+        ]]);
+    }
+
+    /**
+     * Save the targeting rule and message for this credential.
+     *
+     * `message_html` is rendered here rather than accepted from the client: the
+     * admin authors fields, the server owns the markup. That is what keeps the
+     * layout consistent across credentials and keeps arbitrary HTML — pasted,
+     * malformed or hostile — out of a 100k-recipient send.
+     */
+    public function updateReceiverSettings(
+        UpdateMailgunReceiverSettingsRequest $request,
+        MailgunKey $mailgunKey,
+        MailgunReceiverSelector $selector,
+    ): JsonResponse {
+        $validated = $request->validated();
+        $template = MailgunReceiverTemplate::merged($validated['message_template'] ?? null);
+
+        $mailgunKey->update([
+            ...$validated,
+            'message_template' => $template,
+            // An empty template stores an empty body, so blockedReason() reports
+            // "no message is configured" instead of the credential shipping a
+            // bare shell with nothing but an unsubscribe link in it.
+            'message_html'     => MailgunReceiverTemplate::isEmpty($template)
+                ? null
+                : MailgunReceiverTemplate::render($template),
+        ]);
+
+        return response()->json(['data' => [
+            'eligible_count'   => $selector->eligible($mailgunKey),
+            'next_batch_count' => $selector->batchCount($mailgunKey),
+            'blocked_reason'   => SendMailgunReceiverCampaignJob::blockedReason($mailgunKey->fresh()),
+        ]]);
+    }
+
+    /**
+     * Re-seed the form from the source site's promotion template.
+     *
+     * Separate from {@see receiverSettings()} because that one must NEVER
+     * overwrite authored copy, while this is the admin explicitly asking for it.
+     * Returns the fields only — nothing is written until they save.
+     */
+    public function receiverTemplateSource(MailgunKey $mailgunKey): JsonResponse
+    {
+        return response()->json(['data' => $this->templateSeed()]);
+    }
+
+    /**
+     * The promotion template the receiver form starts from.
+     *
+     * Falls back to a blank template when there is no site to read one from — a
+     * fresh install, or every site deleted — so the modal still opens.
+     *
+     * @return array{subject: string, template: array<string, mixed>, site_name: string|null}
+     */
+    private function templateSeed(): array
+    {
+        $site = MailgunReceiverTemplate::sourceSite();
+
+        if ($site === null) {
+            return [
+                'subject'   => '',
+                'template'  => MailgunReceiverTemplate::defaults(),
+                'site_name' => null,
+            ];
+        }
+
+        return MailgunReceiverTemplate::fromSite($site);
+    }
+
+    /**
+     * Render the message as it would be sent, from unsaved fields.
+     *
+     * Goes through the same renderer and the same wrapper as a real send — the
+     * unsubscribe block included — so what the admin approves in the preview is
+     * what the list receives. Only the unsubscribe destination differs: a preview
+     * has no receiver, so there is no token to address.
+     */
+    public function previewReceiverMessage(Request $request, MailgunKey $mailgunKey): JsonResponse
+    {
+        $validated = $request->validate(MailgunReceiverTemplate::rules());
+        $template = MailgunReceiverTemplate::merged($validated['message_template'] ?? null);
+
+        $html = view('mail.mailgun-receiver-message', [
+            'bodyHtml'        => MailgunReceiverTemplate::render($template),
+            'unsubscribeUrl'  => '#',
+            'backgroundColor' => $template['background_color'],
+            'mutedColor'      => $template['muted_text_color'],
+            'accentColor'     => $template['accent_color'],
+        ])->render();
+
+        return response()->json(['html' => $html]);
+    }
+
+    /**
+     * The exact receivers the next run would take.
+     *
+     * Resolved through the shared selector, so this listing and the send cannot
+     * disagree — the guarantee the brief asks for.
+     */
+    public function previewReceiverBatch(MailgunKey $mailgunKey, MailgunReceiverSelector $selector): JsonResponse
+    {
+        return response()->json([
+            'data' => MailgunReceiverResource::collection($selector->preview($mailgunKey, 100)),
+            'meta' => [
+                'eligible_count'   => $selector->eligible($mailgunKey),
+                'next_batch_count' => $selector->batchCount($mailgunKey),
+            ],
+        ]);
+    }
+
+    /**
+     * Queue one run for this credential now.
+     *
+     * Refuses for the same reasons the scheduler would, using the same method,
+     * so a manual run and an automatic one can never disagree about validity.
+     */
+    public function runReceiverCampaign(MailgunKey $mailgunKey): JsonResponse
+    {
+        $reason = SendMailgunReceiverCampaignJob::blockedReason($mailgunKey);
+
+        if ($reason !== null) {
+            return response()->json(['ok' => false, 'message' => ucfirst($reason) . '.'], Response::HTTP_CONFLICT);
+        }
+
+        SendMailgunReceiverCampaignJob::dispatch($mailgunKey->id);
+
+        return response()->json(['ok' => true, 'message' => 'Run queued.']);
     }
 
     /** Flip active ⇄ inactive without touching the key value. */

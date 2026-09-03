@@ -72,6 +72,22 @@ return [
     'public_mailer' => env('MAIL_PUBLIC_MAILER', env('MAIL_NEWSLETTER_MAILER', 'sendgrid')),
 
     /*
+    | Which site's promotion template seeds a Mailgun credential's receiver
+    | message.
+    |
+    | The receiver settings modal opens with the fields already filled from this
+    | site's Promotion Email, so an operator starts from the approved design and
+    | copy rather than from a blank form. Nothing is written until they save, and
+    | every field stays editable — this is a starting point, not a binding.
+    |
+    | An env() and not a literal because the answer is an operational choice that
+    | differs per environment, and because the alternative — naming a slug in
+    | code — is exactly the hardcoding the project forbids. Unset falls back to
+    | the first active site, so a fresh install still opens with a real template.
+    */
+    'receiver_template_site' => env('MAILGUN_RECEIVER_TEMPLATE_SITE'),
+
+    /*
     | "From" address for public (SendGrid) verification emails.
     |
     | Current production reality: only ONE domain is authenticated in SendGrid
