@@ -55,7 +55,7 @@ Schedule::command('promotions:dispatch-verification')
 // changed. No withoutOverlapping() — the command only dispatches, and the
 // duplicate guard lives in the database, so a stranded lock would be a bigger
 // risk than an overlapping tick.
-Schedule::command('mailgun:dispatch-receivers')->hourly();
+//Schedule::command('mailgun:dispatch-receivers')->hourly();
 
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
