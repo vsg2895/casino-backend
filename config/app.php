@@ -56,6 +56,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Admin Panel URL
+    |--------------------------------------------------------------------------
+    |
+    | Where the Vue admin SPA is served. This API is headless, so APP_URL points
+    | at the API itself and is the WRONG base for any link a human will click —
+    | most importantly the password reset link, which must open the panel's
+    | /reset-password route. See AppServiceProvider::boot().
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

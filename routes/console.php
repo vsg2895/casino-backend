@@ -62,3 +62,10 @@ Schedule::command('promotions:manage-history-partitions')
     ->withoutOverlapping();
 
 //Schedule::command('test:command')->everyMinute();
+
+// Delete token rows that have already expired. Purely housekeeping: an expired
+// token is rejected by Sanctum whether or not the row still exists, so this
+// keeps `personal_access_tokens` from growing without bound and nothing more.
+// The 24-hour grace leaves a recently expired token visible long enough to
+// answer "was I signed out, or did something else happen?".
+Schedule::command('sanctum:prune-expired --hours=24')->daily();

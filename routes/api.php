@@ -45,6 +45,16 @@ Route::prefix('v1')->group(function () {
     // ── Admin auth (public — no token required) ─────────────────────────
     Route::prefix('admin/auth')->group(function () {
         Route::post('login', [AuthController::class, 'login']);
+
+        // Password reset. Public by necessity — someone who cannot sign in
+        // cannot carry a token — so the emailed token IS the credential, and
+        // both are throttled hard for it. The broker adds its own per-address
+        // cooldown on top (config/auth.php 'throttle'); this limit is what stops
+        // an attacker cycling through ADDRESSES rather than retrying one.
+        Route::post('forgot-password', [AuthController::class, 'forgotPassword'])
+            ->middleware('throttle:6,1');
+        Route::post('reset-password', [AuthController::class, 'resetPassword'])
+            ->middleware('throttle:6,1');
     });
 
     // ── Admin (protected) ────────────────────────────────────────────────
@@ -52,6 +62,10 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('auth')->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
+            // Ends every session except this one. Signing in does the same
+            // implicitly; this is the control for an admin who is already
+            // signed in and does not want to sign themselves out to use it.
+            Route::post('logout-other-devices', [AuthController::class, 'logoutOtherDevices']);
             Route::get('me', [AuthController::class, 'me']);
         });
 

@@ -50,7 +50,16 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Minutes a freshly issued admin token stays valid. Sanctum enforces this
+    // on every authenticated request; AuthController ALSO writes the same
+    // deadline onto the token row, so the panel can see its own expiry instead
+    // of discovering it through a failed request.
+    //
+    // Absolute, not idle-based: an idle timeout needs a write on every request
+    // to slide the window, and this panel is used in long editing sessions where
+    // that write would be the busiest query in the application. Set to 0 to
+    // disable expiry entirely.
+    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION', 180),
 
     /*
     |--------------------------------------------------------------------------

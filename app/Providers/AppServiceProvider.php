@@ -13,6 +13,7 @@ use App\Repositories\CmsPageRepository;
 use App\Services\Mail\Transport\MailgunApiTransport;
 use App\Services\Mail\Transport\SendgridClickTrackingClient;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\ServiceProvider;
 use Symfony\Component\HttpClient\HttpClient;
@@ -31,6 +32,21 @@ class AppServiceProvider extends ServiceProvider
         Casino::observe(CasinoObserver::class);
 
         Gate::policy(CmsPage::class, CmsPagePolicy::class);
+
+        // The reset link must land in the ADMIN SPA, not on an API route.
+        // Laravel's default builds a URL against APP_URL, which here is the
+        // headless API — following it would 404 and the reset would look broken
+        // rather than merely misconfigured. FRONTEND_URL already names the panel.
+        ResetPassword::createUrlUsing(static function (object $notifiable, string $token): string {
+            $base = rtrim((string) config('app.frontend_url'), '/');
+
+            return $base . '/reset-password?' . http_build_query([
+                'token' => $token,
+                // Carried in the link because the reset form must submit the
+                // address the token was issued for; the broker verifies the pair.
+                'email' => $notifiable->getEmailForPasswordReset(),
+            ]);
+        });
 
         // Native SendGrid HTTP API transport (not the SMTP relay). Used by the
         // `sendgrid` mailer (config('mail.public_mailer')) so public verification
