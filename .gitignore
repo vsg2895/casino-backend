@@ -25,3 +25,9 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Live SMTP / Mailgun SMTP passwords for the Email Configs seeder.
+# The seeder that reads this IS tracked; the credentials it loads are not.
+# Place this file by hand on each machine that needs to seed, from
+# database/seeders/data/smtp-credentials.example.json.
+/database/seeders/data/smtp-credentials.json

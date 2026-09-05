@@ -8,11 +8,13 @@ use App\Exceptions\PromotionMailerException;
 use App\Models\EmailSchedule;
 use App\Models\MailgunKey;
 use App\Models\SendgridKey;
+use App\Models\SmtpCredential;
 use App\Services\Mail\Providers\MailgunTransportProvider;
 use App\Services\Mail\Providers\PromotionTransportProvider;
 use App\Services\Mail\Providers\SendgridEnvTransportProvider;
 use App\Services\Mail\Providers\SendgridTransportProvider;
 use App\Services\Mail\Providers\SmtpTransportProvider;
+use App\Services\Mail\Providers\StoredSmtpTransportProvider;
 use Illuminate\Contracts\Mail\Mailer;
 
 /**
@@ -72,6 +74,21 @@ class PromotionMailerFactory
     public function mailerForMailgunKey(MailgunKey $key): Mailer
     {
         return $this->mailgun()->mailerForKey($key);
+    }
+
+    /**
+     * Mailer bound to a specific stored SMTP server, active or not.
+     *
+     * The receiver-campaign counterpart of {@see mailerForMailgunKey()}. Its
+     * provider is deliberately absent from {@see providers()}: stored SMTP
+     * credentials run only from the "Run now" button, never from a schedule, so
+     * there is no `email_schedules.provider` value that should resolve to it.
+     *
+     * @throws PromotionMailerException
+     */
+    public function mailerForSmtpCredential(SmtpCredential $credential): Mailer
+    {
+        return (new StoredSmtpTransportProvider())->mailerForCredential($credential);
     }
 
     /**

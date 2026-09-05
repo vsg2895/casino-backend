@@ -362,17 +362,7 @@ class MailgunKeyController extends Controller
      */
     private function templateSeed(): array
     {
-        $site = MailgunReceiverTemplate::sourceSite();
-
-        if ($site === null) {
-            return [
-                'subject'   => '',
-                'template'  => MailgunReceiverTemplate::defaults(),
-                'site_name' => null,
-            ];
-        }
-
-        return MailgunReceiverTemplate::fromSite($site);
+        return MailgunReceiverTemplate::seed();
     }
 
     /**

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Mail;
 
-use App\Models\MailgunKey;
+use App\Contracts\ReceiverCampaignCredential;
 use App\Models\MailgunReceiver;
 use App\Support\Mail\MailgunReceiverTemplate;
 use Illuminate\Bus\Queueable;
@@ -16,7 +16,12 @@ use Illuminate\Mail\Mailables\Headers;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * One message to one receiver, sent through one Mailgun credential.
+ * One message to one receiver on the Mailgun receiver list.
+ *
+ * The credential is whatever is sending — a Mailgun API key or a stored SMTP
+ * server. Both implement {@see ReceiverCampaignCredential}, so this mailable
+ * never learns which, and the two channels cannot drift into composing
+ * different messages from the same authored template.
  *
  * The body is the credential's own `message_html`, authored in the admin. What
  * is NOT authored there — and cannot be removed by editing it — is the
@@ -39,7 +44,7 @@ class MailgunReceiverMessage extends Mailable
     use SerializesModels;
 
     public function __construct(
-        public readonly MailgunKey $credential,
+        public readonly ReceiverCampaignCredential $credential,
         public readonly MailgunReceiver $receiver,
     ) {}
 
@@ -47,16 +52,20 @@ class MailgunReceiverMessage extends Mailable
     {
         $from = null;
 
-        if ((string) $this->credential->from_address !== '') {
+        // Empty means "let the transport decide". For Mailgun that is the site
+        // template's sender, which is the behaviour that predates this
+        // interface; a stored SMTP server always supplies one, because it has no
+        // other source of identity.
+        if ((string) $this->credential->campaignFromAddress() !== '') {
             $from = new Address(
-                (string) $this->credential->from_address,
-                (string) $this->credential->from_name ?: null,
+                (string) $this->credential->campaignFromAddress(),
+                (string) $this->credential->campaignFromName() ?: null,
             );
         }
 
         return new Envelope(
             from: $from,
-            subject: (string) ($this->credential->message_subject ?: 'Message'),
+            subject: $this->credential->campaignSubject() ?: 'Message',
         );
     }
 
@@ -65,12 +74,12 @@ class MailgunReceiverMessage extends Mailable
         // The palette the body was rendered with, so the appended unsubscribe
         // block sits on the same column rather than on a white strip below it.
         // Read from the template fields, never from the rendered HTML.
-        $palette = MailgunReceiverTemplate::merged($this->credential->message_template);
+        $palette = MailgunReceiverTemplate::merged($this->credential->campaignTemplate());
 
         return new Content(
             view: 'mail.mailgun-receiver-message',
             with: [
-                'bodyHtml'        => $this->personalise((string) $this->credential->message_html),
+                'bodyHtml'        => $this->personalise($this->credential->campaignHtml()),
                 'unsubscribeUrl'  => $this->unsubscribeUrl(),
                 'backgroundColor' => $palette['background_color'],
                 'mutedColor'      => $palette['muted_text_color'],

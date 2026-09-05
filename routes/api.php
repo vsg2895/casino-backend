@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\MailgunReceiverController;
+use App\Http\Controllers\Api\Admin\SmtpCredentialController;
 use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\NewsletterPhoneController;
@@ -234,6 +235,24 @@ Route::prefix('v1')->group(function () {
         // Re-seeds the form from the source site's promotion template.
         Route::get('mailgun-keys/{mailgun_key}/receiver-template-source', [MailgunKeyController::class, 'receiverTemplateSource']);
         Route::post('mailgun-keys/{mailgun_key}/receiver-run', [MailgunKeyController::class, 'runReceiverCampaign']);
+
+        // ── SMTP credentials (Email Configs) ─────────────────────────────────
+        // Own SMTP servers that mail the SAME receiver list through a different
+        // transport. Same CRUD / toggle / test / receiver-targeting contract as
+        // mailgun-keys above, minus scheduling: this channel runs only from the
+        // "Run now" button, so there is no send_enabled and no scheduler entry.
+        Route::apiResource('smtp-credentials', SmtpCredentialController::class)
+            ->parameters(['smtp-credentials' => 'smtp_credential'])
+            ->except(['show']);
+        Route::patch('smtp-credentials/{smtp_credential}/toggle', [SmtpCredentialController::class, 'toggle']);
+        Route::post('smtp-credentials/{smtp_credential}/test', [SmtpCredentialController::class, 'test']);
+
+        Route::get('smtp-credentials/{smtp_credential}/receiver-settings', [SmtpCredentialController::class, 'receiverSettings']);
+        Route::put('smtp-credentials/{smtp_credential}/receiver-settings', [SmtpCredentialController::class, 'updateReceiverSettings']);
+        Route::get('smtp-credentials/{smtp_credential}/receiver-preview', [SmtpCredentialController::class, 'previewReceiverBatch']);
+        Route::post('smtp-credentials/{smtp_credential}/receiver-message-preview', [SmtpCredentialController::class, 'previewReceiverMessage']);
+        Route::get('smtp-credentials/{smtp_credential}/receiver-template-source', [SmtpCredentialController::class, 'receiverTemplateSource']);
+        Route::post('smtp-credentials/{smtp_credential}/receiver-run', [SmtpCredentialController::class, 'runReceiverCampaign']);
         // Templates available to that test (drives the admin dropdown).
         Route::get('email-template-types', [EmailTemplateTypeController::class, 'index']);
 

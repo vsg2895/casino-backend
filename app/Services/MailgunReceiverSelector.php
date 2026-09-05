@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\MailgunKey;
+use App\Contracts\ReceiverCampaignCredential;
 use App\Models\MailgunReceiver;
 use Generator;
 use Illuminate\Database\Eloquent\Builder;
@@ -33,12 +33,12 @@ final class MailgunReceiverSelector
      * Every public method below builds on this, so a change here changes the
      * count, the preview and the send together.
      */
-    public function selection(MailgunKey $credential): Builder
+    public function selection(ReceiverCampaignCredential $credential): Builder
     {
         return MailgunReceiver::query()
             ->sendable()
             ->notSuppressed()
-            ->notContactedWithin($credential->cooldown_days === null ? null : (int) $credential->cooldown_days);
+            ->notContactedWithin($credential->campaignCooldownDays());
     }
 
     /**
@@ -47,7 +47,7 @@ final class MailgunReceiverSelector
      * A COUNT in the database — never a hydrated collection — so the modal's
      * live figure costs one indexed query regardless of list size.
      */
-    public function eligible(MailgunKey $credential): int
+    public function eligible(ReceiverCampaignCredential $credential): int
     {
         return $this->selection($credential)->count();
     }
@@ -58,9 +58,9 @@ final class MailgunReceiverSelector
      * Not `min(total, batch)` off a stale total — the eligible set shrinks as the
      * cooldown retires addresses, so it is recomputed.
      */
-    public function batchCount(MailgunKey $credential): int
+    public function batchCount(ReceiverCampaignCredential $credential): int
     {
-        return min($this->eligible($credential), max(1, (int) $credential->batch_size));
+        return min($this->eligible($credential), $credential->campaignBatchSize());
     }
 
     /**
@@ -71,12 +71,12 @@ final class MailgunReceiverSelector
      *
      * @return Collection<int, MailgunReceiver>
      */
-    public function preview(MailgunKey $credential, ?int $limit = null): Collection
+    public function preview(ReceiverCampaignCredential $credential, ?int $limit = null): Collection
     {
-        $take = $limit ?? max(1, (int) $credential->batch_size);
+        $take = $limit ?? $credential->campaignBatchSize();
 
         return $this->selection($credential)
-            ->inSelectionOrder((string) $credential->selection_order)
+            ->inSelectionOrder($credential->campaignSelectionOrder())
             ->limit($take)
             ->get(['id', 'email', 'name', 'created_at', 'last_sent_at', 'sent_count']);
     }
@@ -93,11 +93,11 @@ final class MailgunReceiverSelector
      * @param  int  $chunkSize  Rows per yielded chunk.
      * @return Generator<int, Collection<int, MailgunReceiver>>
      */
-    public function stream(MailgunKey $credential, int $chunkSize = 500): Generator
+    public function stream(ReceiverCampaignCredential $credential, int $chunkSize = 500): Generator
     {
-        $remaining = max(1, (int) $credential->batch_size);
+        $remaining = $credential->campaignBatchSize();
         $chunkSize = max(1, $chunkSize);
-        $order = (string) $credential->selection_order;
+        $order = $credential->campaignSelectionOrder();
         $descending = $order !== MailgunReceiver::ORDER_OLDEST;
         $cursor = null;
 

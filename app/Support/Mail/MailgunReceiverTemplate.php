@@ -309,6 +309,36 @@ final class MailgunReceiverTemplate
     }
 
     /**
+     * The starting message for any credential that has none — promotion copy
+     * with every site name stripped out.
+     *
+     * THE one definition of "what a blank credential starts from". The Mailgun
+     * settings modal, the Email Configs settings modal and the SMTP credential
+     * seeder all enter here, so a credential seeded on the command line and one
+     * opened in the admin cannot start from different copy.
+     *
+     * Falls back to a blank template when there is no site to read one from — a
+     * fresh install, or every site deleted — so callers never have to handle a
+     * null.
+     *
+     * @return array{subject: string, template: array<string, mixed>, site_name: string|null}
+     */
+    public static function seed(): array
+    {
+        $site = self::sourceSite();
+
+        if ($site === null) {
+            return [
+                'subject'   => '',
+                'template'  => self::defaults(),
+                'site_name' => null,
+            ];
+        }
+
+        return self::fromSite($site);
+    }
+
+    /**
      * The site whose promotion template seeds a new receiver message.
      *
      * Resolved from config, never from a slug written into code — see

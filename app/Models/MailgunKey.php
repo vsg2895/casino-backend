@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Contracts\ReceiverCampaignCredential;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -25,7 +26,7 @@ use Throwable;
  * reads them. Every send takes its sender from the site template's own
  * `from_email`, exactly as before this column pair existed.
  */
-class MailgunKey extends Model
+class MailgunKey extends Model implements ReceiverCampaignCredential
 {
     public const string STATUS_ACTIVE = 'active';
     public const string STATUS_INACTIVE = 'inactive';
@@ -140,5 +141,78 @@ class MailgunKey extends Model
         $tail = strlen($key) > 4 ? substr($key, -4) : '';
 
         return $head . '…' . $tail;
+    }
+
+    // ── ReceiverCampaignCredential ───────────────────────────────────────────
+    // Shared with SmtpCredential so the selector, the daily claim, the message
+    // and the send loop never learn which channel they are running.
+
+    public function campaignBatchSize(): int
+    {
+        return max(1, (int) $this->batch_size);
+    }
+
+    public function campaignSelectionOrder(): string
+    {
+        return (string) $this->selection_order;
+    }
+
+    public function campaignCooldownDays(): ?int
+    {
+        return $this->cooldown_days === null ? null : (int) $this->cooldown_days;
+    }
+
+    public function campaignSubject(): string
+    {
+        return (string) $this->message_subject;
+    }
+
+    public function campaignHtml(): string
+    {
+        return (string) $this->message_html;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function campaignTemplate(): ?array
+    {
+        return $this->message_template;
+    }
+
+    /**
+     * Reference-only for this channel, and deliberately still returned.
+     *
+     * The mailable treats a null/empty From as "let the transport decide", which
+     * for Mailgun means the site template's sender — the behaviour that predates
+     * this interface. Returning the column does not change that; it just stops
+     * the interface having a Mailgun-shaped hole in it.
+     */
+    public function campaignFromAddress(): ?string
+    {
+        return $this->from_address;
+    }
+
+    public function campaignFromName(): ?string
+    {
+        return $this->from_name;
+    }
+
+    public function campaignLabel(): string
+    {
+        return (string) $this->name;
+    }
+
+    public function campaignChannel(): string
+    {
+        return 'mailgun';
+    }
+
+    public function campaignHistoryTable(): string
+    {
+        return 'mailgun_receiver_sends';
+    }
+
+    public function campaignHistoryColumn(): string
+    {
+        return 'mailgun_key_id';
     }
 }
