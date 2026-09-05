@@ -13,6 +13,7 @@ use App\Jobs\ImportMailgunReceiversJob;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunReceiverImport;
 use App\Models\MailgunSuppression;
+use App\Services\MailgunReceiverSendStateResetter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -108,6 +109,29 @@ class MailgunReceiverController extends Controller
         ]);
 
         $affected = MailgunReceiver::whereIn('id', $validated['ids'])->delete();
+
+        return response()->json(['affected' => $affected]);
+    }
+
+    /**
+     * Clear "Last sent" and "Sent" on every receiver.
+     *
+     * Deliberately takes no id list. This is the whole-list reset the artisan
+     * command performs, exposed for the button in Mailgun Credentials; both go
+     * through {@see MailgunReceiverSendStateResetter}, so the panel and the CLI
+     * cannot drift into resetting different things.
+     *
+     * Clearing `last_sent_at` drops the cooldown filter for everyone, so the next
+     * campaign can mail the whole list. The confirmation lives in the admin
+     * dialog — by the time this runs, the answer was yes.
+     */
+    public function resetSends(Request $request, MailgunReceiverSendStateResetter $resetter): JsonResponse
+    {
+        $validated = $request->validate([
+            'clear_errors' => ['sometimes', 'boolean'],
+        ]);
+
+        $affected = $resetter->reset((bool) ($validated['clear_errors'] ?? false));
 
         return response()->json(['affected' => $affected]);
     }

@@ -216,6 +216,9 @@ Route::prefix('v1')->group(function () {
         Route::post('mailgun-receivers/import', [MailgunReceiverController::class, 'import']);
         Route::get('mailgun-receivers/imports/{mailgun_receiver_import}', [MailgunReceiverController::class, 'importStatus']);
         Route::post('mailgun-receivers/bulk', [MailgunReceiverController::class, 'bulk']);
+        // Whole-list reset of "Last sent"/"Sent". Takes no id list by design —
+        // the artisan twin is mailgun:reset-receiver-sends.
+        Route::post('mailgun-receivers/reset-sends', [MailgunReceiverController::class, 'resetSends']);
         Route::apiResource('mailgun-receivers', MailgunReceiverController::class)
             ->parameters(['mailgun-receivers' => 'mailgun_receiver'])
             ->except(['show']);
