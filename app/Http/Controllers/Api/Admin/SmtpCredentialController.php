@@ -112,6 +112,11 @@ class SmtpCredentialController extends Controller
      * to find out whether these host/port/encryption settings authenticate. The
      * credential may be inactive: testing one you have just disabled, to find out
      * why it failed, has to work.
+     *
+     * What arrives is the credential's OWN campaign message, byte-identical to
+     * what a run would deliver apart from the unsubscribe URL — see
+     * {@see SmtpCredentialTestMessage}. Approving copy from a test that showed
+     * something else is how the wrong email gets signed off.
      */
     public function test(
         SendSmtpCredentialTestRequest $request,
@@ -124,7 +129,13 @@ class SmtpCredentialController extends Controller
             $mailer = $mailers->mailerForSmtpCredential($smtpCredential);
 
             $mailer->to($validated['to'])->send(
-                new SmtpCredentialTestMessage($smtpCredential, $validated['name'] ?? null),
+                new SmtpCredentialTestMessage(
+                    $smtpCredential,
+                    $validated['name'] ?? null,
+                    // So `{{email}}` resolves in the test exactly as it will in
+                    // a real send, instead of vanishing.
+                    $validated['to'],
+                ),
             );
         } catch (Throwable $e) {
             // The transport's own message is the useful part — "Connection could
