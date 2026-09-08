@@ -27,6 +27,9 @@ use Illuminate\Support\Collection;
  */
 final class MailgunReceiverSelector
 {
+    /** Hard ceiling on a hydrated preview, whatever batch size is configured. */
+    private const int PREVIEW_MAX = 500;
+
     /**
      * The predicate, and nothing else.
      *
@@ -73,7 +76,12 @@ final class MailgunReceiverSelector
      */
     public function preview(ReceiverCampaignCredential $credential, ?int $limit = null): Collection
     {
-        $take = $limit ?? $credential->campaignBatchSize();
+        // The default is CAPPED, not just defaulted. `preview()` hydrates models
+        // — unlike stream(), which pages — so an uncapped default would let a
+        // credential configured for 100 000 pull the whole run into memory to
+        // render a listing nobody scrolls. Both current callers pass 100; this
+        // ceiling is what stops the next one from being the exception.
+        $take = min($limit ?? $credential->campaignBatchSize(), self::PREVIEW_MAX);
 
         return $this->selection($credential)
             ->inSelectionOrder($credential->campaignSelectionOrder())

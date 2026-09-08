@@ -12,13 +12,14 @@ use App\Http\Resources\MailgunReceiverResource;
 use App\Jobs\ImportMailgunReceiversJob;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunReceiverImport;
-use App\Models\MailgunSuppression;
 use App\Services\MailgunReceiverSendStateResetter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 /**
  * Admin CRUD for the Mailgun receiver list.
@@ -177,24 +178,61 @@ class MailgunReceiverController extends Controller
 
         // No `active` filter: every receiver is active, so it would only ever
         // return everything or nothing.
-        if ($request->boolean('unsubscribed')) {
-            $query->whereNotNull('unsubscribed_at');
-        }
 
         if (in_array($request->query('source'), MailgunReceiver::SOURCES, true)) {
             $query->where('source', $request->query('source'));
         }
 
-        // "Suppressed" is a property of the shared list, not of the row, so it is
-        // expressed as an EXISTS rather than a column filter.
-        if ($request->boolean('suppressed')) {
-            $query->whereExists(static function ($sub): void {
-                $sub->selectRaw('1')
-                    ->from('mailgun_suppressions')
-                    ->whereColumn('mailgun_suppressions.email', 'mailgun_receivers.email');
-            });
+        // Has this address been mailed at all?
+        //
+        // Keyed on `last_sent_at` and NOT on `sent_count`, so this filter and the
+        // date range below can never disagree: both read the one column, and the
+        // reset action clears them together. `sent_count` counts sends, which is
+        // the same answer today and one schema change away from not being.
+        $sent = $request->query('sent');
+
+        if ($sent === 'yes') {
+            $query->whereNotNull('last_sent_at');
+        } elseif ($sent === 'no') {
+            $query->whereNull('last_sent_at');
+        }
+
+        // Last-sent date range, inclusive of both days.
+        //
+        // Compared as DATETIMES against day boundaries rather than with
+        // whereDate(): wrapping the column in DATE() would make
+        // `mailgun_receivers_last_sent_at_index` unusable and turn every filtered
+        // page into a full scan of the list.
+        if ($from = $this->parseDate($request->query('last_sent_from'))) {
+            $query->where('last_sent_at', '>=', $from->startOfDay());
+        }
+
+        if ($to = $this->parseDate($request->query('last_sent_to'))) {
+            $query->where('last_sent_at', '<=', $to->endOfDay());
         }
 
         return $query;
+    }
+
+    /**
+     * A filter date, or null when the value is absent or unparseable.
+     *
+     * Lenient on purpose, matching how `source` is handled above: a junk value in
+     * a query string filters nothing rather than 422-ing a listing. The admin
+     * sends ISO dates from its own picker, so a bad one means a hand-edited URL.
+     */
+    private function parseDate(mixed $value): ?Carbon
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value);
+        } catch (Throwable) {
+            return null;
+        }
     }
 }

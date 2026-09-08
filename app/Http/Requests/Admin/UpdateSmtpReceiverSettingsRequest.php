@@ -18,6 +18,9 @@ use Illuminate\Validation\Rule;
  * conditionally required — a half-configured credential saves as a draft, and
  * {@see \App\Jobs\SendSmtpReceiverCampaignJob::blockedReason()} is what refuses
  * to run it.
+ *
+ * `batch_size` shares the Mailgun twin's 100 000 ceiling — see that request for
+ * why the number is a typo guard rather than a throughput limit.
  */
 class UpdateSmtpReceiverSettingsRequest extends FormRequest
 {
@@ -30,7 +33,7 @@ class UpdateSmtpReceiverSettingsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'batch_size'      => ['required', 'integer', 'min:1', 'max:10000'],
+            'batch_size'      => ['required', 'integer', 'min:1', 'max:100000'],
             'selection_order' => ['required', 'string', Rule::in(MailgunReceiver::ORDERS)],
             // Null means "no cooldown" — the same convention as warmup.
             'cooldown_days'   => ['nullable', 'integer', 'min:0', 'max:365'],

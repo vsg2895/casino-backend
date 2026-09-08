@@ -12,9 +12,12 @@ use Illuminate\Validation\Rule;
 /**
  * Per-credential receiver targeting and message.
  *
- * `batch_size` is capped: an unbounded value would have one campaign job fan out
- * the entire list in a single run, which is exactly the pacing the cooldown
- * exists to impose.
+ * `batch_size` is capped at 100 000 — a guard against a mistyped figure, not a
+ * throughput limit. {@see \App\Services\MailgunReceiverSelector::stream()} pages
+ * the selection with a keyset cursor and holds one chunk in memory at a time, and
+ * is documented against exactly that size; the campaign job only selects and
+ * dispatches, so a larger run costs more queued batch jobs, not a longer-running
+ * one. Pacing is the cooldown's job and the daily claim's, not this number's.
  *
  * The message itself arrives as `message_template` — the authored fields, whose
  * rules live in {@see MailgunReceiverTemplate::rules()} so the field list has one
@@ -28,7 +31,7 @@ class UpdateMailgunReceiverSettingsRequest extends FormRequest
     {
         return [
             'send_enabled'    => ['required', 'boolean'],
-            'batch_size'      => ['required', 'integer', 'min:1', 'max:10000'],
+            'batch_size'      => ['required', 'integer', 'min:1', 'max:100000'],
             'selection_order' => ['required', 'string', Rule::in(MailgunReceiver::ORDERS)],
             // Null means "no cooldown" — the same convention as warmup.
             'cooldown_days'   => ['nullable', 'integer', 'min:0', 'max:365'],
