@@ -26,9 +26,7 @@ class StoreSiteRequest extends FormRequest
             'revalidation_url' => ['nullable', 'url', 'max:500'],
             'settings'         => ['nullable', 'array'],
             'active'           => ['boolean'],
-<<<<<<< Updated upstream
             'newsletter_emails_enabled' => ['boolean'],
-=======
             // Opt-in per site. Absent means the column default (false) stands.
             'countries_enabled' => ['sometimes', 'boolean'],
             'reviews_enabled'   => ['sometimes', 'boolean'],
@@ -43,7 +41,6 @@ class StoreSiteRequest extends FormRequest
             'author_bio'        => ['nullable', 'string', 'max:2000'],
             'author_avatar_path' => ['nullable', 'string', 'max:500'],
             'methodology_page_slug' => ['nullable', 'string', 'max:120'],
->>>>>>> Stashed changes
         ];
     }
 }

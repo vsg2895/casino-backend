@@ -29,11 +29,9 @@ class UpdateSiteRequest extends FormRequest
             'revalidation_url' => ['nullable', 'url', 'max:500'],
             'settings'         => ['nullable', 'array'],
             'active'           => ['sometimes', 'boolean'],
-<<<<<<< Updated upstream
             // Off keeps the signup form and the stored subscriber; only the
             // outbound mail stops.
             'newsletter_emails_enabled' => ['sometimes', 'boolean'],
-=======
             'countries_enabled' => ['sometimes', 'boolean'],
             'reviews_enabled'   => ['sometimes', 'boolean'],
             'operator_profile_enabled' => ['sometimes', 'boolean'],
@@ -47,7 +45,6 @@ class UpdateSiteRequest extends FormRequest
             'author_bio'        => ['nullable', 'string', 'max:2000'],
             'author_avatar_path' => ['nullable', 'string', 'max:500'],
             'methodology_page_slug' => ['nullable', 'string', 'max:120'],
->>>>>>> Stashed changes
         ];
         // api_key is intentionally absent — it can only change via rotateKey
     }

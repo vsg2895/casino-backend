@@ -21,9 +21,7 @@ class SiteResource extends JsonResource
             'revalidation_url' => $this->revalidation_url,
             'settings'         => $this->settings,
             'active'           => $this->active,
-<<<<<<< Updated upstream
             'newsletter_emails_enabled' => (bool) $this->newsletter_emails_enabled,
-=======
             // Feature switches. Both default false — a new feature never
             // switches itself on for a live domain.
             'countries_enabled' => (bool) $this->countries_enabled,
@@ -40,7 +38,6 @@ class SiteResource extends JsonResource
             'last_revalidated_at'      => $this->last_revalidated_at,
             'last_revalidation_status' => $this->last_revalidation_status,
             'last_revalidation_error'  => $this->last_revalidation_error,
->>>>>>> Stashed changes
             'created_at'       => $this->created_at,
             'updated_at'       => $this->updated_at,
             // api_key is never included — $hidden on the model is the last line of defence,
