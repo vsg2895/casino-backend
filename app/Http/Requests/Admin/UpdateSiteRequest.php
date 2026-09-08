@@ -29,6 +29,9 @@ class UpdateSiteRequest extends FormRequest
             'revalidation_url' => ['nullable', 'url', 'max:500'],
             'settings'         => ['nullable', 'array'],
             'active'           => ['sometimes', 'boolean'],
+            // Off keeps the signup form and the stored subscriber; only the
+            // outbound mail stops.
+            'newsletter_emails_enabled' => ['sometimes', 'boolean'],
         ];
         // api_key is intentionally absent — it can only change via rotateKey
     }

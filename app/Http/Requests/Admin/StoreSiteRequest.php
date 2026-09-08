@@ -26,6 +26,7 @@ class StoreSiteRequest extends FormRequest
             'revalidation_url' => ['nullable', 'url', 'max:500'],
             'settings'         => ['nullable', 'array'],
             'active'           => ['boolean'],
+            'newsletter_emails_enabled' => ['boolean'],
         ];
     }
 }

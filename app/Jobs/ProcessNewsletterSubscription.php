@@ -13,6 +13,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Persists a newsletter subscription for the given site and, when the email is
@@ -100,8 +101,23 @@ class ProcessNewsletterSubscription implements ShouldQueue
         // to an existing subscriber who is still pending (unverified) so they can
         // finish confirming. A verified subscriber never reaches here (blocked at
         // validation) — and the guard keeps it that way defensively.
+        //
+        // `newsletter_emails_enabled` is checked LAST, so everything above still
+        // happens with it off: the row is written, a re-subscribe still clears a
+        // prior opt-out, the name is still refreshed. Only the send stops.
+        // The subscriber therefore stays PENDING — no email means no link to
+        // click, and marking them verified would invent a consent record.
         if ($isNewOrReactivated || ! $newsletter->verified) {
-            SendNewsletterWelcomeEmail::dispatch($this->siteId, $this->email);
+            if ($this->siteSendsEmail()) {
+                SendNewsletterWelcomeEmail::dispatch($this->siteId, $this->email);
+            } else {
+                // Logged rather than silent: "subscribed but never received
+                // anything" is otherwise indistinguishable from a broken mailer,
+                // and this is the line that tells the two apart.
+                Log::info('Newsletter email suppressed: sending is off for this site', [
+                    'site_id' => $this->siteId,
+                ]);
+            }
         }
     }
 
@@ -111,6 +127,18 @@ class ProcessNewsletterSubscription implements ShouldQueue
         $name = trim((string) $this->fullName);
 
         return $name === '' ? null : $name;
+    }
+
+    /**
+     * Whether this site is currently allowed to mail its subscribers.
+     *
+     * Read at SEND time, not at dispatch time: the switch may have been flipped
+     * in the seconds between the visitor submitting and a worker picking this
+     * up, and the answer that matters is the one at the moment of sending.
+     */
+    private function siteSendsEmail(): bool
+    {
+        return (bool) Site::whereKey($this->siteId)->value('newsletter_emails_enabled');
     }
 
     /**

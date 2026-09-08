@@ -21,6 +21,7 @@ class SiteResource extends JsonResource
             'revalidation_url' => $this->revalidation_url,
             'settings'         => $this->settings,
             'active'           => $this->active,
+            'newsletter_emails_enabled' => (bool) $this->newsletter_emails_enabled,
             'created_at'       => $this->created_at,
             'updated_at'       => $this->updated_at,
             // api_key is never included — $hidden on the model is the last line of defence,

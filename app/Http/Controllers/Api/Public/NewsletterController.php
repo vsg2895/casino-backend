@@ -30,7 +30,14 @@ class NewsletterController extends Controller
             $request->validated('full_name'),
         );
 
-        return response()->json(['ok' => true], 202);
+        // `email_sent` so the form can tell the visitor the truth. Without it the
+        // success message still promises "check your inbox" on a site whose
+        // sending is switched off, which is a worse failure than not collecting
+        // the address at all — the visitor waits for mail that never comes.
+        return response()->json([
+            'ok'         => true,
+            'email_sent' => (bool) $site->newsletter_emails_enabled,
+        ], 202);
     }
 
     /**

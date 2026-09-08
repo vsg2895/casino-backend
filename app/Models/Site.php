@@ -26,6 +26,9 @@ class Site extends Model
         'api_key',
         'revalidation_url',
         'settings',
+        // Whether this site MAILS the people who subscribe to it. The form and
+        // the stored subscriber are unaffected — see the migration.
+        'newsletter_emails_enabled',
         'active',
     ];
 
@@ -37,6 +40,7 @@ class Site extends Model
     {
         return [
             'settings' => 'array',
+            'newsletter_emails_enabled' => 'boolean',
             'active' => 'boolean',
         ];
     }
