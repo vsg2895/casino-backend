@@ -277,8 +277,10 @@ class SmtpCredentialController extends Controller
      * {@see SendSmtpReceiverCampaignJob::blockedReason()}, so the admin sees the
      * same wording the log records.
      */
-    public function runReceiverCampaign(SmtpCredential $smtpCredential): JsonResponse
-    {
+    public function runReceiverCampaign(
+        SmtpCredential $smtpCredential,
+        MailgunReceiverSelector $selector,
+    ): JsonResponse {
         $reason = SendSmtpReceiverCampaignJob::blockedReason($smtpCredential);
 
         if ($reason !== null) {
@@ -288,9 +290,29 @@ class SmtpCredentialController extends Controller
             );
         }
 
+        // PRE-FLIGHT. Everything below this point happens on a queue worker,
+        // where the admin sees nothing — so a run that would skip its entire
+        // audience used to answer "Run queued." and then do nothing at all,
+        // which is indistinguishable from a delivery. Checking here turns that
+        // silence into a sentence naming the actual cause.
+        $blocker = $selector->runBlocker($smtpCredential);
+
+        if ($blocker !== null) {
+            return response()->json(
+                ['ok' => false, 'message' => 'Nothing to send: ' . $blocker . '.'],
+                Response::HTTP_CONFLICT,
+            );
+        }
+
         SendSmtpReceiverCampaignJob::dispatch($smtpCredential->id);
 
-        return response()->json(['ok' => true, 'message' => 'Run queued.']);
+        return response()->json([
+            'ok'      => true,
+            'message' => sprintf(
+                'Run queued for %d receiver(s). Their "Sent" and "Last sent" update as each message goes out.',
+                $selector->batchCount($smtpCredential),
+            ),
+        ]);
     }
 
     /**

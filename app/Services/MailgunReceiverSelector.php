@@ -8,7 +8,9 @@ use App\Contracts\ReceiverCampaignCredential;
 use App\Models\MailgunReceiver;
 use Generator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Resolves WHICH receivers a credential sends to on its next run.
@@ -42,6 +44,56 @@ final class MailgunReceiverSelector
             ->sendable()
             ->notSuppressed()
             ->notContactedWithin($credential->campaignCooldownDays());
+    }
+
+    /**
+     * Why a run would send nothing, or null when it would send.
+     *
+     * Two different stages can empty a run, and they need different wording
+     * because they need different fixes:
+     *
+     *   SELECTION — cooldown, unsubscribes and suppressions remove people before
+     *   the job ever starts. Fixed by changing the settings.
+     *
+     *   CLAIMING — `receiver_daily_claims` is unique on (receiver, day) across
+     *   EVERY credential and both channels, so anyone already mailed today is
+     *   skipped at send time even though they were selected. Fixed by waiting,
+     *   or by clearing today's claims.
+     *
+     * The second is invisible in every count the modal shows, which is exactly
+     * how a run reports "queued" and then does nothing at all.
+     */
+    public function runBlocker(ReceiverCampaignCredential $credential): ?string
+    {
+        $batch = $this->batchCount($credential);
+
+        if ($batch === 0) {
+            $sendable = MailgunReceiver::query()->sendable()->notSuppressed()->count();
+
+            if ($sendable === 0) {
+                return 'there are no sendable receivers — the list is empty, or every address is unsubscribed or suppressed';
+            }
+
+            $cooldown = $credential->campaignCooldownDays();
+
+            return $cooldown !== null && $cooldown > 0
+                ? "all {$sendable} sendable receiver(s) were mailed within the last {$cooldown} day(s), so the cooldown excludes them"
+                : 'no receivers matched the current targeting';
+        }
+
+        // Selected, but would every one of them lose the daily claim?
+        $ids = $this->preview($credential, $batch)->pluck('id');
+
+        $claimed = DB::table('receiver_daily_claims')
+            ->whereIn('mailgun_receiver_id', $ids)
+            ->where('claim_on', Carbon::now()->toDateString())
+            ->count();
+
+        if ($claimed >= $ids->count()) {
+            return "all {$claimed} selected receiver(s) already received mail today from another credential — one message per address per day, across every credential and both channels";
+        }
+
+        return null;
     }
 
     /**

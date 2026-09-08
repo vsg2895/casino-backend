@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\ArticleController as AdminArticleController;
 use App\Http\Controllers\Api\Admin\CasinoDetailController;
 use App\Http\Controllers\Api\Admin\CasinoSiteAttachmentController;
 use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController;
+use App\Http\Controllers\Api\Admin\CasinoCountryController;
 use App\Http\Controllers\Api\Admin\CountryController as AdminCountryController;
 use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
@@ -191,6 +192,13 @@ Route::prefix('v1')->group(function () {
         // Categories
         Route::apiResource('categories', AdminCategoryController::class)
             ->only(['index', 'store', 'update', 'destroy']);
+
+        // Whole-table casino/country operations. Their own prefix rather than
+        // `casinos/...`: they act on every casino, not on a `{casino}`, and a
+        // literal segment sharing that prefix is what the route-ordering rule
+        // warns about.
+        Route::post('casino-countries/attach-all', [CasinoCountryController::class, 'attachAll']);
+        Route::post('casino-countries/detach-all', [CasinoCountryController::class, 'detachAll']);
 
         // Countries. The literal `continents` segment is declared BEFORE the
         // resource, or `countries/{country}` would swallow it as an id.
