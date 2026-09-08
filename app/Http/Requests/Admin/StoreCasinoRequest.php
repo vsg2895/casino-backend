@@ -61,9 +61,24 @@ class StoreCasinoRequest extends FormRequest
             'featured_special_offer_id' => ['nullable', 'integer', 'exists:special_offers,id'],
             'meta_title'                => ['nullable', 'string', 'max:255'],
             'meta_description'          => ['nullable', 'string', 'max:500'],
+            // Per-record SEO overrides. Both optional: null canonical means
+            // the page is its own canonical, and noindex defaults false.
+            // 40–60 words. Short enough to be written per site, long enough
+            // that the bonus sub-page is not a duplicate of the casino page.
+            'bonuses_intro'    => ['nullable', 'string', 'max:1200'],
+            // The date a PERSON re-checked this operator. Distinct from
+            // updated_at, which any field change bumps.
+            'reviewed_at'      => ['nullable', 'date', 'before_or_equal:today'],
+            'canonical_url'    => ['nullable', 'string', 'max:500', 'regex:#^https?://#'],
+            'noindex'          => ['sometimes', 'boolean'],
             'active'                    => ['boolean'],
             'category_ids'              => ['nullable', 'array'],
             'category_ids.*'            => ['integer', 'exists:categories,id'],
+            // Countries this casino accepts players from. Same shape as
+            // category_ids: absent means "leave the attachments alone", an empty
+            // array means "detach everything".
+            'country_ids'               => ['nullable', 'array'],
+            'country_ids.*'             => ['integer', 'exists:countries,id'],
         ];
     }
 

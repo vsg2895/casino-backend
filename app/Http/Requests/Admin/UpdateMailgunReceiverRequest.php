@@ -19,7 +19,6 @@ class UpdateMailgunReceiverRequest extends FormRequest
                 Rule::unique('mailgun_receivers', 'email')->ignore($this->route('mailgun_receiver')),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
-            'consent_source' => ['required', 'string', 'max:255'],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];

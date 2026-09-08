@@ -10,9 +10,8 @@ use Illuminate\Validation\Rule;
 /**
  * Manual creation of a single receiver.
  *
- * `consent_source` is REQUIRED, not optional: an address with no recorded
- * provenance cannot lawfully be bulk-mailed, and making the field nullable is
- * how a list quietly ends up with rows nobody can account for.
+ * An address and an optional display name — nothing else. The row's own
+ * timestamps record when it was added.
  */
 class StoreMailgunReceiverRequest extends FormRequest
 {
@@ -28,7 +27,6 @@ class StoreMailgunReceiverRequest extends FormRequest
                 Rule::unique('mailgun_receivers', 'email'),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
-            'consent_source' => ['required', 'string', 'max:255'],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];
@@ -38,7 +36,6 @@ class StoreMailgunReceiverRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'consent_source.required' => 'Record where this address came from — it cannot be left blank.',
             'email.unique'            => 'This address is already on the receiver list.',
         ];
     }

@@ -35,6 +35,11 @@ class SpecialOfferController extends Controller
             // card from the home page, the offers index and the casino page.
             $query = $this->baseQuery($site)
                 ->where('special_offers.active', true)
+                // Expiry is a COMPLIANCE gate, not a tidiness one: an offer past
+                // its stated end date must not be presented as claimable
+                // anywhere. Offers with no expiry are unaffected, so this
+                // changes nothing until someone sets a date.
+                ->claimable()
                 ->orderBy('special_offers.sort_order');
 
             if ($category !== null) {

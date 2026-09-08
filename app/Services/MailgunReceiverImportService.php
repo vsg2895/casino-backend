@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
  * batched writes, the same "collect failures, never abort the file" contract.
  * It does NOT share that class, because the outcomes differ — this import also
  * reports rows rejected for suppression, which the newsletter import has no
- * concept of, and it must stamp consent provenance on every row.
+ * concept of.
  *
  * Memory is bounded by {@see EmailSpreadsheetReader::batches()}, a Generator: a
  * 100k-row file is never held in PHP. Each batch is resolved against the
@@ -106,7 +106,6 @@ final class MailgunReceiverImportService
                     'email'               => $email,
                     'name'                => null,
                     'source'              => MailgunReceiver::SOURCE_IMPORT,
-                    'consent_source'      => $import->consent_source,
                     'consent_recorded_at' => $now,
                     'unsubscribe_token'   => MailgunReceiver::newToken(),
                     'is_active'           => true,

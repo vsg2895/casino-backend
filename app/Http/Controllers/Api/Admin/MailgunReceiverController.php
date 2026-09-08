@@ -153,7 +153,6 @@ class MailgunReceiverController extends Controller
             'user_id'        => $request->user()?->id,
             'filename'       => $file->getClientOriginalName(),
             'path'           => $path,
-            'consent_source' => (string) $request->validated('consent_source'),
             'status'         => MailgunReceiverImport::STATUS_QUEUED,
         ]);
 

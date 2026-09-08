@@ -25,8 +25,17 @@ class CmsPage extends Model
         'content',
         'meta_title',
         'meta_description',
+        'canonical_url',
+        'noindex',
         'status',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'noindex' => 'boolean',
+        ];
+    }
 
     public function site(): BelongsTo
     {

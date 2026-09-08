@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\StoreSiteRequest;
 use App\Http\Requests\Admin\UpdateSiteRequest;
 use App\Http\Resources\SiteRegistrationResource;
 use App\Http\Resources\SiteResource;
+use App\Jobs\InvalidateCasinoCache;
 use App\Models\Site;
 use App\Services\CmsPageService;
 use Illuminate\Http\JsonResponse;
@@ -46,7 +47,25 @@ class SiteController extends Controller
 
     public function update(UpdateSiteRequest $request, Site $site): SiteResource
     {
+        $wasCountries = (bool) $site->countries_enabled;
+        $wasReviews = (bool) $site->reviews_enabled;
+
         $site->update($request->validated());
+
+        // Flipping the countries switch changes what this site serves, so the
+        // cached payload and the statically generated pages have to go — in BOTH
+        // directions. Off without this leaves the grid served from cache for up
+        // to an hour after it was withdrawn; on without it leaves the new pages
+        // 404-ing until something else happens to invalidate them.
+        $fresh = $site->fresh();
+
+        if ($wasCountries !== (bool) $fresh->countries_enabled) {
+            InvalidateCasinoCache::dispatch([$site->id], ['countries', 'casinos']);
+        }
+
+        if ($wasReviews !== (bool) $fresh->reviews_enabled) {
+            InvalidateCasinoCache::dispatch([$site->id], ['reviews', 'casinos']);
+        }
 
         return new SiteResource($site);
     }

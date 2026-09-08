@@ -21,7 +21,7 @@ class MailgunReceiverImport extends Model
     public const string STATUS_FAILED = 'failed';
 
     protected $fillable = [
-        'user_id', 'filename', 'path', 'consent_source', 'status',
+        'user_id', 'filename', 'path', 'status',
         'total', 'imported', 'duplicates', 'suppressed', 'rejected',
         'rejected_rows', 'error', 'finished_at',
     ];

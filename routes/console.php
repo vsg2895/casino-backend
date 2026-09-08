@@ -69,3 +69,10 @@ Schedule::command('promotions:manage-history-partitions')
 // The 24-hour grace leaves a recently expired token visible long enough to
 // answer "was I signed out, or did something else happen?".
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
+
+// Revalidation attempts accumulate at roughly (sites x saves) per day. Thirty
+// days is well past the point where an old attempt tells anyone anything, and
+// keeping them forever would make the history query slower every week.
+Schedule::call(function (): void {
+    App\Models\SiteRevalidation::where('created_at', '<', now()->subDays(30))->delete();
+})->daily()->name('prune-site-revalidations');

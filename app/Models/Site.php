@@ -30,6 +30,19 @@ class Site extends Model
         // the stored subscriber are unaffected — see the migration.
         'newsletter_emails_enabled',
         'active',
+        // Whether this site publishes the countries filter. Off by default —
+        // see the migration that added it.
+        'countries_enabled',
+        // Whether this site displays AND accepts visitor reviews. Off by default.
+        'reviews_enabled',
+        'operator_profile_enabled',
+        'byline_enabled',
+        'guides_enabled',
+        'author_name',
+        'author_role',
+        'author_bio',
+        'author_avatar_path',
+        'methodology_page_slug',
     ];
 
     protected $hidden = [
@@ -42,6 +55,12 @@ class Site extends Model
             'settings' => 'array',
             'newsletter_emails_enabled' => 'boolean',
             'active' => 'boolean',
+            'countries_enabled' => 'boolean',
+            'reviews_enabled' => 'boolean',
+            'operator_profile_enabled' => 'boolean',
+            'byline_enabled' => 'boolean',
+            'guides_enabled' => 'boolean',
+            'last_revalidated_at' => 'datetime',
         ];
     }
 
@@ -135,6 +154,39 @@ class Site extends Model
         );
     }
 
+    public function forum(): HasOne
+    {
+        return $this->hasOne(SiteForum::class);
+    }
+
+    /**
+     * This site's forum-page configuration, created on first access.
+     *
+     * The row is created DISABLED — every column takes its migration default —
+     * so merely opening the admin screen can never publish a page. Turning the
+     * forum on stays an explicit act.
+     */
+    public function forumOrDefault(): Model
+    {
+        return $this->forum()->firstOrCreate([]);
+    }
+
+    /**
+     * The forum settings as the PUBLIC side should read them, without writing.
+     *
+     * Deliberately NOT `forumOrDefault()`: that creates the row, and a public
+     * GET must never insert. An unsaved model has null everywhere, and
+     * `resolved()` turns null into the shipped defaults with `enabled` false —
+     * so "no row" and "row that was never switched on" behave identically,
+     * which is what they mean.
+     *
+     * @return array<string, mixed>
+     */
+    public function forumSettings(): array
+    {
+        return ($this->forum ?? new SiteForum())->resolved();
+    }
+
     public function verifyEmail(): HasOne
     {
         return $this->hasOne(SiteVerifyEmail::class);
@@ -150,5 +202,29 @@ class Site extends Model
             [],
             SiteVerifyEmail::defaultsFor($this),
         );
+    }
+
+    /**
+     * The editorial byline, or null when this site has not configured one.
+     *
+     * Null when the switch is off OR when no name has been entered — a byline
+     * with no person behind it is the exact failure this feature exists to
+     * avoid, so both are "no byline" rather than one being a partial state that
+     * renders something.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function editorialAuthor(): ?array
+    {
+        if (! $this->byline_enabled || trim((string) $this->author_name) === '') {
+            return null;
+        }
+
+        return [
+            'name'        => $this->author_name,
+            'role'        => $this->author_role,
+            'bio'         => $this->author_bio,
+            'avatar_path' => $this->author_avatar_path,
+        ];
     }
 }

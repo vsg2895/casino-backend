@@ -30,6 +30,11 @@ class StoreCmsPageRequest extends FormRequest
             'meta_title'       => ['nullable', 'string', 'max:255'],
             'meta_description' => ['nullable', 'string', 'max:500'],
             'status'           => ['nullable', Rule::in([CmsPage::STATUS_DRAFT, CmsPage::STATUS_PUBLISHED])],
+            // Per-record SEO overrides. Offers carry no meta_title/meta_description
+            // columns, so a title here comes from the site's pattern; these two
+            // are the only per-record SEO controls an offer has.
+            'canonical_url' => ['nullable', 'string', 'max:500', 'regex:#^https?://#'],
+            'noindex'       => ['sometimes', 'boolean'],
         ];
     }
 }

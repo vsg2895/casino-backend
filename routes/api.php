@@ -3,11 +3,17 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\CasinoController as AdminCasinoController;
+use App\Http\Controllers\Api\Admin\CasinoReviewController as AdminCasinoReviewController;
+use App\Http\Controllers\Api\Admin\ArticleController as AdminArticleController;
+use App\Http\Controllers\Api\Admin\CasinoDetailController;
 use App\Http\Controllers\Api\Admin\CasinoSiteAttachmentController;
 use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController;
+use App\Http\Controllers\Api\Admin\CountryController as AdminCountryController;
 use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
+use App\Http\Controllers\Api\Admin\NavItemController;
+use App\Http\Controllers\Api\Admin\SiteForumController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\MailgunReceiverController;
 use App\Http\Controllers\Api\Admin\SmtpCredentialController;
@@ -17,8 +23,11 @@ use App\Http\Controllers\Api\Admin\NewsletterPhoneController;
 use App\Http\Controllers\Api\Admin\SmsTemplateController;
 use App\Http\Controllers\Api\Admin\TwilioConfigController;
 use App\Http\Controllers\Api\Admin\EmailTemplateTypeController;
+use App\Http\Controllers\Api\Admin\RedirectController as AdminRedirectController;
 use App\Http\Controllers\Api\Admin\SendgridKeyController;
+use App\Http\Controllers\Api\Admin\SeoTemplateController;
 use App\Http\Controllers\Api\Admin\SiteController;
+use App\Http\Controllers\Api\Admin\SiteRevalidationController;
 use App\Http\Controllers\Api\Admin\SiteEmailTemplateController;
 use App\Http\Controllers\Api\Admin\SiteVerifyEmailController;
 use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
@@ -29,11 +38,19 @@ use App\Http\Controllers\Api\Admin\UnsubscribeController;
 use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
+use App\Http\Controllers\Api\Public\CasinoReviewController as PublicCasinoReviewController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
+use App\Http\Controllers\Api\Public\CountryController as PublicCountryController;
 use App\Http\Controllers\Api\Public\CmsPageController as PublicCmsPageController;
+use App\Http\Controllers\Api\Public\AffiliateClickController;
+use App\Http\Controllers\Api\Public\ArticleController as PublicArticleController;
+use App\Http\Controllers\Api\Public\EditorialController;
 use App\Http\Controllers\Api\Public\MailgunUnsubscribeController;
 use App\Http\Controllers\Api\Public\MailgunWebhookController;
+use App\Http\Controllers\Api\Public\NavigationController as PublicNavigationController;
+use App\Http\Controllers\Api\Public\RedirectController as PublicRedirectController;
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
+use App\Http\Controllers\Api\Public\SiteFeatureController;
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
 use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
@@ -76,6 +93,47 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('sites', SiteController::class);
         Route::post('sites/{site}/rotate-key', [SiteController::class, 'rotateKey']);
 
+        // Cache health. "revalidate" and "revalidations" are literal segments
+        // under {site}, which is a model binding — no ordering hazard.
+        Route::get('sites/{site}/revalidations', [SiteRevalidationController::class, 'index']);
+        Route::post('sites/{site}/revalidate', [SiteRevalidationController::class, 'store']);
+
+        // Navigation — per site, because a menu belongs to exactly one domain.
+        // "reorder" is declared BEFORE the {nav_item} routes, or it is swallowed
+        // as an id, which is the ordering rule this file follows throughout.
+        // The forum page's rules for one site. GET creates the row with
+        // defaults on first access, so the screen always has something to show.
+        Route::get('sites/{site}/forum', [SiteForumController::class, 'show']);
+        Route::put('sites/{site}/forum', [SiteForumController::class, 'update']);
+
+        Route::get('sites/{site}/nav-items', [NavItemController::class, 'index']);
+        Route::post('sites/{site}/nav-items/reorder', [NavItemController::class, 'reorder']);
+        Route::post('sites/{site}/nav-items', [NavItemController::class, 'store']);
+        Route::put('sites/{site}/nav-items/{navItem}', [NavItemController::class, 'update']);
+        Route::delete('sites/{site}/nav-items/{navItem}', [NavItemController::class, 'destroy']);
+
+        // Redirects — per site, because the six domains have different URL
+        // histories. {redirect} is a model binding; no literal segments share
+        // this prefix, so no ordering hazard here.
+        Route::get('sites/{site}/redirects', [AdminRedirectController::class, 'index']);
+        Route::post('sites/{site}/redirects', [AdminRedirectController::class, 'store']);
+        Route::put('sites/{site}/redirects/{redirect}', [AdminRedirectController::class, 'update']);
+        Route::delete('sites/{site}/redirects/{redirect}', [AdminRedirectController::class, 'destroy']);
+
+        // Guides — the only content type that belongs to a single site, so it
+        // is nested under one rather than living at the top level.
+        Route::get('sites/{site}/articles', [AdminArticleController::class, 'index']);
+        Route::post('sites/{site}/articles', [AdminArticleController::class, 'store']);
+        Route::get('sites/{site}/articles/{article}', [AdminArticleController::class, 'show']);
+        Route::put('sites/{site}/articles/{article}', [AdminArticleController::class, 'update']);
+        Route::delete('sites/{site}/articles/{article}', [AdminArticleController::class, 'destroy']);
+
+        // Per-site SEO patterns. Read and written as one set — see the
+        // controller for why a per-entity endpoint would be worse.
+        Route::get('sites/{site}/seo-templates', [SeoTemplateController::class, 'index']);
+        Route::put('sites/{site}/seo-templates', [SeoTemplateController::class, 'update']);
+        Route::post('sites/{site}/seo-templates/preview', [SeoTemplateController::class, 'preview']);
+
         // Per-site subscription email template
         Route::get('sites/{site}/email-template', [SiteEmailTemplateController::class, 'show']);
         Route::put('sites/{site}/email-template', [SiteEmailTemplateController::class, 'update']);
@@ -108,6 +166,15 @@ Route::prefix('v1')->group(function () {
         // or `casinos/{casino}` would swallow "count" as an id.
         Route::get('casinos/count', [AdminCasinoController::class, 'count']);
         Route::apiResource('casinos', AdminCasinoController::class);
+        // The casino's factual profile, on its own endpoints so the existing
+        // casino CRUD is untouched. Declared right after the resource because it
+        // is scoped BY a casino rather than sharing its prefix ambiguously.
+        // Literal segments BEFORE the {casino} routes below, or "profiles"
+        // is swallowed as a casino id — the ordering rule this file follows.
+        Route::get('casino-profiles/export', [CasinoDetailController::class, 'export']);
+        Route::post('casino-profiles/import', [CasinoDetailController::class, 'import']);
+        Route::get('casinos/{casino}/details', [CasinoDetailController::class, 'show']);
+        Route::put('casinos/{casino}/details', [CasinoDetailController::class, 'update']);
         Route::prefix('casinos/{casino}/sites')->group(function () {
             Route::get('',          [CasinoSiteAttachmentController::class, 'index']);
             Route::post('sync',     [CasinoSiteAttachmentController::class, 'sync']);
@@ -116,9 +183,29 @@ Route::prefix('v1')->group(function () {
             Route::delete('{site}', [CasinoSiteAttachmentController::class, 'destroy']);
         });
 
+        // Category logos. A literal path under `uploads`, declared with the
+        // other media routes rather than under `categories`, because it uploads
+        // a file and returns a path — it touches no category row.
+        Route::post('uploads/category-logo', [MediaUploadController::class, 'storeCategoryLogo']);
+
         // Categories
         Route::apiResource('categories', AdminCategoryController::class)
             ->only(['index', 'store', 'update', 'destroy']);
+
+        // Countries. The literal `continents` segment is declared BEFORE the
+        // resource, or `countries/{country}` would swallow it as an id.
+        Route::get('countries/continents', [AdminCountryController::class, 'continents']);
+        Route::apiResource('countries', AdminCountryController::class)
+            ->only(['index', 'store', 'update', 'destroy']);
+
+        // Visitor reviews (moderation). Literal segments before any parameter
+        // route, or `reviews/{casinoReview}` would swallow them as ids.
+        Route::get('reviews/count', [AdminCasinoReviewController::class, 'count']);
+        Route::get('reviews/pending-count', [AdminCasinoReviewController::class, 'pendingCount']);
+        Route::post('reviews/bulk', [AdminCasinoReviewController::class, 'bulk']);
+        Route::get('reviews', [AdminCasinoReviewController::class, 'index']);
+        Route::patch('reviews/{casinoReview}/visibility', [AdminCasinoReviewController::class, 'setVisibility']);
+        Route::delete('reviews/{casinoReview}', [AdminCasinoReviewController::class, 'destroy']);
 
         // Special Offers
         // Dedicated record counter. MUST be declared before the resource route,
@@ -329,14 +416,59 @@ Route::prefix('v1')->group(function () {
 
     // ── Public (site-keyed) ──────────────────────────────────────────────
     Route::prefix('public/sites/{site}')->middleware('verify.site')->group(function () {
+        // Literal segment BEFORE casinos/{slug}, or "facets" is read as a slug.
+        Route::get('casinos/facets',          [PublicCasinoController::class, 'facets']);
         Route::get('casinos',                 [PublicCasinoController::class, 'index']);
         Route::get('casinos/{slug}',          [PublicCasinoController::class, 'show']);
 
         Route::get('categories',              [PublicCategoryController::class, 'index']);
         Route::get('categories/{slug}',       [PublicCategoryController::class, 'show']);
 
+        // Which optional surfaces this site publishes. Advisory — it tells the
+        // front end what to render; the endpoints below enforce it themselves.
+        Route::get('features',                [SiteFeatureController::class, 'index']);
+
+        // The whole grid in one call: continents in order, each with its
+        // countries — the front end renders headings and cards together.
+        // Both 404 unless the site has countries_enabled.
+        Route::get('countries',               [PublicCountryController::class, 'index']);
+        Route::get('countries/{slug}',        [PublicCountryController::class, 'show']);
+
+        // The forum: every published review on this site, grouped by casino.
+        // Declared before the per-casino routes below so it reads in feature
+        // order; there is no prefix collision between them.
+        Route::get('reviews',                 [PublicCasinoReviewController::class, 'feed']);
+
+        // Visitor reviews for one casino. Both 404 unless the site has
+        // reviews_enabled. The write path is throttled hard — it is an open form.
+        Route::get('casinos/{casinoSlug}/reviews', [PublicCasinoReviewController::class, 'index']);
+        Route::post('casinos/{casinoSlug}/reviews', [PublicCasinoReviewController::class, 'store'])
+            ->middleware('throttle:10,1');
+
         Route::get('special-offers',          [PublicSpecialOfferController::class, 'index']);
         Route::get('special-offers/{slug}',   [PublicSpecialOfferController::class, 'show']);
+
+        // Header and footer menus in one response — the layout renders both on
+        // every page. Empty means "use the links in code".
+        Route::get('navigation',              [PublicNavigationController::class, 'index']);
+        // Read by the site's middleware on cache-miss, so the payload is kept
+        // to the three fields it actually matches on.
+        Route::get('redirects',               [PublicRedirectController::class, 'index']);
+
+        // Who stands behind the reviews. Separate from `features`: that endpoint
+        // is booleans, this is content.
+        Route::get('editorial',               [EditorialController::class, 'index']);
+
+        // Published guides. Both 404 unless the site has guides_enabled — the
+        // endpoints enforce it themselves, as countries and reviews do.
+        Route::get('articles',                [PublicArticleController::class, 'index']);
+        Route::get('articles/{slug}',         [PublicArticleController::class, 'show']);
+
+        // Click counting for the site's own /go redirect route. Called
+        // server-side by that route handler, never from a browser — see the
+        // controller. Throttled because it is a write on a public prefix.
+        Route::post('affiliate-clicks',       [AffiliateClickController::class, 'store'])
+            ->middleware('throttle:120,1');
 
         Route::get('social-links',            [PublicSocialLinkController::class, 'index']);
 

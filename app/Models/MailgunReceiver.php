@@ -44,7 +44,6 @@ class MailgunReceiver extends Model
         'email',
         'name',
         'source',
-        'consent_source',
         'consent_recorded_at',
         'is_active',
     ];

@@ -38,7 +38,8 @@ class CasinoController extends Controller
     {
         $data = $request->validated();
         $categoryIds = $data['category_ids'] ?? null;
-        unset($data['category_ids']);
+        $countryIds = $data['country_ids'] ?? null;
+        unset($data['category_ids'], $data['country_ids']);
 
         $casino = Casino::create($data);
 
@@ -46,19 +47,24 @@ class CasinoController extends Controller
             $casino->categories()->sync($categoryIds);
         }
 
-        return new CasinoResource($casino->load(['categories', 'sites', 'specialOffers']));
+        if ($countryIds !== null) {
+            $casino->countries()->sync($countryIds);
+        }
+
+        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers']));
     }
 
     public function show(Casino $casino): CasinoResource
     {
-        return new CasinoResource($casino->load(['categories', 'sites', 'specialOffers']));
+        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers']));
     }
 
     public function update(UpdateCasinoRequest $request, Casino $casino): CasinoResource
     {
         $data = $request->validated();
         $categoryIds = $data['category_ids'] ?? null;
-        unset($data['category_ids']);
+        $countryIds = $data['country_ids'] ?? null;
+        unset($data['category_ids'], $data['country_ids']);
 
         $casino->update($data);
 
@@ -66,9 +72,13 @@ class CasinoController extends Controller
             $casino->categories()->sync($categoryIds);
         }
 
+        if ($countryIds !== null) {
+            $casino->countries()->sync($countryIds);
+        }
+
         // CasinoObserver::saved() handles cache invalidation and revalidation.
 
-        return new CasinoResource($casino->fresh(['categories', 'sites', 'specialOffers']));
+        return new CasinoResource($casino->fresh(['categories', 'countries', 'sites', 'specialOffers']));
     }
 
     public function destroy(Casino $casino): JsonResponse

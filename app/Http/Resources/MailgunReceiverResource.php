@@ -25,7 +25,6 @@ class MailgunReceiverResource extends JsonResource
             'email'               => $this->email,
             'name'                => $this->name,
             'source'              => $this->source,
-            'consent_source'      => $this->consent_source,
             'consent_recorded_at' => $this->consent_recorded_at,
             'is_active'           => (bool) $this->is_active,
             'unsubscribed_at'     => $this->unsubscribed_at,

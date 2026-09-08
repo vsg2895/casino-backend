@@ -9,9 +9,9 @@ use Illuminate\Foundation\Http\FormRequest;
 /**
  * Spreadsheet upload.
  *
- * `consent_source` applies to every row in the file. Required for the same
- * reason it is required on the manual form — an import is the fastest way to
- * add thousands of provenance-less addresses, so the gate belongs here most of all.
+ * The file is the whole payload. Its size cap matters more than it looks: the
+ * upload is staged to disk and only its id is queued, but a 20 MB ceiling is
+ * what keeps one request from filling the disk before the job ever runs.
  */
 class ImportMailgunReceiversRequest extends FormRequest
 {
@@ -20,7 +20,6 @@ class ImportMailgunReceiversRequest extends FormRequest
     {
         return [
             'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:20480'],
-            'consent_source' => ['required', 'string', 'max:255'],
         ];
     }
 
@@ -29,7 +28,6 @@ class ImportMailgunReceiversRequest extends FormRequest
     {
         return [
             'file.mimes'              => 'Upload an .xlsx or .csv file.',
-            'consent_source.required' => 'Record where this list came from before importing it.',
         ];
     }
 }

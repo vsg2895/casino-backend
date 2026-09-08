@@ -20,6 +20,9 @@ class Category extends Model
     protected $fillable = [
         'name',
         'slug',
+        // Path on the public disk, like casinos.image_path. Always an SVG —
+        // see the upload endpoint and SvgSanitizer.
+        'logo_path',
         'sort_order',
     ];
 

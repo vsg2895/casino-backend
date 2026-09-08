@@ -16,6 +16,10 @@ class CategoryResource extends JsonResource
             'id'            => $this->id,
             'name'          => $this->name,
             'slug'          => $this->slug,
+            // A stored path, not a URL: the front ends resolve it through the
+            // same helper they use for casino images, so one env var decides
+            // where uploads are served from.
+            'logo_path'     => $this->logo_path,
             'sort_order'    => (int) $this->sort_order,
             'casinos_count' => $this->when(isset($this->casinos_count), fn () => (int) $this->casinos_count),
             // ISO-8601 STRING, not the Carbon instance. These responses are cached

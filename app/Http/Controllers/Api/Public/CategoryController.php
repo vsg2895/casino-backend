@@ -29,14 +29,34 @@ class CategoryController extends Controller
         /** @var Site $site */
         $site = app('current_site');
 
-        $data = SiteCache::remember($site->id, ['categories', 'casinos'], 'categories:index:site:' . $site->id, 3600, function () use ($site) {
+        // Optional country scope. The category chips are NESTED inside the
+        // country filter: with no country they count every casino on the site,
+        // and with one they count only that country's — so the number on a chip
+        // always matches what clicking it will show.
+        $country = $this->countryScope();
+
+        $data = SiteCache::remember(
+            $site->id,
+            ['categories', 'casinos'],
+            'categories:index:site:' . $site->id . ':country:' . ($country ?? 'all'),
+            3600,
+            function () use ($site, $country) {
             // Only categories that have at least one active casino attached to THIS site,
             // ordered by priority (sort_order), each with a per-site casino count.
-            $attachedToSite = function ($query) use ($site): void {
+            $attachedToSite = function ($query) use ($site, $country): void {
                 $query->where('casinos.active', true)
                     ->whereHas('sites', function ($s) use ($site): void {
                         $s->where('sites.id', $site->id)->where('casino_site.active', true);
                     });
+
+                // Same predicate drives BOTH the "which categories exist" filter
+                // and the count, so a category can never appear with a count of
+                // zero for the selected country.
+                if ($country !== null) {
+                    $query->whereHas('countries', function ($c) use ($country): void {
+                        $c->where('countries.slug', $country)->where('countries.active', true);
+                    });
+                }
             };
 
             $categories = Category::query()
@@ -45,10 +65,24 @@ class CategoryController extends Controller
                 ->ordered()
                 ->get();
 
-            return CategoryResource::collection($categories)->resolve();
-        });
+                return CategoryResource::collection($categories)->resolve();
+            },
+        );
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * The `?country=` slug, or null when absent or unusable.
+     *
+     * Null means "every country", which is the default view — the filter starts
+     * unset and shows everything, and only narrows once a visitor chooses.
+     */
+    private function countryScope(): ?string
+    {
+        $slug = trim((string) request()->query('country', ''));
+
+        return $slug === '' ? null : mb_substr($slug, 0, 120);
     }
 
     public function show(string $site, string $slug): JsonResponse
@@ -56,13 +90,15 @@ class CategoryController extends Controller
         /** @var Site $site */
         $site = app('current_site');
         $page = max(1, request()->integer('page', 1));
+        // The category list is nested inside the country filter — see index().
+        $country = $this->countryScope();
 
         $data = SiteCache::remember(
             $site->id,
             ['categories', 'casinos'],
-            'categories:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page,
+            'categories:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page . ':country:' . ($country ?? 'all'),
             3600,
-            function () use ($site, $slug, $page) {
+            function () use ($site, $slug, $page, $country) {
                 $category = Category::where('slug', $slug)->firstOrFail();
 
                 $paginator = $category->casinos()
@@ -70,6 +106,12 @@ class CategoryController extends Controller
                     ->where('pivot.site_id', $site->id)
                     ->where('pivot.active', true)
                     ->where('casinos.active', true)
+                    // whereHas, not a join: joining casino_country would
+                    // multiply rows for a casino serving several countries and
+                    // corrupt both the ordering and the pagination totals.
+                    ->when($country !== null, fn ($q) => $q->whereHas('countries', function ($c) use ($country): void {
+                        $c->where('countries.slug', $country)->where('countries.active', true);
+                    }))
                     ->orderBy('pivot.position')
                     ->select([
                         'casinos.*',

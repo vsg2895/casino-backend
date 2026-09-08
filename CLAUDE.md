@@ -95,19 +95,21 @@ back to `https://{domain}`. It builds the links baked into delivered email, so i
 app/
 ├── Http/
 │   ├── Controllers/Api/
-│   │   ├── Admin/     Site, Casino, CasinoSiteAttachment, Category, SpecialOffer,
+│   │   ├── Admin/     Site, Casino, CasinoSiteAttachment, CasinoReview, Category, Country,
+│   │   │              SpecialOffer,
 │   │   │              CmsPage, SocialLink, Newsletter, NewsletterPhone, SmsTemplate,
 │   │   │              TwilioConfig, SendgridKey, MailgunKey, EmailSchedule,
 │   │   │              SiteEmailTemplate, SiteVerifyEmail, SitePromotionEmail,
 │   │   │              VerificationPromotionEmail, WarmupEmail, PromotionEmailHistory,
 │   │   │              Unsubscribe, EmailTemplateType, MediaUpload
-│   │   ├── Public/    Casino, Category, SpecialOffer, CmsPage, SocialLink,
-│   │   │              Newsletter, Unsubscribe, Verify
+│   │   ├── Public/    Casino, CasinoReview, Category, Country, SpecialOffer, CmsPage, SocialLink,
+│   │   │              Newsletter, Unsubscribe, Verify, SiteFeature
 │   │   └── AuthController.php
 │   ├── Requests/{Admin,Public}/
 │   ├── Resources/
 │   └── Middleware/VerifySiteAccess.php
-├── Models/            Site, Casino, Category, SpecialOffer, CmsPage, SocialLink,
+├── Models/            Site, Casino, CasinoReview, Category, Continent, Country, SpecialOffer,
+│                      CmsPage, SocialLink,
 │                      Newsletter, NewsletterBasedOnPhone, Unsubscribe, EmailSchedule,
 │                      SendgridKey, MailgunKey, TwilioConfig, SmsTemplate, WarmupEmail, …
 ├── Services/          CmsPage, PromotionEmail, SubscriptionEmail, VerifyEmail,
@@ -122,7 +124,8 @@ app/
 │                      Mail/, Phone/, Spreadsheet/
 ├── Mail/              Mailables + Concerns/HasSenderOverride, Contracts/SenderOverridable
 └── Console/Commands/  promotions:dispatch-due, promotions:dispatch-verification,
-                       promotions:manage-history-partitions, casinos:sync-seo-meta, …
+                       promotions:manage-history-partitions, casinos:sync-seo-meta,
+                       countries:fetch-flags, …
 ```
 
 ---
@@ -197,6 +200,7 @@ php artisan serve
 php artisan queue:work --queue=high,low   # required — nothing runs on the default queue
 php artisan schedule:work                 # dev substitute for cron
 php artisan migrate
+php artisan countries:fetch-flags       # download country flags (idempotent)
 php artisan tinker
 php artisan pail                          # readable live log
 vendor/bin/pint --dirty

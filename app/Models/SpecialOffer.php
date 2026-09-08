@@ -6,6 +6,7 @@ namespace App\Models;
 
 use Database\Factories\SpecialOfferFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -28,11 +29,23 @@ class SpecialOffer extends Model
         'rating',
         'sort_order',
         'active',
+        'canonical_url',
+        'noindex',
+        // Structured bonus terms — see the migration for why the money fields
+        // are strings rather than decimals.
+        'wagering_requirement',
+        'min_deposit',
+        'max_cashout',
+        'bonus_code',
+        'expires_at',
+        'terms_url',
     ];
 
     protected function casts(): array
     {
         return [
+            'noindex'    => 'boolean',
+            'expires_at' => 'date',
             'rating'     => 'integer',
             'sort_order' => 'integer',
             'active'     => 'boolean',
@@ -98,5 +111,27 @@ class SpecialOffer extends Model
     public function casino(): BelongsTo
     {
         return $this->belongsTo(Casino::class);
+    }
+
+    /**
+     * Offers that may still be presented as claimable.
+     *
+     * An offer past its expiry date is NOT one, and this is a compliance rule
+     * rather than a tidiness one: showing a claim button for a bonus that no
+     * longer exists sends a player to an operator expecting terms they will not
+     * get. `whereNull` is load-bearing — an offer with no expiry never expires,
+     * and MySQL drops NULLs from a plain `>=` comparison.
+     */
+    public function scopeClaimable(Builder $query): Builder
+    {
+        return $query->where(static function (Builder $q): void {
+            $q->whereNull('expires_at')->orWhereDate('expires_at', '>=', now()->toDateString());
+        });
+    }
+
+    /** True once the offer's stated end date has passed. */
+    public function hasExpired(): bool
+    {
+        return $this->expires_at !== null && $this->expires_at->isBefore(now()->startOfDay());
     }
 }

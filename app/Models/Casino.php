@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Sluggable\HasSlug;
 use Spatie\Sluggable\SlugOptions;
@@ -32,12 +33,18 @@ class Casino extends Model
         'featured_special_offer_id',
         'meta_title',
         'meta_description',
+        'canonical_url',
+        'noindex',
+        'bonuses_intro',
+        'reviewed_at',
         'active',
     ];
 
     protected function casts(): array
     {
         return [
+            'noindex' => 'boolean',
+            'reviewed_at' => 'date',
             'rating'     => 'integer',
             'sort_order' => 'integer',
             'active'     => 'boolean',
@@ -75,9 +82,42 @@ class Casino extends Model
         return $this->belongsToMany(Category::class);
     }
 
+    /**
+     * Countries this casino accepts players from.
+     *
+     * No pivot payload, for the same reason categories have none: the fact is a
+     * property of the casino itself and does not vary by site.
+     */
+    public function countries(): BelongsToMany
+    {
+        return $this->belongsToMany(Country::class);
+    }
+
+    /**
+     * The factual profile — licence, payments, support, safer-play tools.
+     *
+     * A separate row rather than columns here, so the hot listing query that
+     * reads `casinos` through `casino_site` never carries fields only the detail
+     * page uses. See the migration for the full reasoning.
+     */
+    public function detail(): HasOne
+    {
+        return $this->hasOne(CasinoDetail::class);
+    }
+
     public function specialOffers(): HasMany
     {
         return $this->hasMany(SpecialOffer::class)->orderBy('sort_order');
+    }
+
+    /**
+     * Visitor-written reviews. Unscoped by site and unscoped by status — every
+     * caller narrows it, and a relation that silently hid rows would make the
+     * admin's moderation queue impossible to build from it.
+     */
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(CasinoReview::class);
     }
 
     public function featuredSpecialOffer(): BelongsTo
