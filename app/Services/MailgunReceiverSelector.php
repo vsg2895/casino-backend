@@ -10,7 +10,6 @@ use Generator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Resolves WHICH receivers a credential sends to on its next run.
@@ -43,7 +42,11 @@ final class MailgunReceiverSelector
         return MailgunReceiver::query()
             ->sendable()
             ->notSuppressed()
-            ->notContactedWithin($credential->campaignCooldownDays());
+            ->notContactedWithin($credential->campaignCooldownDays())
+            // Anyone already claimed today cannot be mailed again today, so
+            // leaving them in only wasted batch slots — the run skipped them
+            // and stopped short of the addresses that were still sendable.
+            ->notClaimedToday();
     }
 
     /**
@@ -65,35 +68,33 @@ final class MailgunReceiverSelector
      */
     public function runBlocker(ReceiverCampaignCredential $credential): ?string
     {
-        $batch = $this->batchCount($credential);
-
-        if ($batch === 0) {
-            $sendable = MailgunReceiver::query()->sendable()->notSuppressed()->count();
-
-            if ($sendable === 0) {
-                return 'there are no sendable receivers — the list is empty, or every address is unsubscribed or suppressed';
-            }
-
-            $cooldown = $credential->campaignCooldownDays();
-
-            return $cooldown !== null && $cooldown > 0
-                ? "all {$sendable} sendable receiver(s) were mailed within the last {$cooldown} day(s), so the cooldown excludes them"
-                : 'no receivers matched the current targeting';
+        if ($this->batchCount($credential) > 0) {
+            return null;
         }
 
-        // Selected, but would every one of them lose the daily claim?
-        $ids = $this->preview($credential, $batch)->pluck('id');
+        // Zero to send. Walk the filters in the order they apply and name the
+        // one that emptied it — each has a different fix, and "nothing to send"
+        // on its own tells an admin nothing.
+        $sendable = MailgunReceiver::query()->sendable()->notSuppressed()->count();
 
-        $claimed = DB::table('receiver_daily_claims')
-            ->whereIn('mailgun_receiver_id', $ids)
-            ->where('claim_on', Carbon::now()->toDateString())
+        if ($sendable === 0) {
+            return 'there are no sendable receivers — the list is empty, or every address is unsubscribed or suppressed';
+        }
+
+        $afterCooldown = MailgunReceiver::query()
+            ->sendable()
+            ->notSuppressed()
+            ->notContactedWithin($credential->campaignCooldownDays())
             ->count();
 
-        if ($claimed >= $ids->count()) {
-            return "all {$claimed} selected receiver(s) already received mail today from another credential — one message per address per day, across every credential and both channels";
+        if ($afterCooldown === 0) {
+            $days = $credential->campaignCooldownDays();
+
+            return "all {$sendable} sendable receiver(s) were mailed within the last {$days} day(s), so the cooldown excludes them";
         }
 
-        return null;
+        // Survived the cooldown, so the only filter left is today's claim.
+        return "all {$afterCooldown} remaining receiver(s) were already mailed today by another credential — one message per address per day, across every credential and both channels. They become sendable again tomorrow";
     }
 
     /**

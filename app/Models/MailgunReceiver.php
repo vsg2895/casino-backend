@@ -136,6 +136,38 @@ class MailgunReceiver extends Model
      * drops NULLs from a plain `<=` comparison. Copied deliberately from
      * {@see WarmupEmail::scopeNotContactedWithin()}, which documents the same trap.
      */
+    /**
+     * Excludes anyone who already has today's claim.
+     *
+     * `receiver_daily_claims` is unique on (receiver, day) across every
+     * credential and both channels, so a claimed address CANNOT be mailed again
+     * today — the send loop skips it. Leaving those rows in the selection meant
+     * they still consumed slots in the batch: with a batch of 100 whose first
+     * 100 were claimed, a run mailed nobody and never reached the thousands of
+     * untouched addresses behind them.
+     *
+     * Filtering here makes the batch fill with addresses that can actually be
+     * mailed, and makes the counts in the modal mean "sendable now". The atomic
+     * claim in ReceiverCampaignSender stays exactly as it was — that is the race
+     * guard between two workers, and this does not replace it.
+     *
+     * NOT EXISTS on the unique index, so it stays an index lookup per row.
+     *
+     * @param  Builder<MailgunReceiver>  $query
+     * @return Builder<MailgunReceiver>
+     */
+    public function scopeNotClaimedToday(Builder $query): Builder
+    {
+        $today = Carbon::now()->toDateString();
+
+        return $query->whereNotExists(static function ($sub) use ($today): void {
+            $sub->selectRaw('1')
+                ->from('receiver_daily_claims')
+                ->whereColumn('receiver_daily_claims.mailgun_receiver_id', 'mailgun_receivers.id')
+                ->where('receiver_daily_claims.claim_on', $today);
+        });
+    }
+
     public function scopeNotContactedWithin(Builder $query, ?int $days): Builder
     {
         if ($days === null || $days < 1) {
