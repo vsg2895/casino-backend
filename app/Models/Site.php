@@ -35,6 +35,7 @@ class Site extends Model
         'countries_enabled',
         // Whether this site displays AND accepts visitor reviews. Off by default.
         'reviews_enabled',
+        'review_auto_publish',
         'operator_profile_enabled',
         'byline_enabled',
         'guides_enabled',
@@ -56,7 +57,8 @@ class Site extends Model
             'newsletter_emails_enabled' => 'boolean',
             'active' => 'boolean',
             'countries_enabled' => 'boolean',
-            'reviews_enabled' => 'boolean',
+            'reviews_enabled'     => 'boolean',
+            'review_auto_publish' => 'boolean',
             'operator_profile_enabled' => 'boolean',
             'byline_enabled' => 'boolean',
             'guides_enabled' => 'boolean',

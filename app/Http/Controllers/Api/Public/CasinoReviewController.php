@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Public\StoreCasinoReviewRequest;
 use App\Http\Resources\PublicCasinoReviewResource;
+use App\Jobs\InvalidateCasinoCache;
 use App\Models\Casino;
 use App\Models\CasinoReview;
 use App\Models\Site;
@@ -233,12 +234,21 @@ class CasinoReviewController extends Controller
     }
 
     /**
-     * Accept a review. It is stored PENDING and is not visible to anyone until an
-     * admin publishes it.
+     * Accept a review.
      *
-     * The response deliberately says only that it was received. Returning the
-     * stored row would let a submitter confirm their text was kept, and returning
-     * its id would expose a sequence of every review across every site.
+     * POST-moderation by default (`sites.review_auto_publish`): the review goes
+     * live the instant it is written and a moderator hides anything unacceptable
+     * afterwards. With the switch off it falls back to PENDING and waits for an
+     * admin, which is what every site did before the flag existed.
+     *
+     * `status` is still set HERE and never from the request — the submitter
+     * chooses their words, not their visibility.
+     *
+     * The response deliberately withholds the stored row. Returning it would let
+     * a submitter confirm their text was kept, and returning its id would expose
+     * a sequence of every review across every site. What it DOES report is
+     * `published`, so the form can tell the visitor the truth about whether they
+     * are about to see their own words.
      */
     public function store(StoreCasinoReviewRequest $request, string $site, string $casinoSlug): JsonResponse
     {
@@ -248,22 +258,38 @@ class CasinoReviewController extends Controller
 
         $casino = $this->resolveCasino($site, $casinoSlug);
 
+        $autoPublish = (bool) $site->review_auto_publish;
+
         CasinoReview::create([
             ...$request->validated(),
-            'site_id'   => $site->id,
-            'casino_id' => $casino->id,
-            // Set HERE, never from the request. This line is the moderation
-            // guarantee — see StoreCasinoReviewRequest.
-            'status'    => CasinoReview::STATUS_PENDING,
+            'site_id'      => $site->id,
+            'casino_id'    => $casino->id,
+            'status'       => $autoPublish
+                ? CasinoReview::STATUS_PUBLISHED
+                : CasinoReview::STATUS_PENDING,
+            // Stamped in the same write rather than by a later setPublished()
+            // call, because the feed orders by `published_at` and a published row
+            // with a NULL timestamp sorts to the far end of the list — visible,
+            // but not where the author will look for it.
+            'published_at' => $autoPublish ? now() : null,
         ]);
 
-        // No cache flush: a pending review changes nothing that is publicly
-        // visible. The flush happens when an admin publishes it.
+        // A pending review changes nothing publicly visible, so only the
+        // auto-published path invalidates. This is the line that makes
+        // "immediately" true: without it the review sits behind SiteCache's hour
+        // and then behind the site's ISR cache, and the visitor reloads to find
+        // their own words missing.
+        if ($autoPublish) {
+            InvalidateCasinoCache::dispatch([(int) $site->id], ['reviews', 'casinos']);
+        }
 
         return response()->json([
-            'ok'      => true,
-            'message' => 'Thanks — your review has been submitted and will appear once approved.',
-        ], Response::HTTP_ACCEPTED);
+            'ok'        => true,
+            'published' => $autoPublish,
+            'message'   => $autoPublish
+                ? 'Thanks — your review is now live.'
+                : 'Thanks — your review has been submitted and will appear once approved.',
+        ], $autoPublish ? Response::HTTP_CREATED : Response::HTTP_ACCEPTED);
     }
 
     /**

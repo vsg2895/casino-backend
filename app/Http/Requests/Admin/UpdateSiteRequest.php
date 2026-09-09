@@ -34,6 +34,7 @@ class UpdateSiteRequest extends FormRequest
             'newsletter_emails_enabled' => ['sometimes', 'boolean'],
             'countries_enabled' => ['sometimes', 'boolean'],
             'reviews_enabled'   => ['sometimes', 'boolean'],
+            'review_auto_publish' => ['sometimes', 'boolean'],
             'operator_profile_enabled' => ['sometimes', 'boolean'],
             // Editorial identity. The switch and the name validate
             // independently, but Site::editorialAuthor() refuses to publish a

@@ -26,6 +26,7 @@ class SiteResource extends JsonResource
             // switches itself on for a live domain.
             'countries_enabled' => (bool) $this->countries_enabled,
             'reviews_enabled'   => (bool) $this->reviews_enabled,
+            'review_auto_publish' => (bool) $this->review_auto_publish,
             'operator_profile_enabled' => (bool) $this->operator_profile_enabled,
             'byline_enabled'    => (bool) $this->byline_enabled,
             'guides_enabled'    => (bool) $this->guides_enabled,

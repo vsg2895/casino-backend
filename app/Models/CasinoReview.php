@@ -11,10 +11,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * A visitor-written review of a casino, submitted on one site.
  *
- * Moderated: nothing reaches the public API until an admin publishes it. The
- * three states are distinct on purpose — PENDING is "nobody has looked at this
- * yet", HIDDEN is "looked at and rejected". Collapsing them into a boolean would
- * lose the queue that tells an admin there is work waiting.
+ * Moderated either BEFORE or AFTER publication, per site
+ * (`sites.review_auto_publish`). With it on — the default — a submission is
+ * created already PUBLISHED and a moderator hides what does not belong; with it
+ * off, nothing reaches the public API until an admin publishes it.
+ *
+ * The three states stay distinct under both regimes, and that is the point:
+ * PENDING is "nobody has looked at this yet", HIDDEN is "looked at and
+ * rejected". Collapsing them into a boolean would lose the queue that tells an
+ * admin there is work waiting — and under post-moderation it would also lose the
+ * difference between a review that was never screened and one that was taken
+ * down deliberately.
  *
  * `author_email` is deliberately absent from every public response. It exists so
  * a moderator can recognise a repeat submitter; it is not part of the review.
