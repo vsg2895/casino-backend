@@ -15,7 +15,6 @@ use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -23,7 +22,10 @@ use Throwable;
  * Admin management of the ONE global post-verification promotion.
  *
  * Deliberately has no {site} parameter anywhere: a single template serves
- * subscribers from every registered site. Otherwise, it follows
+ * subscribers from every registered site, and since the branding is pinned to
+ * Winpalack in config('promotions.after_verification') there is no longer
+ * anything for a site to resolve either — the picker this page used to carry is
+ * gone. Otherwise, it follows
  * {@see SitePromotionEmailController} — show (materialising defaults on first
  * access), update, live preview of unsaved edits, and a test send.
  *
@@ -69,30 +71,25 @@ class VerificationPromotionEmailController extends Controller
     /**
      * Render the (possibly unsaved) template to HTML for the live preview.
      *
-     * Rendered against a representative site so the {{site_name}} / {{site_url}}
-     * placeholders resolve to something real — the same substitution each
-     * subscriber's own site performs at send time.
+     * There is no "preview as <site>" any more: the branding is fixed to
+     * Winpalack in config, so every site would produce the same pixels. The
+     * preview is therefore always what a subscriber receives, whichever of the
+     * six they came from.
+     *
+     * A Site is still passed down, for the unsubscribe link alone — the preview
+     * shows a realistic one rather than a dead string.
      */
     public function preview(UpdateVerificationPromotionEmailRequest $request): JsonResponse
     {
-        // The editor sends the picker's value as `preview_site_id` (it is part of
-        // the saved payload now); `site_id` stays honoured for any caller still
-        // using the older transient key.
-        $site = $this->resolveSite(
-            $request->integer('preview_site_id') ?: $request->integer('site_id'),
-        );
+        $site = $this->unsubscribeSite();
 
         if ($site === null) {
             return response()->json([
-                'message' => 'Register a site before previewing — the template renders against one.',
+                'message' => 'Register a site before previewing — the unsubscribe link is built from one.',
             ], 422);
         }
 
-        // site_id is a preview-only selector, never a template column — strip it
-        // before building the (unsaved) template model.
-        $template = new VerificationPromotionEmail(
-            Arr::except($request->validated(), 'site_id'),
-        );
+        $template = new VerificationPromotionEmail($request->validated());
 
         return response()->json([
             'html' => $this->promotions->previewMail($site, $template)->render(),
@@ -109,16 +106,15 @@ class VerificationPromotionEmailController extends Controller
     {
         $to = $request->validated('to');
         $config = VerificationPromotionEmail::current();
-        // This button sends the SAVED template, so it falls back to the SAVED
-        // preview site when the request does not name one.
-        $site = $this->resolveSite(
-            $request->integer('site_id') ?: $config->preview_site_id,
-        );
+        // Any site: it only supplies the unsubscribe link. The branding the test
+        // carries is the fixed one from config, exactly as a real send — which is
+        // what makes this test byte-identical to what subscribers receive.
+        $site = $this->unsubscribeSite();
 
         if ($site === null) {
             return response()->json([
                 'ok'      => false,
-                'message' => 'Register a site before sending a test — the template renders against one.',
+                'message' => 'Register a site before sending a test — the unsubscribe link is built from one.',
             ], 422);
         }
 
@@ -206,24 +202,14 @@ class VerificationPromotionEmailController extends Controller
     }
 
     /**
-     * The site to render the global template against.
+     * A site to build the preview/test UNSUBSCRIBE link from — nothing else.
      *
-     * When the admin has picked one in the editor ($siteId), its {{site_name}} /
-     * {{site_url}} are used, so the preview and test show exactly the copy a
-     * subscriber from that site would receive. An unknown/inactive id, or none at
-     * all, falls back to a representative site: any active site will do — the
-     * template is brand-neutral by design and only reads site_name / site_url,
-     * which every site has. Lowest id for a stable, repeatable default.
+     * Since the branding is fixed in config, the choice no longer affects a
+     * single visible string; it only decides which domain hosts the sample
+     * opt-out link. Lowest active id, for a stable, repeatable default.
      */
-    private function resolveSite(?int $siteId): ?Site
+    private function unsubscribeSite(): ?Site
     {
-        if ($siteId !== null && $siteId > 0) {
-            $chosen = Site::query()->where('active', true)->find($siteId);
-            if ($chosen !== null) {
-                return $chosen;
-            }
-        }
-
         return Site::query()->where('active', true)->orderBy('id')->first()
             ?? Site::query()->orderBy('id')->first();
     }

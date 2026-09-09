@@ -32,16 +32,10 @@ class UpdateVerificationPromotionEmailRequest extends FormRequest
         $hex = 'regex:/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/';
 
         return [
-            // TRANSIENT: render this one preview against this site. Not a
-            // column, and stripped before the unsaved template model is built.
-            // Kept for backward compatibility with callers that still send it.
-            'site_id'           => ['nullable', 'integer', 'exists:sites,id'],
-
-            // PERSISTED: the site the admin picked, remembered so reopening the
-            // editor does not reset it. Still only ever resolves the
-            // {{site_name}} / {{site_url}} placeholders for preview and test —
-            // the automatic send reads each subscriber's OWN site, never this.
-            'preview_site_id'   => ['nullable', 'integer', 'exists:sites,id'],
+            // NO site parameter of any kind. This template's branding is fixed
+            // to Winpalack in config('promotions.after_verification'), so there
+            // is nothing left for a site to resolve — and the `preview_site_id`
+            // column that used to persist the picker's value has been dropped.
 
             // ── Template (identical to the per-site promotion editor) ────
             'from_name'         => ['required', 'string', 'max:120'],

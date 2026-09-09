@@ -61,7 +61,9 @@ class VerificationPromotionEmailResource extends JsonResource
             'optional_blocks'   => VerificationPromotionEmail::OPTIONAL_BLOCKS,
             // The remembered preview site, so the editor reopens on the one the
             // admin last chose instead of resetting to the first registered site.
-            'preview_site_id'   => $this->preview_site_id,
+            // No site field of any kind: this template always renders with the
+            // fixed Winpalack branding from config, so the editor has no site
+            // picker and the `preview_site_id` column that backed it is gone.
 
             // ── New design components ─────────────────────────────────────
             'header_brand_text'         => $this->header_brand_text,

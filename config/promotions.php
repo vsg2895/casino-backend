@@ -70,4 +70,38 @@ return [
     // remainder is picked up by the following runs.
     'verification_dispatch_limit' => (int) env('PROMOTION_VERIFICATION_DISPATCH_LIMIT', 1000),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Post-verification promotion — FIXED branding
+    |--------------------------------------------------------------------------
+    |
+    | The one global "welcome offer" email is always Winpalack-branded, whichever
+    | of the six sites the subscriber actually confirmed on. Before this, its
+    | {{site_name}} / {{site_url}} / {{site_domain}} placeholders resolved against
+    | the subscriber's OWN site, so someone who verified on roulettingo.com got a
+    | header reading ROULETTINGO above an offer that is Winpalack's.
+    |
+    | THIS IS THE ONLY PLACE THESE STRINGS LIVE. They are deliberately not
+    | repeated in the Blade view, the renderer or the admin UI — change them here
+    | and every one of those follows.
+    |
+    | Scope: this template ONLY. Subscription, verify, per-site promotion and
+    | warmup emails still resolve per-site and must keep doing so.
+    |
+    | Literals rather than env() lookups: this is a product decision about which
+    | brand the email carries, not a per-environment setting. A staging box
+    | rendering a different brand here would be testing a different email.
+    |
+    | NOT here, and never to be moved here: {{unsubscribe_url}} and {{email}}.
+    | Both are per-subscriber — see PostVerificationPromotionEmailService.
+    */
+    'after_verification' => [
+        'site_name'     => 'Winpalack',
+        'site_url'      => 'https://winpalack.com',
+        // Bare domain, no scheme: footer copy reads "confirmed at winpalack.com",
+        // where "https://" would look wrong.
+        'site_domain'   => 'winpalack.com',
+        'contact_email' => 'info@winpalack.com',
+    ],
+
 ];

@@ -343,10 +343,14 @@
                             <p style="margin:0 0 10px 0; font-size:11px; line-height:1.5; color:{{ $footerColor }};">{{ $t['age_disclaimer_text'] }}</p>
                         @endif
 
-                        @if ($show('postal_address') || $show('contact_email'))
-                            @php $addressLine = implode(', ', array_filter([$siteName, $t['postal_address'] ?? ''])); @endphp
-                            <p style="margin:0; font-size:11px; line-height:1.5; color:{{ $footerColor }};">{{ $addressLine }}@if ($show('contact_email')) &nbsp;·&nbsp; <a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $footerLink }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</p>
-                        @endif
+                        {{-- Contact address is ALWAYS rendered and always comes from
+                             config('promotions.after_verification.contact_email'), so
+                             the recipient of a single-brand email always has a way to
+                             reach that brand. It sits directly under the 18+ /
+                             responsible-gambling line above. The postal address stays
+                             an editable, hideable template field. --}}
+                        @php $addressLine = implode(', ', array_filter([$siteName, $show('postal_address') ? ($t['postal_address'] ?? '') : ''])); @endphp
+                        <p style="margin:0; font-size:11px; line-height:1.5; color:{{ $footerColor }};">{{ $addressLine }}&nbsp;·&nbsp; <a href="mailto:{{ $contactEmail }}" style="color:{{ $footerLink }}; text-decoration:underline;">{{ $contactEmail }}</a></p>
 
                         @if ($show('copyright_text'))
                             <p style="margin:8px 0 0 0; font-size:11px; color:{{ $footerColor }};">{{ $t['copyright_text'] }}</p>

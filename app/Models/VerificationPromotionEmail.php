@@ -144,7 +144,6 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'hidden_blocks',
         // Which site the PREVIEW and test render against. Not ownership — this
         // template is global; see the migration for why the name matters.
-        'preview_site_id',
         // New design components
         'header_brand_text',
         'eyebrow_text',
@@ -189,7 +188,6 @@ class VerificationPromotionEmail extends SitePromotionEmail
         return [
             'active'          => 'boolean',
             'delay_minutes'   => 'integer',
-            'preview_site_id'      => 'integer',
             'intro_text_font_size' => 'integer',
             'button_text_font_size' => 'integer',
             'hidden_blocks'   => 'array',
@@ -218,6 +216,8 @@ class VerificationPromotionEmail extends SitePromotionEmail
      * Starting copy. Deliberately brand-neutral: ONE template serves subscribers
      * from every site, so the wording may not name a specific brand. The runtime
      * {{site_name}} / {{site_url}} placeholders (see the service context) fill in
+     * with the FIXED Winpalack branding from config — this one template is
+     * single-brand and does not resolve against the subscriber's site.
      * the subscriber's own site, which is what keeps a single template correct
      * for all of them.
      *
@@ -283,7 +283,10 @@ class VerificationPromotionEmail extends SitePromotionEmail
             // inbox placement. Replace with the company's registered address.
             'postal_address'            => '123 Example Street, City 00000, Country',
             // A MONITORED mailbox that accepts replies — never no-reply@ / promo@.
-            'contact_email'             => 'info@{{site_domain}}',
+            // The config value, via its placeholder — never the literal, so
+            // config('promotions.after_verification.contact_email') stays the one
+            // place this address is written.
+            'contact_email'             => '{{contact_email}}',
             // Lets a reader cut back instead of leaving entirely.
             'email_preferences_label'   => 'Email preferences',
             'email_preferences_url'     => '{{site_url}}/email-preferences',

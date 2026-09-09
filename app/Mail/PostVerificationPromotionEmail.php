@@ -25,6 +25,11 @@ use Illuminate\Queue\SerializesModels;
  * arrives pre-rendered in $template (placeholders substituted, rich fields
  * HTML-safe — see VerificationPromotionEmail::render()); the palette arrives
  * already defaulted, so the view never guards against a missing colour.
+ *
+ * $siteName / $siteUrl / $contactEmail are the FIXED Winpalack values from
+ * config('promotions.after_verification'), not the subscriber's site — this one
+ * stream is deliberately single-brand. See
+ * {@see \App\Services\PostVerificationPromotionEmailService}.
  */
 class PostVerificationPromotionEmail extends Mailable implements SenderOverridable
 {
@@ -39,6 +44,12 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
         public readonly array $template,
         public readonly string $siteName,
         public readonly string $siteUrl,
+        /**
+         * Footer contact address, from config('promotions.after_verification').
+         * Passed in rather than read in the view so the config key stays the
+         * single place these strings live.
+         */
+        public readonly string $contactEmail,
         public readonly string $unsubscribeUrl,
         public readonly string $oneClickUrl = '',
         public readonly string $greeting = '',
@@ -82,6 +93,7 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
                 't'              => $this->template,
                 'siteName'       => $this->siteName,
                 'siteUrl'        => $this->siteUrl,
+                'contactEmail'   => $this->contactEmail,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'greeting'       => $this->greeting,
                 'visible'        => $this->visibleBlocks,
