@@ -30,7 +30,7 @@ use Illuminate\Support\Facades\DB;
  *      never resolve — so the rows are trivially identifiable and are what
  *      `purge()` deletes.
  *
- * Remove them with:  php artisan db:seed --class=DemoCasinoReviewSeeder -- --purge
+ * Remove them with:  SEED_PURGE=1 php artisan db:seed --class=DemoCasinoReviewSeeder
  * or from tinker:    (new Database\Seeders\DemoCasinoReviewSeeder)->purge();
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -59,7 +59,10 @@ class DemoCasinoReviewSeeder extends Seeder
             return;
         }
 
-        if (in_array('--purge', (array) ($_SERVER['argv'] ?? []), true)) {
+        // Env var, not a CLI flag: `db:seed` parses a trailing `--purge` as a
+        // second seeder class and fails. The documented `-- --purge` never
+        // worked; this does.
+        if (filter_var(env('SEED_PURGE', false), FILTER_VALIDATE_BOOLEAN)) {
             $this->purge();
 
             return;
@@ -133,7 +136,7 @@ class DemoCasinoReviewSeeder extends Seeder
             self::SITE_SLUG,
             $purged > 0 ? " — replaced {$purged} from a previous run" : '',
         ));
-        $this->command?->warn('DEMO DATA. Remove with: php artisan db:seed --class=DemoCasinoReviewSeeder -- --purge');
+        $this->command?->warn('DEMO DATA. Remove with: SEED_PURGE=1 php artisan db:seed --class=DemoCasinoReviewSeeder');
     }
 
     /**

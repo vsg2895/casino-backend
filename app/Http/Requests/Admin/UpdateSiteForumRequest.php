@@ -42,6 +42,9 @@ class UpdateSiteForumRequest extends FormRequest
             // admin screen would ever show.
             'empty_cta_url'    => ['sometimes', 'nullable', 'string', 'max:200', 'regex:/^\/[A-Za-z0-9\-\/_?=&#.]*$/'],
             'show_stats'       => ['sometimes', 'boolean'],
+            'editorial_enabled' => ['sometimes', 'boolean'],
+            'editorial_title'  => ['sometimes', 'nullable', 'string', 'max:180'],
+            'editorial_body'   => ['sometimes', 'nullable', 'string', 'max:4000'],
             'threads_per_page' => ['sometimes', 'integer', 'min:1', 'max:' . SiteForum::MAX_THREADS_PER_PAGE],
             'preview_reviews'  => ['sometimes', 'integer', 'min:1', 'max:' . SiteForum::MAX_PREVIEW_REVIEWS],
         ];

@@ -28,6 +28,16 @@ class SiteForum extends Model
     public const string DEFAULT_EMPTY_CTA_LABEL = 'Browse casinos';
     public const string DEFAULT_EMPTY_CTA_URL = '/casinos';
 
+    /**
+     * The site's own note, in its own voice.
+     *
+     * Wording deliberately describes the POLICY — how reviews are handled — and
+     * makes no claim about any operator. That is what keeps it editorial rather
+     * than a disguised endorsement.
+     */
+    public const string DEFAULT_EDITORIAL_TITLE = 'About these reviews';
+    public const string DEFAULT_EDITORIAL_BODY = "Every review on this page was written by a visitor and checked before it went live. We publish criticism as readily as praise, and we do not edit a review's wording or remove one for being unflattering.\n\nReviews are personal experiences, not our assessment of an operator. Where we have checked something ourselves — a licence, a withdrawal limit, a safer-play tool — we say so on the casino's own page.";
+
     public const int DEFAULT_THREADS_PER_PAGE = 8;
     public const int DEFAULT_PREVIEW_REVIEWS = 3;
 
@@ -50,6 +60,9 @@ class SiteForum extends Model
         'empty_cta_label',
         'empty_cta_url',
         'show_stats',
+        'editorial_enabled',
+        'editorial_title',
+        'editorial_body',
         'threads_per_page',
         'preview_reviews',
     ];
@@ -58,8 +71,9 @@ class SiteForum extends Model
     {
         return [
             'enabled'          => 'boolean',
-            'show_eyebrow'     => 'boolean',
-            'noindex'          => 'boolean',
+            'show_eyebrow'      => 'boolean',
+            'noindex'           => 'boolean',
+            'editorial_enabled' => 'boolean',
             'show_stats'       => 'boolean',
             'threads_per_page' => 'integer',
             'preview_reviews'  => 'integer',
@@ -100,6 +114,15 @@ class SiteForum extends Model
             'empty_cta_label'  => self::orDefault($this->empty_cta_label, self::DEFAULT_EMPTY_CTA_LABEL),
             'empty_cta_url'    => self::orDefault($this->empty_cta_url, self::DEFAULT_EMPTY_CTA_URL),
             'show_stats'       => (bool) $this->show_stats,
+            // Clearing the note reverts it to the shipped wording, the same
+            // as every other field here — so in practice the body is never
+            // blank. The emptiness check is a floor rather than a live branch:
+            // it guarantees the front end can trust this one boolean and never
+            // render a heading with nothing under it.
+            'editorial_enabled' => (bool) $this->editorial_enabled
+                && trim((string) self::orDefault($this->editorial_body, self::DEFAULT_EDITORIAL_BODY)) !== '',
+            'editorial_title'   => self::orDefault($this->editorial_title, self::DEFAULT_EDITORIAL_TITLE),
+            'editorial_body'    => self::orDefault($this->editorial_body, self::DEFAULT_EDITORIAL_BODY),
             'threads_per_page' => $this->clamp($this->threads_per_page, self::DEFAULT_THREADS_PER_PAGE, self::MAX_THREADS_PER_PAGE),
             'preview_reviews'  => $this->clamp($this->preview_reviews, self::DEFAULT_PREVIEW_REVIEWS, self::MAX_PREVIEW_REVIEWS),
         ];
