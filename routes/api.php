@@ -53,6 +53,7 @@ use App\Http\Controllers\Api\Public\RedirectController as PublicRedirectControll
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
 use App\Http\Controllers\Api\Public\SiteFeatureController;
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
+use App\Http\Controllers\Api\Public\SearchController as PublicSearchController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
 use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
 use App\Http\Controllers\Api\Public\VerifyController as PublicVerifyController;
@@ -452,6 +453,16 @@ Route::prefix('v1')->group(function () {
         Route::get('casinos/{casinoSlug}/reviews', [PublicCasinoReviewController::class, 'index']);
         Route::post('casinos/{casinoSlug}/reviews', [PublicCasinoReviewController::class, 'store'])
             ->middleware('throttle:10,1');
+
+        // Site-wide search for the header overlay. Inside the verify.site group,
+        // so the site is resolved from X-Site-Key and never from the request —
+        // a client-supplied site id would let one key read another's index.
+        //
+        // Throttled harder than the group default because the overlay calls it
+        // on every keystroke: 60/min is roughly one debounced request per second
+        // sustained, which is well above real typing and well below abuse.
+        Route::get('search/suggest', [PublicSearchController::class, 'suggest'])
+            ->middleware('throttle:60,1');
 
         Route::get('special-offers',          [PublicSpecialOfferController::class, 'index']);
         Route::get('special-offers/{slug}',   [PublicSpecialOfferController::class, 'show']);

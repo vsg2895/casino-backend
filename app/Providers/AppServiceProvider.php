@@ -6,7 +6,15 @@ namespace App\Providers;
 
 use App\Models\Casino;
 use App\Models\CmsPage;
+use App\Models\CasinoReview;
+use App\Models\Category;
+use App\Models\SpecialOffer;
 use App\Observers\CasinoObserver;
+use App\Observers\Search\CasinoReviewSearchObserver;
+use App\Observers\Search\CasinoSearchObserver;
+use App\Observers\Search\CategorySearchObserver;
+use App\Observers\Search\CmsPageSearchObserver;
+use App\Observers\Search\SpecialOfferSearchObserver;
 use App\Policies\CmsPagePolicy;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Repositories\CmsPageRepository;
@@ -30,6 +38,21 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Casino::observe(CasinoObserver::class);
+
+        // Search index sync. Separate observers from CasinoObserver on purpose:
+        // that one owns cache invalidation and Next.js revalidation, this one
+        // owns `search_index`. Merging them would couple two independent
+        // concerns and make a search bug able to break page revalidation.
+        //
+        // NOTE: pivot writes (casino_site, casino_category) fire no model
+        // events, so those are hooked explicitly in the two admin controllers
+        // that perform them — see CasinoController and
+        // CasinoSiteAttachmentController.
+        Casino::observe(CasinoSearchObserver::class);
+        SpecialOffer::observe(SpecialOfferSearchObserver::class);
+        Category::observe(CategorySearchObserver::class);
+        CasinoReview::observe(CasinoReviewSearchObserver::class);
+        CmsPage::observe(CmsPageSearchObserver::class);
 
         Gate::policy(CmsPage::class, CmsPagePolicy::class);
 

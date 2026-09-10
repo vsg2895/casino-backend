@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\AttachCasinoToSiteRequest;
 use App\Http\Requests\Admin\SyncCasinoSitesRequest;
 use App\Jobs\InvalidateCasinoCache;
+use App\Services\Search\SearchIndexer;
 use App\Models\Casino;
 use App\Models\Site;
 use Illuminate\Http\JsonResponse;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 class CasinoSiteAttachmentController extends Controller
 {
+    public function __construct(private readonly SearchIndexer $indexer) {}
+
     public function index(Casino $casino): JsonResponse
     {
         $attachments = $casino->sites()
@@ -44,6 +47,11 @@ class CasinoSiteAttachmentController extends Controller
         ]);
 
         InvalidateCasinoCache::dispatch([$data['site_id']]);
+        // Pivot writes fire NO model events, so the observer cannot see this
+        // change — the search index has to be told explicitly. syncCasino()
+        // cascades to the casino's offers, reviews and categories, which is
+        // exactly the set whose visibility a pivot change can flip.
+        $this->indexer->syncCasino($casino);
 
         return response()->json(['data' => $this->pivotRow($casino, $data['site_id'])], 201);
     }
@@ -60,6 +68,11 @@ class CasinoSiteAttachmentController extends Controller
         ]);
 
         InvalidateCasinoCache::dispatch([$site->id]);
+        // Pivot writes fire NO model events, so the observer cannot see this
+        // change — the search index has to be told explicitly. syncCasino()
+        // cascades to the casino's offers, reviews and categories, which is
+        // exactly the set whose visibility a pivot change can flip.
+        $this->indexer->syncCasino($casino);
 
         return response()->json(['data' => $this->pivotRow($casino, $site->id)]);
     }
@@ -69,6 +82,11 @@ class CasinoSiteAttachmentController extends Controller
         $casino->sites()->detach($site->id);
 
         InvalidateCasinoCache::dispatch([$site->id]);
+        // Pivot writes fire NO model events, so the observer cannot see this
+        // change — the search index has to be told explicitly. syncCasino()
+        // cascades to the casino's offers, reviews and categories, which is
+        // exactly the set whose visibility a pivot change can flip.
+        $this->indexer->syncCasino($casino);
 
         return response()->json(null, 204);
     }
@@ -98,6 +116,12 @@ class CasinoSiteAttachmentController extends Controller
         if (! empty($affectedIds)) {
             InvalidateCasinoCache::dispatch($affectedIds);
         }
+
+        // Pivot writes fire NO model events, so the observer cannot see this
+        // change — the search index has to be told explicitly. syncCasino()
+        // cascades to the casino's offers, reviews and categories, which is
+        // exactly the set whose visibility a pivot change can flip.
+        $this->indexer->syncCasino($casino);
 
         return response()->json(['data' => $this->index($casino)->getData()->data]);
     }

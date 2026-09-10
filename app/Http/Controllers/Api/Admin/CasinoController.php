@@ -9,10 +9,13 @@ use App\Http\Requests\Admin\StoreCasinoRequest;
 use App\Http\Requests\Admin\UpdateCasinoRequest;
 use App\Http\Resources\{CasinoCollection, CasinoResource};
 use App\Models\Casino;
+use App\Services\Search\SearchIndexer;
 use Illuminate\Http\JsonResponse;
 
 class CasinoController extends Controller
 {
+    public function __construct(private readonly SearchIndexer $indexer) {}
+
     public function index(): CasinoCollection
     {
         return new CasinoCollection(
@@ -51,6 +54,12 @@ class CasinoController extends Controller
             $casino->countries()->sync($countryIds);
         }
 
+        // The categories pivot is synced AFTER the model save, so the observer's
+        // `saved` hook fired before these rows existed and could not see them.
+        // A category's search visibility is derived from its casinos, so this
+        // call is what adds or removes the whole category from a site.
+        $this->indexer->syncCasino($casino);
+
         return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers']));
     }
 
@@ -77,6 +86,12 @@ class CasinoController extends Controller
         }
 
         // CasinoObserver::saved() handles cache invalidation and revalidation.
+
+        // The categories pivot is synced AFTER the model save, so the observer's
+        // `saved` hook fired before these rows existed and could not see them.
+        // A category's search visibility is derived from its casinos, so this
+        // call is what adds or removes the whole category from a site.
+        $this->indexer->syncCasino($casino);
 
         return new CasinoResource($casino->fresh(['categories', 'countries', 'sites', 'specialOffers']));
     }
