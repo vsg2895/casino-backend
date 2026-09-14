@@ -57,6 +57,29 @@ return [
     'admin_mailer' => env('MAIL_ADMIN_MAILER', env('MAIL_TEST_MAILER', env('MAIL_MAILER', 'smtp'))),
 
     /*
+    |--------------------------------------------------------------------------
+    | Password reset mailer
+    |--------------------------------------------------------------------------
+    |
+    | Pinned to the .env SMTP credentials, and DELIBERATELY NOT chained to
+    | MAIL_MAILER like the mailers above.
+    |
+    | Laravel's ResetPassword notification otherwise sends on `mail.default`,
+    | which is env('MAIL_MAILER', 'log'). That gives two silent failures:
+    |
+    |   - MAIL_MAILER unset  -> the reset link is written to storage/logs and
+    |                           never sent. No error, no bounce; the admin just
+    |                           never receives it and cannot get back in.
+    |   - MAIL_MAILER=sendgrid -> the reset goes out over the SendGrid Web API
+    |                           instead of the SMTP credentials, from whatever
+    |                           sender that key is authenticated for.
+    |
+    | Admin account recovery must not depend on which transport the PUBLIC mail
+    | happens to be using this week, so it names its own.
+    */
+    'password_reset_mailer' => env('MAIL_PASSWORD_RESET_MAILER', 'smtp'),
+
+    /*
     | The mailer the admin "Send test" buttons ALWAYS use.
     |
     | A literal, not an env() lookup, and deliberately separate from

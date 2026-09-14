@@ -5,16 +5,20 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ChangePasswordRequest;
 use App\Http\Requests\ForgotPasswordRequest;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\ResetPasswordRequest;
 use App\Models\User;
+use App\Notifications\PasswordChanged;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 
@@ -95,6 +99,93 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * Change your own password while signed in.
+     *
+     * The current password is required and is verified in ChangePasswordRequest
+     * — read the note there about why Laravel's `current_password` rule is not
+     * usable behind `auth:sanctum`.
+     *
+     * EVERY token dies here, including the one making this request, and a fresh
+     * one is minted and returned. Keeping the caller's token alive would have
+     * been friendlier to write and is what most panels do, but a password change
+     * is a credential change, and the standing advice after one is to renew the
+     * session identifier: if the reason for the change is that a token leaked,
+     * anything that survives the change defeats it. Because the replacement is
+     * returned in the same response, the operator is not signed out — the panel
+     * swaps the token and the screen carries on.
+     *
+     * The write and the revocation share a transaction. Split, a failure between
+     * them leaves the new password live with old sessions still attached, which
+     * is precisely the state this is meant to prevent.
+     */
+    public function changePassword(ChangePasswordRequest $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $expiresAt = $this->tokenExpiry();
+        $newPassword = $request->string('password')->value();
+
+        $result = DB::transaction(function () use ($user, $newPassword, $expiresAt): array {
+            $user->forceFill([
+                // forceFill bypasses $fillable but NOT the casts, so the
+                // 'hashed' cast would hash this anyway. Hash::make is written
+                // out because a security-critical line should not depend on a
+                // cast declared in another file staying where it is.
+                'password' => Hash::make($newPassword),
+                // Any "remember me" cookie issued against the old password is
+                // dead from here, the same as in the reset path above.
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            $revoked = $user->tokens()->count();
+            $user->tokens()->delete();
+
+            return [
+                'revoked' => $revoked,
+                'token'   => $user->createToken('admin-panel', ['*'], $expiresAt)->plainTextToken,
+            ];
+        });
+
+        $changedAt = now();
+
+        /*
+         * Told, not asked. The notification goes to the address on the account,
+         * which is a channel a session-only attacker does not hold — so if the
+         * change was not the owner's, this is how they find out.
+         *
+         * Wrapped because the password is already changed and committed: a mail
+         * transport that is down must not turn a successful change into a 500
+         * that invites the operator to "try again" with a password that is no
+         * longer current.
+         */
+        try {
+            $user->notify(new PasswordChanged($changedAt));
+        } catch (\Throwable $e) {
+            Log::warning('Password changed, but the notification mail could not be queued.', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
+        // Deliberately no password material, not even its length.
+        Log::info('Admin password changed.', [
+            'user_id'          => $user->id,
+            'revoked_sessions' => $result['revoked'],
+        ]);
+
+        return response()->json([
+            'message' => 'Password changed. All other sessions were signed out.',
+            // The caller's own token was revoked with the rest; this replaces it
+            // so the panel stays signed in. The client MUST store it.
+            'token'            => $result['token'],
+            'expires_at'       => $expiresAt?->toISOString(),
+            // Sessions ended besides this one.
+            'revoked_sessions' => max(0, $result['revoked'] - 1),
+        ]);
+    }
+
     public function me(Request $request): JsonResponse
     {
         /** @var User $user */
@@ -104,7 +195,13 @@ class AuthController extends Controller
             ...$this->userPayload($user),
             // Lets a panel restored from localStorage learn how long it has left
             // without waiting for a request to fail.
-            'expires_at' => $request->user()->currentAccessToken()->expires_at?->toISOString(),
+            // Null-safe on the TOKEN as well as on the date. A real request through
+            // `auth:sanctum` always has a token, but `actingAs($user, 'sanctum')`
+            // authenticates without minting one, so this line was a 500 for every
+            // caller that did not come in over HTTP with a bearer token. Answering
+            // `expires_at: null` degrades honestly — the client simply falls back
+            // to learning about expiry from its next 401.
+            'expires_at' => $request->user()->currentAccessToken()?->expires_at?->toISOString(),
         ]);
     }
 

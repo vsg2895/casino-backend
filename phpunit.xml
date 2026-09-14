@@ -32,6 +32,18 @@
              like live sends. -->
         <env name="LOG_CHANNEL" value="null"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- Address validation is OFF for the suite, and the key is blanked.
+             Without these two lines the tests inherit whatever is in the
+             developer's .env, and every subscribe test makes a REAL, BILLABLE
+             call to SendGrid. That went unnoticed only because the key in .env
+             happened to be dead: it 401'd, the gate failed open, and the tests
+             passed for the wrong reason. The moment a working key was pasted in,
+             three subscribe tests started failing because SendGrid correctly
+             judged their made-up addresses undeliverable.
+             The email-validation tests enable it per-test via config() and fake
+             the HTTP, which is how it should be reached. -->
+        <env name="SENDGRID_VALIDATION_ENABLED" value="false"/>
+        <env name="SENDGRID_VALIDATION_KEY" value=""/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

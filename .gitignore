@@ -1,6 +1,11 @@
 *.log
 .DS_Store
 .env
+# Any .env variant — backups, per-environment copies, editor saves. The bare
+# `.env` rule does not match `.env.backup-…` or `.env.production`, and a single
+# such file carries every credential the platform has.
+.env.*
+!.env.example
 .env.backup
 .env.production
 .phpactor.json

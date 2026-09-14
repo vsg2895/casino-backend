@@ -88,6 +88,28 @@ class Casino extends Model
      * No pivot payload, for the same reason categories have none: the fact is a
      * property of the casino itself and does not vary by site.
      */
+    /**
+     * Replace this casino's countries, collapsing Worldwide to itself.
+     *
+     * Worldwide MEANS every country, so holding it alongside a list of specific
+     * ones states the same fact twice — and the two copies then rot apart: the
+     * operator removes Austria, the casino still shows in Austria through the
+     * wildcard, and the admin screen says otherwise. One of them has to win, and
+     * the broader claim is the one the operator just made.
+     *
+     * Enforced HERE rather than in the controller so no caller can skip it. The
+     * admin form mirrors the rule for immediate feedback, but the form is not
+     * what guarantees it.
+     */
+    public function syncCountries(?array $countryIds): void
+    {
+        if ($countryIds === null) {
+            return;
+        }
+
+        $this->countries()->sync(Country::collapseWorldwide($countryIds));
+    }
+
     public function countries(): BelongsToMany
     {
         return $this->belongsToMany(Country::class);

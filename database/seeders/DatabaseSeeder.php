@@ -11,8 +11,19 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
+        /*
+         * AdminUserSeeder is NOT in this list, and must not be added back.
+         *
+         * It was, until it became destructive: it now deletes every user, every
+         * personal access token and every role assignment before creating the one
+         * known login. That is correct for a recovery tool invoked deliberately,
+         * and catastrophic as a step inside a blanket `db:seed` — which is a
+         * routine deploy command, and would silently sign out and delete the
+         * production admin.
+         *
+         *   php artisan db:seed --class=AdminUserSeeder --force
+         */
         $this->call([
-            AdminUserSeeder::class,
             SiteSeeder::class,
             SiteEmailTemplateSeeder::class,
             SiteVerifyEmailSeeder::class,

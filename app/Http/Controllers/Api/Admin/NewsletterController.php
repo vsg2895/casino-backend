@@ -177,6 +177,9 @@ class NewsletterController extends Controller
         ], $status);
     }
 
+    /** Shared by every date column in the export, so they cannot drift apart. */
+    private const string EXPORT_DATE_FORMAT = 'd/m/Y, g:i A';
+
     public function export(Request $request): StreamedResponse
     {
         $siteId = $request->integer('site_id') ?: null;
@@ -187,10 +190,19 @@ class NewsletterController extends Controller
             ->cursor()
             ->map(fn (Newsletter $n) => [
                 $n->email,
-                $n->created_at?->format('d/m/Y, g:i A') ?? '',
+                $n->created_at?->format(self::EXPORT_DATE_FORMAT) ?? '',
+                // Empty means the subscriber never confirmed. Left blank rather
+                // than filled with "no" or a dash: the column is a timestamp, and
+                // a spreadsheet can sort and filter an empty cell but not a word
+                // pretending to be a date.
+                $n->verified_at?->format(self::EXPORT_DATE_FORMAT) ?? '',
             ]);
 
-        return CsvExport::download('newsletter.csv', ['Email address', 'Created at'], $rows);
+        return CsvExport::download(
+            'newsletter.csv',
+            ['Email address', 'Created at', 'Verified at'],
+            $rows,
+        );
     }
 
     /** Soft-delete a single subscriber. */

@@ -8,10 +8,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\CasinoWithAttachmentResource;
 use App\Http\Resources\ContinentResource;
 use App\Http\Resources\CountryResource;
+use App\Models\Casino;
 use App\Models\Continent;
 use App\Models\Country;
 use App\Models\Site;
 use App\Support\SiteCache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -38,14 +40,39 @@ class CountryController extends Controller
         $this->assertEnabled($site);
 
         $data = SiteCache::remember($site->id, ['countries', 'casinos'], 'countries:index:site:' . $site->id, 3600, function () use ($site) {
-            // Counts only the casinos actually attached to THIS site, so a card
-            // never advertises another domain's catalogue.
-            $attachedToSite = function ($query) use ($site): void {
-                $query->where('casinos.active', true)
-                    ->whereHas('sites', function ($s) use ($site): void {
-                        $s->where('sites.id', $site->id)->where('casino_site.active', true);
-                    });
-            };
+            /*
+             * Counts only the casinos attached to THIS site, so a card never
+             * advertises another domain's catalogue — and now also counts the
+             * Worldwide casinos that the country's own page will list.
+             *
+             * Written as a correlated subquery rather than withCount() because
+             * the condition spans two country ids (this one OR the wildcard) and
+             * has to de-duplicate: a casino attached to both must be counted
+             * once. COUNT(DISTINCT) over a relation is not something withCount
+             * can express.
+             *
+             * The joins re-state what the Eloquent relation used to imply, so
+             * each one matters: `deleted_at IS NULL` because casinos are
+             * soft-deleted and a raw builder does not apply that scope, and the
+             * casino_site pair because an attachment can be present but inactive.
+             */
+            $worldwideId = Country::worldwideId();
+
+            $casinoCount = DB::table('casino_country as cc')
+                ->join('casinos', 'casinos.id', '=', 'cc.casino_id')
+                ->join('casino_site as cs', 'cs.casino_id', '=', 'casinos.id')
+                ->where('cs.site_id', $site->id)
+                ->where('cs.active', true)
+                ->where('casinos.active', true)
+                ->whereNull('casinos.deleted_at')
+                ->where(function ($q) use ($worldwideId): void {
+                    $q->whereColumn('cc.country_id', 'countries.id');
+
+                    if ($worldwideId !== null) {
+                        $q->orWhere('cc.country_id', $worldwideId);
+                    }
+                })
+                ->selectRaw('COUNT(DISTINCT casinos.id)');
 
             // EVERY active country is listed, grouped by continent — not only
             // those that already have a casino.
@@ -62,9 +89,10 @@ class CountryController extends Controller
             // is ever submitted for indexing.
             $continents = Continent::query()
                 ->whereHas('countries', fn ($q) => $q->where('active', true))
-                ->with(['countries' => function ($q) use ($attachedToSite): void {
+                ->with(['countries' => function ($q) use ($casinoCount): void {
                     $q->where('active', true)
-                        ->withCount(['casinos as casinos_count' => $attachedToSite]);
+                        ->select('countries.*')
+                        ->selectSub($casinoCount, 'casinos_count');
                 }])
                 ->ordered()
                 ->get();
@@ -90,7 +118,30 @@ class CountryController extends Controller
             function () use ($site, $slug, $page) {
                 $country = Country::where('slug', $slug)->where('active', true)->firstOrFail();
 
-                $paginator = $country->casinos()
+                /*
+                 * A Worldwide casino belongs on EVERY country's page.
+                 *
+                 * That is the whole point of the wildcard row: an operator says
+                 * "accepts everyone" once instead of attaching the casino to all
+                 * 79 countries, and the listing has to honour it or the shortcut
+                 * saves nothing.
+                 *
+                 * whereExists rather than a second join: a casino attached to
+                 * BOTH this country and Worldwide matches twice, and a join would
+                 * list it twice and corrupt the pagination totals.
+                 *
+                 * worldwideId() is null on a database where the seeder has not
+                 * run, and the query then behaves exactly as it did before.
+                 */
+                $countryIds = array_values(array_unique(array_filter([
+                    $country->id,
+                    $country->isWorldwide() ? null : Country::worldwideId(),
+                ])));
+
+                $paginator = Casino::query()
+                    ->whereExists(fn ($q) => $q->from('casino_country')
+                        ->whereColumn('casino_country.casino_id', 'casinos.id')
+                        ->whereIn('casino_country.country_id', $countryIds))
                     ->join('casino_site as pivot', 'casinos.id', '=', 'pivot.casino_id')
                     ->where('pivot.site_id', $site->id)
                     ->where('pivot.active', true)

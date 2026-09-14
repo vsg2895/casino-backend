@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests;
 
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 abstract class TestCase extends BaseTestCase
@@ -70,5 +71,20 @@ abstract class TestCase extends BaseTestCase
         // builds its config from these.
         config()->set('services.sendgrid.key', 'test-sendgrid-key');
         config()->set('services.mailgun.secret', 'test-mailgun-key');
+
+        // The address-validation key is a SEPARATE credential from the send key
+        // above, and it was the one gap in this guard. With a real key present,
+        // every subscribe test made a live, BILLABLE call to the validation API
+        // and its result depended on what SendGrid thought of a made-up address.
+        // That hid for as long as the key in .env was dead — it 401'd, the gate
+        // failed open, and the tests passed for entirely the wrong reason.
+        config()->set('services.sendgrid_validation.key', '');
+        config()->set('services.sendgrid_validation.enabled', false);
+
+        // And the general case, so the next credential nobody thought of cannot
+        // repeat it: any HTTP request a test did not explicitly fake now throws
+        // instead of reaching the internet. A test that means to exercise a
+        // client calls Http::fake() and is unaffected.
+        Http::preventStrayRequests();
     }
 }

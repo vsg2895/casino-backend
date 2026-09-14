@@ -11,23 +11,73 @@ use App\Jobs\ProcessNewsletterSubscription;
 use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
+use App\Services\Validation\SubscribeValidationGate;
+use App\Support\Validation\ValidationMessage;
 use Illuminate\Http\JsonResponse;
 
 class NewsletterController extends Controller
 {
+    public function __construct(private readonly SubscribeValidationGate $gate) {}
+
     public function store(SubscribeNewsletterRequest $request): JsonResponse
     {
         /** @var Site $site */
         $site = app('current_site');
+        $email = (string) $request->validated('email');
+
+        // ─────────────────────────────────────────────────────────────────────
+        // THE GATE. Address validation happens HERE, in the request, and not
+        // inside ProcessNewsletterSubscription — because the job runs after the
+        // response has already gone out, and by then neither the subscriber row
+        // nor the verify email can be called back.
+        //
+        // Everything downstream of this line is unchanged. Everything that
+        // creates a subscriber or sends a verification email is downstream of
+        // it: the job below is the only caller of ProcessNewsletterSubscription,
+        // and that job is the only caller of SendNewsletterWelcomeEmail.
+        //
+        // Returns TRUE for both "allowed" and "failed open" — the gate owns that
+        // distinction and records it; the controller only needs to know whether
+        // to proceed.
+        // ─────────────────────────────────────────────────────────────────────
+        $decision = $this->gate->decide($site, $email);
+
+        if (! $decision->permitsSubscribe()) {
+            $result = $this->gate->lastResult();
+
+            // 422, with the wording chosen by the rule that fired.
+            //
+            // The verdict, the score, the checks and the reason CODE all stay
+            // server-side — the visitor gets a plain sentence and an instruction,
+            // never a SendGrid internal and never something an admin filter
+            // depends on. See ValidationMessage for why one generic line was
+            // dropped: it was safer against probing, and it also left everybody
+            // who mistyped their own address with no idea what to do.
+            $message = ValidationMessage::forReason($decision->reason);
+
+            return response()->json([
+                'ok'      => false,
+                'message' => $message,
+                'errors'  => ['email' => [$message]],
+                // Present only when SendGrid proposed a domain correction. The
+                // form renders "did you mean …?" with a one-click fix.
+                'suggestion'           => $result?->suggestion,
+                'suggested_email'      => $this->suggestedEmail($email, $result?->suggestion),
+            ], 422);
+        }
 
         // Persisting + confirming happen on the HIGH-priority queue so the
         // public request returns instantly. The (site_id, email) unique index
         // keeps this idempotent; the confirmation email is sent only for new
         // subscriptions (see ProcessNewsletterSubscription).
+        $verdict = $this->gate->lastResult();
+
         ProcessNewsletterSubscription::dispatch(
             $site->id,
-            $request->validated('email'),
+            $email,
             $request->validated('full_name'),
+            $verdict?->verdict,
+            $verdict?->score,
         );
 
         // `email_sent` so the form can tell the visitor the truth. Without it the
@@ -38,6 +88,24 @@ class NewsletterController extends Controller
             'ok'         => true,
             'email_sent' => (bool) $site->newsletter_emails_enabled,
         ], 202);
+    }
+
+    /**
+     * The same local part on SendGrid's suggested domain.
+     *
+     * Built server-side so the form does not have to reassemble an address from
+     * a bare domain and get the edge cases wrong. Null unless there is a
+     * suggestion AND the original parses — never guess at a malformed address.
+     */
+    private function suggestedEmail(string $email, ?string $suggestion): ?string
+    {
+        if ($suggestion === null || ! str_contains($email, '@')) {
+            return null;
+        }
+
+        [$local] = explode('@', $email, 2);
+
+        return $local === '' ? null : $local . '@' . $suggestion;
     }
 
     /**

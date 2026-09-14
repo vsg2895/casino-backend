@@ -27,6 +27,16 @@ class Country extends Model
 {
     use HasSlug;
 
+    /**
+     * The pseudo-country meaning "available everywhere".
+     *
+     * A casino attached to this row is listed under EVERY country, so an
+     * operator states it once instead of ticking all 79. Created by
+     * WorldwideCountrySeeder; the slug is the identity because slugs never
+     * change here and the name is the operator's to edit.
+     */
+    public const string WORLDWIDE_SLUG = 'worldwide';
+
     protected $fillable = [
         'continent_id',
         'name',
@@ -81,6 +91,57 @@ class Country extends Model
      * @param  Builder<Country>  $query
      * @return Builder<Country>
      */
+    /**
+     * Reduce a country selection to what it actually means.
+     *
+     * A list containing Worldwide collapses to Worldwide alone: the wildcard
+     * already covers every country, so the specific ones alongside it are
+     * redundant rows that will drift out of step with it. Any other list is
+     * returned unchanged apart from de-duplication.
+     *
+     * Returns plain ints so it can be handed straight to sync().
+     *
+     * @param  array<int|string>  $countryIds
+     * @return list<int>
+     */
+    public static function collapseWorldwide(array $countryIds): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $countryIds)));
+
+        $worldwideId = self::worldwideId();
+
+        if ($worldwideId !== null && in_array($worldwideId, $ids, true)) {
+            return [$worldwideId];
+        }
+
+        return $ids;
+    }
+
+    /** Is this the wildcard row? */
+    public function isWorldwide(): bool
+    {
+        return $this->slug === self::WORLDWIDE_SLUG;
+    }
+
+    /**
+     * The wildcard row's id, or null when the seeder has never been run.
+     *
+     * Deliberately NOT memoised. A function-static would live for the whole PHP
+     * process, which is a request in FPM but is days inside a queue worker: a
+     * worker started before the seeder ran would cache "no wildcard" and keep
+     * that answer long after the row existed. It is one indexed lookup, called
+     * at most once per listing, so the cache bought nothing worth that.
+     *
+     * Callers MUST handle null: on a database where WorldwideCountrySeeder has
+     * not run there is no wildcard, and every query has to keep working.
+     */
+    public static function worldwideId(): ?int
+    {
+        $id = self::query()->where('slug', self::WORLDWIDE_SLUG)->value('id');
+
+        return $id === null ? null : (int) $id;
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('active', true);

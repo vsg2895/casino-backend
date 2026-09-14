@@ -20,8 +20,12 @@ use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Repositories\CmsPageRepository;
 use App\Services\Mail\Transport\MailgunApiTransport;
 use App\Services\Mail\Transport\SendgridClickTrackingClient;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\ServiceProvider;
 use Symfony\Component\HttpClient\HttpClient;
@@ -37,6 +41,26 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        /*
+         * Public newsletter subscribe limiter.
+         *
+         * ONE named limiter returning TWO limits, rather than two stacked
+         * `throttle:` middlewares. Stacking them looks equivalent and is not:
+         * both derive their cache key from the same route signature + IP, so
+         * they share a counter and every request costs TWO hits — the measured
+         * effect was a 5/minute limit that actually admitted three.
+         *
+         * The distinct `by()` keys here keep the two windows independent.
+         *
+         * Keyed on IP because the endpoint is unauthenticated, and throttled at
+         * all because it now spends a paid SendGrid validation credit per new
+         * address — `verify.site` does no rate limiting of its own.
+         */
+        RateLimiter::for('subscribe', static fn ($request): array => [
+            Limit::perMinute(5)->by('subscribe-min:' . $request->ip()),
+            Limit::perHour(20)->by('subscribe-hour:' . $request->ip()),
+        ]);
+
         Casino::observe(CasinoObserver::class);
 
         // Search index sync. Separate observers from CasinoObserver on purpose:
@@ -56,11 +80,36 @@ class AppServiceProvider extends ServiceProvider
 
         Gate::policy(CmsPage::class, CmsPagePolicy::class);
 
+        /*
+         * ONE password policy, for every place a password is set: the reset
+         * flow and the change-password screen both call Password::defaults().
+         *
+         * Until now defaults() was never configured, which means it was Laravel's
+         * bare min(8) — an eight-character all-lowercase password was accepted on
+         * the reset form. This is a super-admin account for six live domains.
+         *
+         * `uncompromised()` checks the password against the HaveIBeenPwned
+         * corpus using k-anonymity: only the first five characters of the SHA-1
+         * are sent, never the password. It is PRODUCTION-ONLY because it makes an
+         * outbound HTTPS call — in tests that would be slow and flaky, and on a
+         * dev box offline it would block work.
+         */
+        Password::defaults(static function (): Password {
+            $rule = Password::min(12)->mixedCase()->numbers()->symbols();
+
+            return app()->isProduction() ? $rule->uncompromised() : $rule;
+        });
+
         // The reset link must land in the ADMIN SPA, not on an API route.
         // Laravel's default builds a URL against APP_URL, which here is the
         // headless API — following it would 404 and the reset would look broken
         // rather than merely misconfigured. FRONTEND_URL already names the panel.
-        ResetPassword::createUrlUsing(static function (object $notifiable, string $token): string {
+        //
+        // Defined once and used BOTH by createUrlUsing (kept, so anything else
+        // asking the notification for a URL still gets the right one) and by the
+        // toMailUsing callback below, which builds its own message and would
+        // otherwise have to repeat this.
+        $resetUrl = static function (object $notifiable, string $token): string {
             $base = rtrim((string) config('app.frontend_url'), '/');
 
             return $base . '/reset-password?' . http_build_query([
@@ -69,6 +118,33 @@ class AppServiceProvider extends ServiceProvider
                 // address the token was issued for; the broker verifies the pair.
                 'email' => $notifiable->getEmailForPasswordReset(),
             ]);
+        };
+
+        ResetPassword::createUrlUsing($resetUrl);
+
+        /*
+         * Send the reset over the .env SMTP credentials, explicitly.
+         *
+         * Laravel's ResetPassword notification has no mailer of its own, so it
+         * uses `mail.default` — env('MAIL_MAILER', 'log'). On a box where that
+         * is unset, every reset link is written to storage/logs and NEVER SENT:
+         * no error, no bounce, and an admin locked out with no way back in.
+         * Where it is 'sendgrid', the reset leaves over the Web API instead of
+         * the SMTP credentials.
+         *
+         * Naming the mailer here makes admin account recovery independent of
+         * whatever transport the public mail happens to be using.
+         */
+        ResetPassword::toMailUsing(static function (object $notifiable, string $token) use ($resetUrl): MailMessage {
+            $minutes = config('auth.passwords.users.expire', 60);
+
+            return (new MailMessage())
+                ->mailer((string) config('mail.password_reset_mailer'))
+                ->subject('Reset your ' . config('app.name') . ' password')
+                ->line('You are receiving this email because a password reset was requested for your admin account.')
+                ->action('Reset password', $resetUrl($notifiable, $token))
+                ->line("This link expires in {$minutes} minutes.")
+                ->line('If you did not request a reset, no action is needed — your password stays unchanged.');
         });
 
         // Native SendGrid HTTP API transport (not the SMTP relay). Used by the

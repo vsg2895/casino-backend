@@ -76,3 +76,9 @@ Schedule::command('sanctum:prune-expired --hours=24')->daily();
 Schedule::call(function (): void {
     App\Models\SiteRevalidation::where('created_at', '<', now()->subDays(30))->delete();
 })->daily()->name('prune-site-revalidations');
+
+// Retire validation logs past their window. These rows carry visitor email
+// addresses, so retention is a privacy obligation rather than housekeeping.
+// Monthly: the window is expressed in months, so a finer tick would only
+// re-check a set that cannot have changed.
+Schedule::command('email-validation:prune')->monthlyOn(1, '03:20');

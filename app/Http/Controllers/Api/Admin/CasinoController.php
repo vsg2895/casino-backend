@@ -50,9 +50,8 @@ class CasinoController extends Controller
             $casino->categories()->sync($categoryIds);
         }
 
-        if ($countryIds !== null) {
-            $casino->countries()->sync($countryIds);
-        }
+        // Worldwide is exclusive — see Casino::syncCountries().
+        $casino->syncCountries($countryIds);
 
         // The categories pivot is synced AFTER the model save, so the observer's
         // `saved` hook fired before these rows existed and could not see them.
@@ -81,9 +80,8 @@ class CasinoController extends Controller
             $casino->categories()->sync($categoryIds);
         }
 
-        if ($countryIds !== null) {
-            $casino->countries()->sync($countryIds);
-        }
+        // Worldwide is exclusive — see Casino::syncCountries().
+        $casino->syncCountries($countryIds);
 
         // CasinoObserver::saved() handles cache invalidation and revalidation.
 

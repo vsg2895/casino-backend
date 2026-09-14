@@ -35,6 +35,9 @@ use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
 use App\Http\Controllers\Api\Admin\VerificationPromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
+use App\Http\Controllers\Api\Admin\EmailValidationCheckController;
+use App\Http\Controllers\Api\Admin\EmailValidationLogController;
+use App\Http\Controllers\Api\Admin\EmailValidationStatsController;
 use App\Http\Controllers\Api\Admin\UnsubscribeController;
 use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
@@ -86,6 +89,13 @@ Route::prefix('v1')->group(function () {
             // signed in and does not want to sign themselves out to use it.
             Route::post('logout-other-devices', [AuthController::class, 'logoutOtherDevices']);
             Route::get('me', [AuthController::class, 'me']);
+
+            // Throttled despite already requiring a token: the endpoint takes
+            // the CURRENT password, so without a limit a stolen session becomes
+            // an offline-speed oracle for guessing it. Same budget as the reset
+            // routes above, for the same reason.
+            Route::post('change-password', [AuthController::class, 'changePassword'])
+                ->middleware('throttle:6,1');
         });
 
         // Media uploads (drag & drop images)
@@ -378,6 +388,21 @@ Route::prefix('v1')->group(function () {
         Route::get('promotion-history/count', [PromotionEmailHistoryController::class, 'count']);
 
         // Unsubscribes (per-stream opt-out log)
+        // Email address validation (SendGrid). READ-ONLY: stats and the audit
+        // log. No re-run action by design — see EmailValidationLogController.
+        // Literal segments before any parameter route, per the file's rule.
+        // Ad-hoc single-address check. THROTTLED even though it is behind admin
+        // auth: it spends a real credit per call from the shared monthly budget,
+        // and a stuck form or an impatient operator should not be able to empty
+        // it. Cache, cooldown and quota all still apply.
+        Route::post('email-validation/check', [EmailValidationCheckController::class, 'store'])
+            ->middleware('throttle:20,1');
+        Route::get('email-validation/stats', [EmailValidationStatsController::class, 'index']);
+        Route::get('email-validation/count', [EmailValidationLogController::class, 'count']);
+        Route::get('email-validation/analysis', [EmailValidationLogController::class, 'analysis']);
+        Route::get('email-validation/export', [EmailValidationLogController::class, 'export']);
+        Route::get('email-validation', [EmailValidationLogController::class, 'index']);
+
         Route::get('unsubscribes', [UnsubscribeController::class, 'index']);
         Route::get('unsubscribes/count', [UnsubscribeController::class, 'count']);
         Route::get('unsubscribes/export', [UnsubscribeController::class, 'export']);
@@ -495,7 +520,14 @@ Route::prefix('v1')->group(function () {
         Route::get('pages/{slug}',            [PublicCmsPageController::class, 'show']);
 
         // Newsletter signup + one-click unsubscribe (token-based)
-        Route::post('newsletter', [PublicNewsletterController::class, 'store']);
+        // THROTTLED, and it must stay that way. This endpoint now spends a paid
+        // SendGrid validation credit per new address (2,500/month across all six
+        // sites), and `verify.site` does NOT rate-limit despite what its own
+        // docs used to claim — so without these two limits a script can drain a
+        // month of credits in minutes. Two windows: a burst limit and an hourly
+        // ceiling, both per IP.
+        Route::post('newsletter', [PublicNewsletterController::class, 'store'])
+            ->middleware('throttle:subscribe');
         Route::post('newsletter/unsubscribe', [PublicNewsletterController::class, 'unsubscribe']);
     });
 });

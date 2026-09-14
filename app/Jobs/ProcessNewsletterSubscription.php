@@ -42,6 +42,15 @@ class ProcessNewsletterSubscription implements ShouldQueue
         public readonly int $siteId,
         public readonly string $email,
         public readonly ?string $fullName = null,
+        /**
+         * The SendGrid verdict that let this address through, decided in the
+         * request before this job was queued. Null when validation was skipped,
+         * failed open, or is switched off — which is why NULL on the subscriber
+         * row means "never validated" and never "failed validation": a failed
+         * verdict produces no job at all.
+         */
+        public readonly ?string $validationVerdict = null,
+        public readonly ?float $validationScore = null,
     ) {
         $this->onQueue(self::ON_QUEUE);
     }
@@ -57,6 +66,8 @@ class ProcessNewsletterSubscription implements ShouldQueue
             ['site_id' => $this->siteId, 'email' => $this->email],
             ['full_name' => $fullName],
         );
+
+        $this->stampValidation($newsletter);
 
         $resubscribed = $newsletter->trashed();
         if ($resubscribed) {
@@ -119,6 +130,29 @@ class ProcessNewsletterSubscription implements ShouldQueue
                 ]);
             }
         }
+    }
+
+    /**
+     * Record the verdict on the subscriber row.
+     *
+     * Denormalised from `email_validation_logs` so later sending logic can
+     * filter the audience without joining a table that gets pruned — the log
+     * ageing out must not change who is mailed.
+     *
+     * Only ever written, never cleared: a re-subscribe with validation switched
+     * off should not erase the verdict from when it was on.
+     */
+    private function stampValidation(Newsletter $newsletter): void
+    {
+        if ($this->validationVerdict === null) {
+            return;
+        }
+
+        $newsletter->forceFill([
+            'validation_verdict' => $this->validationVerdict,
+            'validation_score'   => $this->validationScore,
+            'validated_at'       => Carbon::now(),
+        ])->save();
     }
 
     /** Trimmed name, or null when blank/omitted (the field is optional). */
