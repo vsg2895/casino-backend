@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace App\Services\Validation;
 
 use App\Models\EmailValidationLog;
-use App\Models\Newsletter;
 use App\Models\Site;
 use App\Support\Validation\EmailValidationResult;
 use App\Support\Validation\ValidationDecision;
-use App\Support\Validation\ValidationOutcome;
 use App\Support\Validation\ValidationReason;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -48,21 +46,39 @@ class SubscribeValidationGate
     {
         $this->lastResult = null;
 
-        // ── CHEAPEST OUT: a pending resend ────────────────────────────────────
-        //
-        // Re-submitting an address that already exists unverified IS the resend
-        // path here — there is no separate endpoint. It was judged when it first
-        // arrived, so re-judging it would spend a credit to re-answer a settled
-        // question, on the flow a frustrated visitor is most likely to repeat.
-        if ($this->isPendingResend($site, $email)) {
-            return $this->record(
-                $site,
-                $email,
-                EmailValidationResult::skipped(ValidationReason::PENDING_RESEND),
-                ValidationDecision::failOpen(ValidationReason::PENDING_RESEND),
-            );
-        }
-
+        /*
+         * ── REMOVED: the "pending resend" short circuit ───────────────────────
+         *
+         * This used to skip validation entirely whenever the address already
+         * existed as an unverified subscriber, on the reasoning that it "was
+         * judged when it first arrived, so re-judging it would spend a credit to
+         * re-answer a settled question".
+         *
+         * That reasoning was wrong, and it was wrong in a way that got worse
+         * over time, because the premise is false in three real cases:
+         *
+         *   1. The row predates this feature and was never judged at all.
+         *   2. The row was created by an Excel import, which does not validate.
+         *   3. THE TRAP: the first attempt FAILED OPEN — SendGrid was
+         *      unreachable, the key was missing, the quota was gone — which
+         *      created the unverified row without a verdict. Every later attempt
+         *      then matched this short circuit and skipped validation too. The
+         *      address could never be validated again, by design, forever.
+         *
+         * Case 3 is self-perpetuating: fail-open creates the row, the row
+         * suppresses validation, so the outage's effect is permanent instead of
+         * lasting as long as the outage. An address SendGrid would reject as
+         * Invalid kept sailing through the subscribe form while the admin panel's
+         * own Validate Email tool called the same address hard-rejected.
+         *
+         * Nothing is lost by removing it. Avoiding a repeat charge is what the
+         * RESULT CACHE in SendGridEmailValidationService already does — 60 days,
+         * checked before the cooldown and before the quota — and it does it
+         * better, because a cache hit returns the real verdict where this
+         * returned no verdict at all and fell open. The resend itself still
+         * works: ProcessNewsletterSubscription re-sends the verify email to any
+         * existing unverified subscriber on its own.
+         */
         $result = $this->sendgrid->validate($email, $site->slug);
 
         // ── FAIL OPEN ─────────────────────────────────────────────────────────
@@ -92,21 +108,6 @@ class SubscribeValidationGate
     public function lastDecision(): ?ValidationDecision
     {
         return $this->lastDecision;
-    }
-
-    /**
-     * An existing, unverified, not-deleted subscriber on this site.
-     *
-     * withTrashed is NOT used: a soft-deleted row is someone who unsubscribed,
-     * and re-subscribing after that is a fresh decision worth validating again.
-     */
-    private function isPendingResend(Site $site, string $email): bool
-    {
-        return Newsletter::query()
-            ->where('site_id', $site->id)
-            ->where('email', $email)
-            ->where('verified', false)
-            ->exists();
     }
 
     /**
