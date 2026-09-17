@@ -61,6 +61,10 @@ use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOffer
 use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
 use App\Http\Controllers\Api\Public\VerifyController as PublicVerifyController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\UniOne\UniOneKeyController;
+use App\Http\Controllers\Api\UniOne\UniOneReceiverController;
+use App\Http\Controllers\Api\UniOne\UniOneSendController;
+use App\Http\Controllers\Api\UniOne\UniOneWebhookController;
 
 Route::prefix('v1')->group(function () {
 
@@ -530,4 +534,69 @@ Route::prefix('v1')->group(function () {
             ->middleware('throttle:subscribe');
         Route::post('newsletter/unsubscribe', [PublicNewsletterController::class, 'unsubscribe']);
     });
+});
+
+/*
+|--------------------------------------------------------------------------
+| UniOne — ADDITIVE BLOCK
+|--------------------------------------------------------------------------
+|
+| Everything below is new and self-contained. It adds routes; it changes none.
+| No existing route, middleware, controller or prefix above is touched — this is
+| the only edit made to this file by the UniOne feature, and it is an append.
+|
+| Two groups:
+|   /api/v1/admin/unione/*   behind auth:sanctum, like every other admin route
+|   /api/v1/unione/webhook/* public by necessity — UniOne posts to it
+|
+| The webhook carries a per-key TOKEN in the path (gate 1) and is verified
+| against the MD5-with-api-key hash UniOne documents (gate 2). See
+| UniOneWebhookVerifier for why `webhook_secret` is a path token and not a
+| signing secret.
+*/
+Route::prefix('v1')->group(function (): void {
+    Route::prefix('admin/unione')->middleware('auth:sanctum')->group(function (): void {
+        // ── keys ────────────────────────────────────────────────────────────
+        // Literal segments before anything parameterised, per the platform
+        // convention — `keys/{key}` would otherwise swallow them.
+        Route::get('keys', [UniOneKeyController::class, 'index']);
+        Route::post('keys', [UniOneKeyController::class, 'store']);
+        Route::put('keys/{uniOneKey}', [UniOneKeyController::class, 'update']);
+        Route::delete('keys/{uniOneKey}', [UniOneKeyController::class, 'destroy']);
+        Route::patch('keys/{uniOneKey}/toggle', [UniOneKeyController::class, 'toggle']);
+        Route::post('keys/{uniOneKey}/verify', [UniOneKeyController::class, 'verify']);
+        Route::patch('keys/{uniOneKey}/default', [UniOneKeyController::class, 'makeDefault']);
+
+        // Helper tabs, read-through to UniOne with the selected key.
+        Route::get('keys/{uniOneKey}/domains', [UniOneKeyController::class, 'domains']);
+        Route::post('keys/{uniOneKey}/domains/dns', [UniOneKeyController::class, 'domainDns']);
+        Route::post('keys/{uniOneKey}/domains/recheck', [UniOneKeyController::class, 'recheckDomain']);
+        Route::get('keys/{uniOneKey}/suppressions', [UniOneKeyController::class, 'suppressions']);
+
+        // ── receivers ───────────────────────────────────────────────────────
+        Route::get('receivers/stats', [UniOneReceiverController::class, 'stats']);
+        Route::get('receivers/export', [UniOneReceiverController::class, 'export']);
+        Route::post('receivers/import', [UniOneReceiverController::class, 'import']);
+        Route::post('receivers/bulk', [UniOneReceiverController::class, 'bulk']);
+        Route::get('receivers', [UniOneReceiverController::class, 'index']);
+        Route::post('receivers', [UniOneReceiverController::class, 'store']);
+        Route::put('receivers/{uniOneReceiver}', [UniOneReceiverController::class, 'update']);
+        Route::delete('receivers/{uniOneReceiver}', [UniOneReceiverController::class, 'destroy']);
+
+        // ── sending and the log ─────────────────────────────────────────────
+        Route::post('sends/preview', [UniOneSendController::class, 'preview']);
+        Route::post('sends/test', [UniOneSendController::class, 'test']);
+        Route::get('sends/export', [UniOneSendController::class, 'export']);
+        Route::get('sends', [UniOneSendController::class, 'index']);
+        Route::post('sends', [UniOneSendController::class, 'store']);
+        Route::get('sends/{uniOneSend}', [UniOneSendController::class, 'show']);
+    });
+
+    /*
+     * Public by necessity. Throttled because it is an unauthenticated POST:
+     * the token and the hash both reject impostors, but a flood of rejections
+     * is still work we should not do unboundedly.
+     */
+    Route::post('unione/webhook/{token}', UniOneWebhookController::class)
+        ->middleware('throttle:300,1');
 });
