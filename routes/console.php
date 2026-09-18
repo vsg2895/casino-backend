@@ -27,9 +27,9 @@ Artisan::command('inspire', function () {
 
 // Check every minute for promotion campaigns that are due to run. Requires the
 // system cron entry: `* * * * * php artisan schedule:run`.
-Schedule::command('promotions:dispatch-due')
-    ->everyMinute()
-    ->withoutOverlapping(5);
+//Schedule::command('promotions:dispatch-due')
+//    ->everyMinute()
+//    ->withoutOverlapping(5);
 
 // Queue the global post-verification promotion for subscribers whose
 // `newsletters.verified_at + delay_minutes` has elapsed. Every minute so the
@@ -82,3 +82,61 @@ Schedule::call(function (): void {
 // Monthly: the window is expressed in months, so a finer tick would only
 // re-check a set that cannot have changed.
 Schedule::command('email-validation:prune')->monthlyOn(1, '03:20');
+
+/*
+ * Rebuild the search index nightly.
+ *
+ * The index is derived data: observers keep it current as content is saved, but
+ * nothing populates it for content that ALREADY existed. That gap is exactly how
+ * production ended up returning an empty result for every search — the migration
+ * created the table, the deploy never ran `search:reindex`, and the observers had
+ * nothing to react to because nobody edited anything afterwards.
+ *
+ * A nightly rebuild makes the index self-healing: a fresh deploy, a restored
+ * database or a missed observer write all correct themselves within a day
+ * instead of leaving search silently broken until somebody reports it.
+ *
+ * Affordable because it is small — a few hundred rows across every site — and
+ * idempotent, so a run that overlaps a content edit cannot corrupt anything.
+ * `--prune` also drops rows whose source entity has since been deleted.
+ */
+Schedule::command('search:reindex --prune')->dailyAt('04:10')->withoutOverlapping();
+
+/*
+ * ── Community forum ──────────────────────────────────────────────────────────
+ */
+
+/*
+ * Drain the Redis view buffer into forum_articles.views_count.
+ *
+ * Every minute, and the window is deliberately short: a view count a minute
+ * stale is indistinguishable from a live one to a reader, while a longer window
+ * means losing more if Redis goes away.
+ *
+ * withoutOverlapping because the flush RENAMES the buffer key before reading it
+ * — two concurrent runs would have the second find nothing and the first hold a
+ * scratch key longer than it needs to.
+ */
+Schedule::command('forum:flush-views')->everyMinute()->withoutOverlapping();
+
+/*
+ * Recompute the Hot Threads ranking.
+ *
+ * The rank is an expression (views + recent replies), and an ORDER BY over an
+ * expression can never use an index — so it is materialised into `hot_score`
+ * here and served from forum_articles_hot_idx. Every ten minutes is the trade:
+ * the tab is minutes behind, instead of every request paying for a filesort.
+ */
+Schedule::command('forum:rescore')->everyTenMinutes()->withoutOverlapping();
+
+/*
+ * Nightly counter reconciliation.
+ *
+ * The observers keep the totals correct in normal operation; this is the safety
+ * net for a drift caused by a direct SQL edit, an interrupted deploy or a bug in
+ * a future observer. Chunked and idempotent, so it is safe while people post.
+ *
+ * NOT --dry-run: the point is to repair, and a drift that is only reported is a
+ * drift that stays.
+ */
+Schedule::command('forum:recount')->dailyAt('04:40')->withoutOverlapping();
