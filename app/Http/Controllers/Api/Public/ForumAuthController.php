@@ -240,7 +240,8 @@ class ForumAuthController extends Controller
         $data = $request->validate([
             'email'    => ['required', 'email', 'max:255'],
             'token'    => ['required', 'string'],
-            'password' => ['required', 'confirmed', \Illuminate\Validation\Rules\Password::defaults()],
+            // Same simple rule as registration — see RegisterForumUserRequest.
+            'password' => ['required', 'string', 'min:6', 'max:200'],
         ]);
 
         $ok = $this->resets->reset((int) $site->id, $data['email'], $data['token'], $data['password']);

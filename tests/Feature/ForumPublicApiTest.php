@@ -472,4 +472,28 @@ class ForumPublicApiTest extends TestCase
         $sources = collect($res->json('data') ?? $res->json())->pluck('source_path')->all();
         $this->assertNotContains('/forum', $sources);
     }
+
+    /**
+     * A visitor's password is deliberately simple: six characters, no
+     * confirmation field. The admin policy (12 characters, symbols) is for
+     * accounts that can edit every site, not for someone who wants to reply.
+     */
+    public function test_a_visitor_can_register_with_a_simple_password_and_no_confirmation(): void
+    {
+        $this->withHeaders($this->siteHeaders($this->key))
+            ->postJson($this->base() . '/forum/members/register', [
+                'display_name' => 'Casual Visitor',
+                'email'        => 'casual@example.test',
+                'password'     => 'simple',
+                'website'      => '',
+            ])->assertCreated();
+
+        $this->withHeaders($this->siteHeaders($this->key))
+            ->postJson($this->base() . '/forum/members/register', [
+                'display_name' => 'Too Short',
+                'email'        => 'short@example.test',
+                'password'     => 'abc',
+                'website'      => '',
+            ])->assertUnprocessable()->assertJsonValidationErrors('password');
+    }
 }

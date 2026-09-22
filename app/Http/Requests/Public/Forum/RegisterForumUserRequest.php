@@ -7,7 +7,6 @@ namespace App\Http\Requests\Public\Forum;
 use App\Models\Site;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\Password;
 
 class RegisterForumUserRequest extends FormRequest
 {
@@ -43,10 +42,18 @@ class RegisterForumUserRequest extends FormRequest
                 // domain and leak that the address exists on the first.
                 Rule::unique('forum_users', 'email')->where('site_id', $site->id),
             ],
-            // The platform's shared policy — see AppServiceProvider, which sets
-            // 12 characters, mixed case, numbers, symbols, and `uncompromised()`
-            // in production.
-            'password'     => ['required', 'confirmed', Password::defaults()],
+            /*
+             * Deliberately NOT `Password::defaults()`.
+             *
+             * That policy (12 characters, mixed case, numbers, symbols) guards
+             * ADMIN accounts, which can edit every site. A forum member can
+             * post a reply. Asking a visitor for a 12-character symbol-laden
+             * password and a confirmation field is the single biggest reason
+             * they close the tab — and a visitor who never registers is worse
+             * for the forum than one with a weak password. Six characters,
+             * no confirmation: the email verification step is the real gate.
+             */
+            'password'     => ['required', 'string', 'min:6', 'max:200'],
             // The honeypot. A real browser never fills this; a bot fills every
             // input it finds. Must be PRESENT and EMPTY — a missing field means
             // the form was not the one we served.
