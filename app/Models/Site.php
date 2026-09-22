@@ -41,6 +41,12 @@ class Site extends Model
         'guides_enabled',
         'news_enabled',
         'bonus_enabled',
+        // The discussion board at /forum. Distinct from `reviews_enabled`,
+        // which is the /reviews feed that used to live at that path.
+        'forum_enabled',
+        // Whether people may hold an account here at all — /login, /register
+        // and the header's account control. See allowsAccounts().
+        'accounts_enabled',
         'author_name',
         'author_role',
         'author_bio',
@@ -66,8 +72,28 @@ class Site extends Model
             'guides_enabled' => 'boolean',
             'news_enabled'   => 'boolean',
             'bonus_enabled'  => 'boolean',
+            'forum_enabled'    => 'boolean',
+            'accounts_enabled' => 'boolean',
             'last_revalidated_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Whether a visitor may register and sign in on this site.
+     *
+     * The board IMPLIES accounts. An open discussion board with accounts
+     * switched off would render a reply box that can never be used and a
+     * "sign in to reply" prompt pointing at a 404 — a combination an operator
+     * can reach simply by toggling in the wrong order. Reading it as OR makes
+     * that state unreachable rather than merely discouraged.
+     *
+     * The reverse is genuinely independent: accounts on with the board off is a
+     * site collecting members before it opens discussions, which is the whole
+     * reason the second flag exists.
+     */
+    public function allowsAccounts(): bool
+    {
+        return (bool) $this->accounts_enabled || (bool) $this->forum_enabled;
     }
 
     public function getSlugOptions(): SlugOptions

@@ -54,6 +54,16 @@ class SiteFeatureController extends Controller
              */
             'forum_enabled'     => (bool) $site->reviews_enabled && $site->forumSettings()['enabled'],
             'community_forum_enabled' => (bool) $site->forum_enabled,
+            /*
+             * Whether people may hold an account here — /login, /register and
+             * the header's account control.
+             *
+             * SEPARATE from the board on purpose. A site can collect members
+             * before it opens discussions, and turning the board on merely to
+             * get a sign-in button would publish a section with nothing in it.
+             * The board still implies accounts; see Site::allowsAccounts().
+             */
+            'accounts_enabled' => $site->allowsAccounts(),
         ]]);
     }
 }

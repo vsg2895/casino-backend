@@ -304,7 +304,10 @@ class ForumAuthController extends Controller
         /** @var Site $site */
         $site = app('current_site');
 
-        abort_unless((bool) $site->forum_enabled, Response::HTTP_NOT_FOUND);
+        // Accounts, not the board. These endpoints are how somebody GETS an
+        // account, and a site may offer that before its discussions open —
+        // so they follow `accounts_enabled`, which the board implies.
+        abort_unless($site->allowsAccounts(), Response::HTTP_NOT_FOUND);
 
         return $site;
     }

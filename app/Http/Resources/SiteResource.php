@@ -32,6 +32,12 @@ class SiteResource extends JsonResource
             'guides_enabled'    => (bool) $this->guides_enabled,
             'news_enabled'      => (bool) $this->news_enabled,
             'bonus_enabled'     => (bool) $this->bonus_enabled,
+            // The discussion board at /forum, and the member area that /login
+            // and /register belong to. Both were previously absent from this
+            // resource, which left `forum_enabled` unreachable from the admin
+            // and settable only by a seeder that refuses to run in production.
+            'forum_enabled'     => (bool) $this->forum_enabled,
+            'accounts_enabled'  => (bool) $this->accounts_enabled,
             'author_name'       => $this->author_name,
             'author_role'       => $this->author_role,
             'author_bio'        => $this->author_bio,
