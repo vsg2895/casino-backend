@@ -18,6 +18,7 @@ class StoreSpecialOfferRequest extends FormRequest
     {
         return [
             'casino_id'          => ['required', 'integer', 'exists:casinos,id'],
+            'bonus_category_id' => ['nullable', 'integer', 'exists:bonus_categories,id'],
             'title'              => ['required', 'string', 'max:255'],
             'image_path'         => ['nullable', 'string', 'max:500'],
             'banner_image'       => ['nullable', 'string', 'max:500'],

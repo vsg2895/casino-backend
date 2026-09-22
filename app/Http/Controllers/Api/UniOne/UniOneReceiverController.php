@@ -7,7 +7,7 @@ namespace App\Http\Controllers\Api\UniOne;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UniOne\UniOneReceiverResource;
 use App\Models\UniOne\UniOneReceiver;
-use App\Services\UniOne\UniOneImportService;
+use App\Services\UniOne\UniOneReceiverImportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -101,34 +101,50 @@ class UniOneReceiverController extends Controller
     }
 
     /**
-     * CSV import.
+     * Spreadsheet import — the same shape as the Warmup receivers import.
      *
-     * `dry_run` returns the same report without writing anything — the preview
-     * the brief asks for, so an operator sees the verdicts before committing.
+     * An uploaded .xlsx or .csv with an Email column, streamed in batches, and a
+     * summary of rows/imported/duplicates/invalid. Warmup's own import is
+     * untouched; this is new code over the shared spreadsheet reader.
      */
-    public function import(Request $request, UniOneImportService $importer): JsonResponse
+    public function import(Request $request, UniOneReceiverImportService $importer): JsonResponse
     {
         $data = $request->validate([
-            'rows'    => ['required', 'array', 'min:1', 'max:50000'],
-            'mapping' => ['required', 'array'],
-            'mapping.email' => ['required', 'string'],
-            'mapping.name'  => ['nullable', 'string'],
-            'mapping.consent_source' => ['nullable', 'string'],
-            'mapping.consent_at'     => ['nullable', 'string'],
-            'fallback' => ['nullable', 'array'],
-            'fallback.consent_source' => ['nullable', 'string', 'max:120'],
-            'fallback.consent_at'     => ['nullable', 'date'],
-            'dry_run' => ['required', 'boolean'],
+            // 20 MB matches the warmup import's ceiling; xlsx of this size is
+            // already hundreds of thousands of rows.
+            'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:20480'],
         ]);
 
-        $result = $importer->process(
-            $data['rows'],
-            $data['mapping'],
-            $data['fallback'] ?? [],
-            (bool) $data['dry_run'],
-        );
+        $file = $request->file('file');
 
-        return response()->json(['data' => [...$result, 'dry_run' => (bool) $data['dry_run']]]);
+        try {
+            $summary = $importer->import(
+                $file->getRealPath(),
+                strtolower((string) $file->getClientOriginalExtension()),
+            );
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('UniOne receiver import failed', [
+                'filename' => $file->getClientOriginalName(),
+                'error'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'ok'      => false,
+                'message' => 'The file could not be read. Check that it is a valid .xlsx or .csv with an Email column.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'ok' => true,
+            ...$summary,
+            'message' => sprintf(
+                'Read %d row(s): %d imported, %d duplicate(s) skipped, %d invalid.',
+                $summary['rows'],
+                $summary['imported'],
+                $summary['duplicates'],
+                $summary['invalid'],
+            ),
+        ]);
     }
 
     /** Streamed so a large list never builds the whole file in memory. */
@@ -195,10 +211,11 @@ class UniOneReceiverController extends Controller
             ],
             'name'   => ['nullable', 'string', 'max:160'],
             'status' => ['sometimes', Rule::in(UniOneReceiver::STATUSES)],
-            // Both required on every write — the compliance rule, stated here as
-            // well as in the schema and the scope.
-            'consent_source' => ['required', 'string', 'max:120'],
-            'consent_at'     => ['required', 'date', 'before_or_equal:now'],
+            // Optional metadata now. Kept on the editor so an operator who DOES
+            // have a consent record can still put it on the row — the send path
+            // no longer requires it.
+            'consent_source' => ['nullable', 'string', 'max:120'],
+            'consent_at'     => ['nullable', 'date', 'before_or_equal:now'],
             'notes'  => ['nullable', 'string', 'max:2000'],
         ]);
     }

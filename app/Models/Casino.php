@@ -110,6 +110,30 @@ class Casino extends Model
         $this->countries()->sync(Country::collapseWorldwide($countryIds));
     }
 
+    /**
+     * The countries eager-load every PUBLIC surface must use.
+     *
+     * Active only, in the order the /countries hub uses. Active-only is not
+     * cosmetic: a country's detail route resolves with
+     * ->where('active', true)->firstOrFail(), so linking to an inactive one from
+     * a casino card would point every card at a 404.
+     *
+     * Shared because three endpoints render the same CasinoCard — the casinos
+     * list, a category catalog and a country listing — and a flag strip that
+     * appears on one of them and not the others reads as a bug.
+     *
+     * @return array<string, \Closure>
+     */
+    public static function publicCountriesEagerLoad(): array
+    {
+        return [
+            'countries' => static fn ($query) => $query
+                ->where('active', true)
+                ->orderBy('position')
+                ->orderBy('name'),
+        ];
+    }
+
     public function countries(): BelongsToMany
     {
         return $this->belongsToMany(Country::class);

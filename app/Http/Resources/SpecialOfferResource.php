@@ -17,6 +17,7 @@ class SpecialOfferResource extends JsonResource
         return [
             'id'                 => $this->id,
             'casino_id'          => $this->casino_id,
+            'bonus_category_id' => $this->bonus_category_id,
             'casino'             => new CasinoResource($this->whenLoaded('casino')),
             'title'              => $this->title,
             'slug'               => $this->slug,

@@ -58,7 +58,6 @@ class DispatchVerificationPromotions extends Command
         // This one line separates "the sweep did not run" from everything else,
         // and carries the clock context that a timing report is always really
         // about — see {@see ClockFacts}.
-        Log::info('Post-verification promotion sweep running', ClockFacts::forLog());
 
         $config = VerificationPromotionEmail::current();
 
@@ -66,7 +65,6 @@ class DispatchVerificationPromotions extends Command
             // Logged, not just printed: when nothing arrives in production this
             // is the first thing to rule out, and the scheduler's output goes
             // nowhere by default.
-            Log::info('Post-verification promotion sweep skipped: feature is disabled');
             $this->info('Post-verification promotion is disabled — nothing to do.');
 
             return self::SUCCESS;
@@ -96,15 +94,7 @@ class DispatchVerificationPromotions extends Command
             // path — but this is the exact moment somebody wants to know WHY
             // nobody was picked, so the breakdown is worth its price precisely
             // when the count is zero.
-            Log::info('Post-verification promotion sweep found no eligible subscribers', [
-                'delay_minutes' => (int) $config->delay_minutes,
-                // Both, so the rule is legible without doing the subtraction by
-                // hand — and so a `verified_at` copied out of the admin can be
-                // compared against a cutoff in the SAME timezone as this line.
-                'now'      => Carbon::now()->toDateTimeString(),
-                'cutoff'   => $cutoff->toDateTimeString(),
-                'audience' => $this->funnel($cutoff),
-            ]);
+
             $this->info('No subscribers are eligible right now.');
 
             return self::SUCCESS;
@@ -115,18 +105,6 @@ class DispatchVerificationPromotions extends Command
         }
 
         $emails = $candidates->pluck('email')->implode(', ');
-
-        Log::info('Post-verification promotions queued', [
-            'count'         => $candidates->count(),
-            'delay_minutes' => (int) $config->delay_minutes,
-            'cutoff'        => $cutoff->toDateTimeString(),
-            // Whether this run hit the per-run ceiling. If it did, more
-            // subscribers are waiting and the next tick picks them up — worth
-            // knowing before concluding that a count looks too low.
-            'limit'         => $limit,
-            'limit_reached' => $candidates->count() === $limit,
-            'emails'        => $emails,
-        ]);
 
         $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
 

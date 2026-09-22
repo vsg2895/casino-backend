@@ -10,11 +10,11 @@ Endpoints: [../docs/API.md](../docs/API.md) · Email/SMS: [../docs/MESSAGING.md]
 
 ## Endpoint layout
 
-| Prefix | Middleware |
-|--------|-----------|
-| `/api/v1/admin/auth/login` | none |
-| `/api/v1/admin/*` | `auth:sanctum` |
-| `/api/v1/public/sites/{site:slug}/*` | `verify.site` |
+| Prefix                                                  | Middleware                                           |
+|---------------------------------------------------------|------------------------------------------------------|
+| `/api/v1/admin/auth/login`                              | none                                                 |
+| `/api/v1/admin/*`                                       | `auth:sanctum`                                       |
+| `/api/v1/public/sites/{site:slug}/*`                    | `verify.site`                                        |
 | `/api/v1/verify/{token}`, `/api/v1/unsubscribe/{token}` | `throttle:60,1` only — the token *is* the credential |
 
 Full route list: [../docs/API.md](../docs/API.md). Source of truth: `routes/api.php`.
@@ -145,13 +145,13 @@ admin save. That also means a misconfiguration looks like nothing happening; see
 For every entity that is many-to-many with sites, there is a dedicated attachment
 controller (`CasinoSiteAttachmentController`):
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `casinos/{casino}/sites` | current attachments |
-| POST | `casinos/{casino}/sites/sync` | replace **all** attachments in one transaction — what the admin multi-select uses |
-| POST | `casinos/{casino}/sites` | attach one with overrides |
-| PATCH | `casinos/{casino}/sites/{site}` | update overrides |
-| DELETE | `casinos/{casino}/sites/{site}` | detach |
+| Method | Path                            | Purpose                                                                           |
+|--------|---------------------------------|-----------------------------------------------------------------------------------|
+| GET    | `casinos/{casino}/sites`        | current attachments                                                               |
+| POST   | `casinos/{casino}/sites/sync`   | replace **all** attachments in one transaction — what the admin multi-select uses |
+| POST   | `casinos/{casino}/sites`        | attach one with overrides                                                         |
+| PATCH  | `casinos/{casino}/sites/{site}` | update overrides                                                                  |
+| DELETE | `casinos/{casino}/sites/{site}` | detach                                                                            |
 
 Follow this shape for any future many-to-many entity.
 
@@ -168,14 +168,14 @@ comments saying so; keep them.
 
 ## Conventions
 
-| Thing | Convention |
-|-------|-----------|
-| Model | singular PascalCase |
-| Table | plural snake_case |
-| Pivot | alphabetical singular pair (`casino_site`) |
-| Controller | `{Resource}Controller`, `index/show/store/update/destroy` |
-| Resource | `{Resource}Resource` / `{Resource}Collection` |
-| Form Request | `Store{X}Request` / `Update{X}Request` |
+| Thing        | Convention                                                |
+|--------------|-----------------------------------------------------------|
+| Model        | singular PascalCase                                       |
+| Table        | plural snake_case                                         |
+| Pivot        | alphabetical singular pair (`casino_site`)                |
+| Controller   | `{Resource}Controller`, `index/show/store/update/destroy` |
+| Resource     | `{Resource}Resource` / `{Resource}Collection`             |
+| Form Request | `Store{X}Request` / `Update{X}Request`                    |
 
 Config vs literal: a value that legitimately differs per environment is an `env()`; a
 value whose change would corrupt behaviour (`warmup.mailer`,

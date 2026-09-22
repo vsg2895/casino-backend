@@ -162,6 +162,8 @@ class CountryController extends Controller
                 $paginator->getCollection()->load([
                     'categories',
                     'featuredSpecialOffer' => fn ($query) => $query->where('active', true),
+                    // The listing card shows where each casino accepts players.
+                    ...Casino::publicCountriesEagerLoad(),
                 ]);
 
                 return [

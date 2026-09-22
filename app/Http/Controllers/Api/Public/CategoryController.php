@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CasinoWithAttachmentResource;
 use App\Http\Resources\CategoryResource;
+use App\Models\Casino;
 use App\Models\Category;
 use App\Models\Site;
 use App\Support\SiteCache;
@@ -129,6 +130,8 @@ class CategoryController extends Controller
                 $paginator->getCollection()->load([
                     'categories',
                     'featuredSpecialOffer' => fn ($query) => $query->where('active', true),
+                    // The listing card shows where each casino accepts players.
+                    ...Casino::publicCountriesEagerLoad(),
                 ]);
 
                 return [

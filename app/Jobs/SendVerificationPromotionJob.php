@@ -201,16 +201,6 @@ class SendVerificationPromotionJob implements ShouldQueue
         // Names the credential this actually went out with, so "is production
         // using the right SendGrid key?" is answerable from the log. Carries a
         // prefix and a fingerprint, never key material — see MailCredential.
-        Log::info('Post-verification promotion sent', [
-            'newsletter_id' => $newsletter->id,
-            'email'         => $newsletter->email,
-            'site_id'       => $newsletter->site_id,
-            'provider'      => $config->provider,
-            // Traceable in the SendGrid Activity Feed — proves acceptance, and
-            // shows whether it was then delivered, bounced or dropped.
-            'message_id'    => $sent?->getSymfonySentMessage()?->getMessageId(),
-            ...MailCredential::describe($config->provider, $config->credentialId()),
-        ]);
     }
 
     /**

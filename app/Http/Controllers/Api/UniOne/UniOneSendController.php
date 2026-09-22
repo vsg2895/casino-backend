@@ -25,6 +25,21 @@ class UniOneSendController extends Controller
         private readonly UniOneKeyService $keys,
     ) {}
 
+    /**
+     * Templates a run may use — the same idea as Warmup's template list.
+     *
+     * Warmup offers idevaffiliation's catalog; this offers crogambline's
+     * promotion template. Separate sending identities on purpose.
+     */
+    public function templates(\App\Services\UniOne\UniOneTemplateService $templates): JsonResponse
+    {
+        return response()->json([
+            'data' => $templates->options(),
+            'site' => \App\Services\UniOne\UniOneTemplateService::SITE_SLUG,
+            'suggested_subject' => rescue(fn (): string => $templates->subjectFor(), ''),
+        ]);
+    }
+
     /** The modal's live preview: eligible count and chunk maths. */
     public function preview(Request $request): JsonResponse
     {
@@ -50,11 +65,12 @@ class UniOneSendController extends Controller
         $data = $request->validate([
             'unione_api_key_id' => ['required', 'integer'],
             'email'      => ['required', 'email'],
-            'subject'    => ['required', 'string', 'max:255'],
+            'subject'    => ['required_without:template', 'nullable', 'string', 'max:255'],
             'from_email' => ['required', 'email'],
             'from_name'  => ['nullable', 'string', 'max:120'],
             'reply_to'   => ['nullable', 'email'],
-            'html_body'  => ['required', 'string'],
+            'template'   => ['nullable', 'string', 'max:40'],
+            'html_body'  => ['required_without:template', 'nullable', 'string'],
             'plaintext_body' => ['nullable', 'string'],
         ]);
 
@@ -64,14 +80,20 @@ class UniOneSendController extends Controller
             return $this->noKey();
         }
 
+        // A test of a template send must render the TEMPLATE, or it proves
+        // nothing about what the real run will look like.
+        $html = ($data['template'] ?? null)
+            ? app(\App\Services\UniOne\UniOneTemplateService::class)->renderFor($data['email'], null)
+            : (string) $data['html_body'];
+
         $response = (new UniOneClient($key))->send(array_filter([
             'recipients' => [['email' => $data['email']]],
-            'subject'    => $data['subject'],
+            'subject'    => $data['subject'] ?: app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor(),
             'from_email' => $data['from_email'],
             'from_name'  => $data['from_name'] ?? null,
             'reply_to'   => $data['reply_to'] ?? null,
             'body'       => array_filter([
-                'html'      => $data['html_body'],
+                'html'      => $html,
                 'plaintext' => $data['plaintext_body'] ?? null,
             ]),
             'track_links' => $key->track_links ? 1 : 0,
@@ -94,11 +116,14 @@ class UniOneSendController extends Controller
             'unione_api_key_id' => ['required', 'integer'],
             'count'      => ['required', 'integer', 'min:1', 'max:100000'],
             'cooldown_hours' => ['nullable', 'integer', 'min:0', 'max:8760'],
-            'subject'    => ['required', 'string', 'max:255'],
+            // A template supplies both, so the subject is only required when
+            // sending raw HTML.
+            'template'   => ['nullable', 'string', 'max:40'],
+            'subject'    => ['required_without:template', 'nullable', 'string', 'max:255'],
             'from_email' => ['required', 'email', 'max:255'],
             'from_name'  => ['nullable', 'string', 'max:120'],
             'reply_to'   => ['nullable', 'email', 'max:255'],
-            'html_body'  => ['required', 'string'],
+            'html_body'  => ['required_without:template', 'nullable', 'string'],
             'plaintext_body' => ['nullable', 'string'],
         ]);
 
@@ -107,6 +132,9 @@ class UniOneSendController extends Controller
         if ($key === null) {
             return $this->noKey();
         }
+
+        $data['html_body'] ??= '';
+        $data['subject'] ??= '';
 
         $send = $this->sends->dispatchRun($key, $data, $request->user()?->id);
 

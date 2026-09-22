@@ -210,20 +210,45 @@ class SendUniOneChunkJob implements ShouldQueue
     private function buildMessage(UniOneSend $send, UniOneApiKey $key, UniOneSendChunk $chunk, $receivers): array
     {
         return array_filter([
-            'recipients' => $receivers->map(static fn (UniOneReceiver $r): array => array_filter([
-                'email'         => $r->email,
-                'substitutions' => $r->name !== null && $r->name !== '' ? ['to_name' => mb_substr($r->name, 0, 78)] : null,
-            ]))->values()->all(),
+            'recipients' => $receivers->map(function (UniOneReceiver $r) use ($send): array {
+                $subs = [];
+
+                if ($r->name !== null && $r->name !== '') {
+                    $subs['to_name'] = mb_substr($r->name, 0, 78);
+                }
+
+                if ($this->usesTemplate($send)) {
+                    // Rendered here, once per address, because the template
+                    // personalises the greeting from the receiver's name.
+                    $subs['body_html'] = app(\App\Services\UniOne\UniOneTemplateService::class)
+                        ->renderFor($r->email, $r->name);
+                }
+
+                return array_filter([
+                    'email'         => $r->email,
+                    'substitutions' => $subs === [] ? null : $subs,
+                ]);
+            })->values()->all(),
 
             'subject'    => $send->subject,
             'from_email' => $send->from_email,
             'from_name'  => $send->from_name,
             'reply_to'   => $send->reply_to,
 
+            /*
+             * One `substitutions` slot per recipient carries their rendered
+             * body, and the shared body references it.
+             *
+             * This is how a template send stays ONE request for 500 people
+             * rather than 500 requests: UniOne substitutes per recipient
+             * server-side. A shared literal body could not personalise the
+             * greeting; 500 separate calls would blow the rate limit.
+             */
             'body' => array_filter([
-                'html'      => $send->html_body,
+                'html'      => $this->htmlFor($send),
                 'plaintext' => $send->plaintext_body,
             ]),
+            'template_engine' => $this->usesTemplate($send) ? 'simple' : 'none',
 
             'track_links' => $key->track_links ? 1 : 0,
             'track_read'  => $key->track_read ? 1 : 0,
@@ -237,6 +262,24 @@ class SendUniOneChunkJob implements ShouldQueue
 
             'idempotence_key' => $chunk->idempotence_key,
         ], static fn ($v): bool => $v !== null && $v !== '' && $v !== []);
+    }
+
+    /** Whether this run renders a template per recipient. */
+    private function usesTemplate(UniOneSend $send): bool
+    {
+        return str_starts_with((string) $send->html_body, \App\Services\UniOne\UniOneSendService::TEMPLATE_MARKER);
+    }
+
+    /**
+     * The shared body.
+     *
+     * For a template run it is a single substitution placeholder — UniOne
+     * expands it per recipient from the `body_html` above. For a raw run it is
+     * the literal HTML the operator typed.
+     */
+    private function htmlFor(UniOneSend $send): string
+    {
+        return $this->usesTemplate($send) ? '{{body_html}}' : (string) $send->html_body;
     }
 
     /**

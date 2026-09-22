@@ -19,6 +19,7 @@ class SpecialOffer extends Model
 
     protected $fillable = [
         'casino_id',
+        'bonus_category_id',
         'title',
         'slug',
         'image_path',
@@ -106,6 +107,11 @@ class SpecialOffer extends Model
         }
 
         return $token;
+    }
+
+    public function bonusCategory(): BelongsTo
+    {
+        return $this->belongsTo(BonusCategory::class);
     }
 
     public function casino(): BelongsTo

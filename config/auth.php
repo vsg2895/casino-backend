@@ -38,6 +38,21 @@ return [
     */
 
     'guards' => [
+
+        /*
+         * Forum members.
+         *
+         * A SEPARATE guard on a separate provider, so a token minted for a
+         * visitor can never authenticate against an admin route and vice versa.
+         * Sanctum resolves the model from the token's tokenable_type, and this
+         * guard is what the public forum routes name explicitly — `auth:forum`
+         * rather than the default, which is the admin one.
+         */
+        'forum' => [
+            'driver'   => 'sanctum',
+            'provider' => 'forum_users',
+        ],
+
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
@@ -62,6 +77,12 @@ return [
     */
 
     'providers' => [
+
+        'forum_users' => [
+            'driver' => 'eloquent',
+            'model'  => App\Models\ForumUser::class,
+        ],
+
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),
@@ -93,6 +114,7 @@ return [
     */
 
     'passwords' => [
+
         'users' => [
             'provider' => 'users',
             'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),

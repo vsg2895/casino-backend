@@ -42,10 +42,7 @@ class CasinoController extends Controller
             // route resolves with ->where('active', true)->firstOrFail(), so a
             // link to one would be a 404 pointed at from every casino that
             // happens to be attached to it.
-            'countries' => static fn ($query) => $query
-                ->where('active', true)
-                ->orderBy('position')
-                ->orderBy('name'),
+            ...Casino::publicCountriesEagerLoad(),
             // One-to-one, so no filter closure — an absent profile simply
             // leaves the relation null and the resource omits the key.
             'detail',

@@ -9,6 +9,12 @@ use App\Models\CmsPage;
 use App\Models\CasinoReview;
 use App\Models\Category;
 use App\Models\SpecialOffer;
+use App\Models\ForumArticle;
+use App\Models\ForumPost;
+use App\Models\Site;
+use App\Observers\ForumArticleObserver;
+use App\Observers\ForumPostObserver;
+use App\Observers\SiteForumFlagObserver;
 use App\Observers\CasinoObserver;
 use App\Observers\Search\CasinoReviewSearchObserver;
 use App\Observers\Search\CasinoSearchObserver;
@@ -56,10 +62,82 @@ class AppServiceProvider extends ServiceProvider
          * all because it now spends a paid SendGrid validation credit per new
          * address — `verify.site` does no rate limiting of its own.
          */
+        /*
+         * Forum posting.
+         *
+         * FOUR independent windows, and they are independent on purpose. A
+         * single limiter keyed on one thing is trivially defeated: per-account
+         * alone loses to a botnet registering accounts, per-IP alone loses to a
+         * single member on a shared office address being silenced by a
+         * colleague.
+         *
+         * The per-minute limits stop a burst; the per-hour limits stop a slow
+         * grind that never trips a per-minute window. Each `by()` key is
+         * distinct, because limiters sharing a key share a counter and every
+         * request then costs two hits — the same bug already documented on the
+         * subscribe limiter above, where a 5/minute limit actually admitted
+         * three.
+         */
+        RateLimiter::for('forum-post', static function ($request): array {
+            $memberId = $request->user()?->id ?? 'guest';
+            $ip = $request->ip();
+
+            return [
+                Limit::perMinute(3)->by("forum-post-min:{$memberId}"),
+                Limit::perHour(30)->by("forum-post-hour:{$memberId}"),
+                // Wider than the per-account limits: a household or an office
+                // behind one address is normal, a hundred posts an hour from it
+                // is not.
+                Limit::perMinute(10)->by("forum-post-ip-min:{$ip}"),
+                Limit::perHour(100)->by("forum-post-ip-hour:{$ip}"),
+            ];
+        });
+
+        /*
+         * Registration, keyed on IP alone — there is no account yet.
+         *
+         * Tight, because a registration is what a spam operation needs before it
+         * can do anything else, and a real person registers once.
+         */
+        RateLimiter::for('forum-register', static fn ($request): array => [
+            Limit::perMinute(2)->by('forum-register-min:' . $request->ip()),
+            Limit::perDay(10)->by('forum-register-day:' . $request->ip()),
+        ]);
+
+        /*
+         * Reporting. Generous per account — a reader working through a spam
+         * flood is doing us a favour — and capped per IP so the queue itself
+         * cannot be flooded.
+         */
+        RateLimiter::for('forum-report', static function ($request): array {
+            $who = $request->user()?->id ?? $request->ip();
+
+            return [
+                Limit::perMinute(10)->by("forum-report-min:{$who}"),
+                Limit::perHour(60)->by("forum-report-hour:{$who}"),
+            ];
+        });
+
         RateLimiter::for('subscribe', static fn ($request): array => [
             Limit::perMinute(5)->by('subscribe-min:' . $request->ip()),
             Limit::perHour(20)->by('subscribe-hour:' . $request->ip()),
         ]);
+
+        /*
+         * Forum counters.
+         *
+         * Registered here rather than with an attribute on the model so the
+         * ordering is explicit: ForumArticleObserver recomputes a category from
+         * its articles, and ForumPostObserver has already refreshed the article
+         * by the time it asks for that. See ForumCounters for why every write is
+         * an atomic SQL expression.
+         */
+        ForumPost::observe(ForumPostObserver::class);
+        ForumArticle::observe(ForumArticleObserver::class);
+
+        // Keeps the /forum → /reviews redirect from shadowing the community
+        // forum once a site enables it. See the redirect's migration.
+        Site::observe(SiteForumFlagObserver::class);
 
         Casino::observe(CasinoObserver::class);
 

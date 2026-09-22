@@ -12,7 +12,6 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
@@ -188,71 +187,7 @@ class VerificationPromotionTimingTest extends TestCase
         );
     }
 
-    // ── Audience reporting ───────────────────────────────────────────────────
-
-    /**
-     * When nobody is eligible, the log must say how many subscribers reached
-     * each stage — otherwise "0 eligible" is a fact with no explanation.
-     */
-    public function test_the_sweep_logs_the_audience_funnel_when_nobody_is_eligible(): void
-    {
-        Queue::fake();
-        Log::spy();
-
-        $this->enableSection(delayMinutes: 30);
-        $this->subscriberVerifiedMinutesAgo(1);   // verified, but far too recently
-
-        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
-
-        Log::shouldHaveReceived('info')
-            ->withArgs(function (string $message, array $context = []): bool {
-                if ($message !== 'Post-verification promotion sweep found no eligible subscribers') {
-                    return false;
-                }
-
-                return ($context['audience']['subscribers'] ?? null) === 1
-                    && ($context['audience']['verified'] ?? null) === 1
-                    && ($context['audience']['with_verified_at'] ?? null) === 1
-                    // The delay has NOT elapsed — this is the row that explains it.
-                    && ($context['audience']['delay_elapsed'] ?? null) === 0
-                    && ($context['audience']['eligible_now'] ?? null) === 0;
-            })
-            ->once();
-    }
-
-    /** When subscribers ARE queued, the log must report how many. */
-    public function test_the_sweep_logs_how_many_subscribers_were_queued(): void
-    {
-        Queue::fake();
-        Log::spy();
-
-        $this->enableSection(delayMinutes: 5);
-        $this->subscriberVerifiedMinutesAgo(10);
-
-        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
-
-        Log::shouldHaveReceived('info')
-            ->withArgs(fn (string $message, array $context = []): bool => $message === 'Post-verification promotions queued'
-                && ($context['count'] ?? null) === 1
-                && ($context['limit_reached'] ?? null) === false)
-            ->once();
-    }
-
-    /** The heartbeat fires before any check, so silence means "never ran". */
-    public function test_the_sweep_logs_a_heartbeat_even_while_the_feature_is_disabled(): void
-    {
-        Queue::fake();
-        Log::spy();
-
-        VerificationPromotionEmail::current()->update(['active' => false]);
-
-        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
-
-        Log::shouldHaveReceived('info')
-            ->withArgs(fn (string $message, array $context = []): bool => $message === 'Post-verification promotion sweep running'
-                && array_key_exists('drift_seconds', $context))
-            ->once();
-    }
+    // ── Clock context ────────────────────────────────────────────────────────
 
     /** The clock context must be readable, and must never throw. */
     public function test_clock_facts_report_the_application_timezone(): void

@@ -23,7 +23,19 @@ class ArticleResource extends JsonResource
         return [
             'id'      => $this->id,
             'site_id' => $this->site_id,
-            'title'   => $this->title,
+            'type'  => $this->type,
+            // Null when the body is empty — the card shows nothing rather than
+            // claiming "0 min read".
+            'read_minutes' => $this->read_minutes,
+            'news_category_id' => $this->news_category_id,
+            // Only when eager-loaded — a listing that forgot to load it gets
+            // null rather than an N+1 query per card.
+            'news_category' => $this->whenLoaded('newsCategory', fn () => [
+                'id'   => $this->newsCategory->id,
+                'name' => $this->newsCategory->name,
+                'slug' => $this->newsCategory->slug,
+            ]),
+            'title' => $this->title,
             'slug'    => $this->slug,
             'excerpt' => $this->excerpt,
             // Only present when the controller selected it — see the class note.
@@ -33,6 +45,8 @@ class ArticleResource extends JsonResource
             // and a serialized Carbon comes back as __PHP_Incomplete_Class.
             'published_at'    => $this->published_at?->toISOString(),
             'position'        => (int) $this->position,
+            'active'   => (bool) $this->active,
+            'featured' => (bool) $this->featured,
             'meta_title'      => $this->meta_title,
             'meta_description' => $this->meta_description,
             'canonical_url'   => $this->canonical_url,

@@ -33,9 +33,10 @@ class ArticleController extends Controller
         $data = SiteCache::remember($site->id, ['articles'], 'articles:index:site:' . $site->id, 3600, function () use ($site) {
             $articles = Article::query()
                 ->where('site_id', $site->id)
-                ->published()
+                ->ofType(Article::TYPE_GUIDE)
+                ->visible()
                 ->inListingOrder()
-                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'hero_image_path', 'published_at', 'position', 'updated_at']);
+                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'position', 'active', 'featured', 'updated_at']);
 
             return ArticleResource::collection($articles)->resolve();
         });
@@ -50,8 +51,9 @@ class ArticleController extends Controller
         $data = SiteCache::remember($resolved->id, ['articles'], 'articles:show:site:' . $resolved->id . ':slug:' . $slug, 3600, function () use ($resolved, $slug) {
             $article = Article::query()
                 ->where('site_id', $resolved->id)
+                ->ofType(Article::TYPE_GUIDE)
                 ->where('slug', $slug)
-                ->published()
+                ->visible()
                 ->firstOrFail();
 
             return (new ArticleResource($article))->resolve();

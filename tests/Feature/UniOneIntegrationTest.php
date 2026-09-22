@@ -48,12 +48,7 @@ class UniOneIntegrationTest extends TestCase
 
     private function receiver(string $email, array $attrs = []): UniOneReceiver
     {
-        return UniOneReceiver::query()->create([
-            'email'          => $email,
-            'consent_source' => 'test',
-            'consent_at'     => now()->subDay(),
-            ...$attrs,
-        ]);
+        return UniOneReceiver::query()->create(['email' => $email, ...$attrs]);
     }
 
     // ── key storage ──────────────────────────────────────────────────────────
@@ -488,7 +483,7 @@ class UniOneIntegrationTest extends TestCase
 
     // ── the sendable scope ───────────────────────────────────────────────────
 
-    public function test_only_active_and_consented_receivers_are_sendable(): void
+    public function test_only_active_receivers_are_sendable(): void
     {
         $ok = $this->receiver('ok@example.test');
         $this->receiver('bounced@example.test', ['status' => UniOneReceiver::STATUS_BOUNCED]);
@@ -500,22 +495,28 @@ class UniOneIntegrationTest extends TestCase
         $this->assertSame([$ok->email], $sendable);
     }
 
-    public function test_the_database_itself_refuses_a_receiver_without_consent(): void
+    public function test_an_address_without_consent_is_still_sendable(): void
     {
-        $receiver = $this->receiver('noconsent@example.test');
-
         /*
-         * Defence in depth, and this asserts the OUTER layer.
+         * This asserts a DELIBERATE RELAXATION, not an accident.
          *
-         * scopeSendable() filters unconsented rows, but the column is also
-         * NOT NULL — so an address without consent cannot exist to be filtered
-         * in the first place. A raw UPDATE that tries to strip it fails at the
-         * database, which is exactly what should happen to the one field that
-         * keeps the UniOne account alive.
+         * Consent used to be NOT NULL and required by scopeSendable(). Both
+         * were removed at the operator's request so the import could take a file
+         * and nothing else. The columns survive as optional metadata.
+         *
+         * The cost is recorded in UniOneReceiver::scopeSendable: UniOne's terms
+         * still require documented consent, and this application no longer
+         * enforces it. If that rule is ever reinstated, this test is the one to
+         * invert.
          */
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $receiver = UniOneReceiver::query()->create(['email' => 'noconsent@example.test']);
 
-        DB::table('unione_receivers')->where('id', $receiver->id)->update(['consent_at' => null]);
+        $this->assertNull($receiver->consent_at);
+        $this->assertNull($receiver->consent_source);
+        $this->assertTrue(
+            UniOneReceiver::query()->sendable()->whereKey($receiver->id)->exists(),
+            'consent is no longer a send gate',
+        );
     }
 
     public function test_rotation_puts_never_contacted_first_then_least_recent(): void

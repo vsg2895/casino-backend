@@ -39,6 +39,8 @@ class Site extends Model
         'operator_profile_enabled',
         'byline_enabled',
         'guides_enabled',
+        'news_enabled',
+        'bonus_enabled',
         'author_name',
         'author_role',
         'author_bio',
@@ -62,6 +64,8 @@ class Site extends Model
             'operator_profile_enabled' => 'boolean',
             'byline_enabled' => 'boolean',
             'guides_enabled' => 'boolean',
+            'news_enabled'   => 'boolean',
+            'bonus_enabled'  => 'boolean',
             'last_revalidated_at' => 'datetime',
         ];
     }

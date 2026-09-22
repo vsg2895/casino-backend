@@ -33,10 +33,27 @@ class SiteFeatureController extends Controller
             'reviews_enabled'   => (bool) $site->reviews_enabled,
             'operator_profile_enabled' => (bool) $site->operator_profile_enabled,
             'guides_enabled'    => (bool) $site->guides_enabled,
-            // Needs BOTH switches. The forum is a view onto reviews, so a site
-            // that has stopped collecting them has no forum either — reporting
-            // it as available would put a link in the header that 404s.
+            'news_enabled'      => (bool) $site->news_enabled,
+            'bonus_enabled'     => (bool) $site->bonus_enabled,
+            /*
+             * ── Two different "forum" flags, and they are not interchangeable ──
+             *
+             * `forum_enabled` is the REVIEWS FEED at /reviews — the page that
+             * used to live at /forum. It needs both switches, because that page
+             * is a view onto reviews and a site which stopped collecting them
+             * has nothing to show.
+             *
+             * `community_forum_enabled` is the DISCUSSION BOARD at /forum, a
+             * separate feature with its own column, its own accounts and its own
+             * tables. It has nothing to do with reviews.
+             *
+             * The names are confusing and the wire format is the reason: five
+             * other sites already read `forum_enabled` as the reviews feed, so
+             * renaming it would be a breaking change to a live contract. The new
+             * feature took the new name instead.
+             */
             'forum_enabled'     => (bool) $site->reviews_enabled && $site->forumSettings()['enabled'],
+            'community_forum_enabled' => (bool) $site->forum_enabled,
         ]]);
     }
 }

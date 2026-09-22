@@ -101,10 +101,21 @@ class UniOneReceiver extends Model
     /**
      * Eligible to receive mail.
      *
-     * Three conditions, and all three are load-bearing:
-     *   - status active        — anything else was bounced, suppressed or opted out
-     *   - consent recorded     — the compliance rule, enforced here not in callers
+     * Two conditions:
+     *   - status active — anything else bounced, was suppressed or opted out
      *   - not inside a temporary-failure hold
+     *
+     * ── Consent is NO LONGER checked here ───────────────────────────────────
+     *
+     * It used to be, and the columns still exist. The check was removed at the
+     * operator's request so the import could take a file and nothing else.
+     *
+     * The consequence is worth stating where the decision lives: UniOne's terms
+     * require documented consent, and this scope is no longer the thing that
+     * guarantees it. `consent_source` and `consent_at` are now optional metadata
+     * — still editable per receiver, still exported, but not enforced. If the
+     * account is ever reviewed, the evidence has to come from the operator's own
+     * records rather than from here.
      *
      * Served by `unione_receivers_batch_idx (status, last_sent_at)`.
      */
@@ -112,8 +123,6 @@ class UniOneReceiver extends Model
     {
         return $query
             ->where('status', self::STATUS_ACTIVE)
-            ->whereNotNull('consent_at')
-            ->whereNotNull('consent_source')
             ->where(function (Builder $q): void {
                 $q->whereNull('retry_after')->orWhere('retry_after', '<=', now());
             });

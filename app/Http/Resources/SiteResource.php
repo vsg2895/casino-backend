@@ -30,6 +30,8 @@ class SiteResource extends JsonResource
             'operator_profile_enabled' => (bool) $this->operator_profile_enabled,
             'byline_enabled'    => (bool) $this->byline_enabled,
             'guides_enabled'    => (bool) $this->guides_enabled,
+            'news_enabled'      => (bool) $this->news_enabled,
+            'bonus_enabled'     => (bool) $this->bonus_enabled,
             'author_name'       => $this->author_name,
             'author_role'       => $this->author_role,
             'author_bio'        => $this->author_bio,

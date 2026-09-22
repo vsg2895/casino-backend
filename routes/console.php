@@ -27,9 +27,9 @@ Artisan::command('inspire', function () {
 
 // Check every minute for promotion campaigns that are due to run. Requires the
 // system cron entry: `* * * * * php artisan schedule:run`.
-//Schedule::command('promotions:dispatch-due')
-//    ->everyMinute()
-//    ->withoutOverlapping(5);
+Schedule::command('promotions:dispatch-due')
+    ->everyMinute()
+    ->withoutOverlapping(5);
 
 // Queue the global post-verification promotion for subscribers whose
 // `newsletters.verified_at + delay_minutes` has elapsed. Every minute so the

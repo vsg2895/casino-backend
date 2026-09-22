@@ -276,7 +276,25 @@ class EmailValidationSubscribeTest extends TestCase
         $this->assertSame(1, EmailValidationLog::query()->billed()->count());
     }
 
-    public function test_a_pending_resend_skips_validation_entirely(): void
+    /**
+     * A resend is VALIDATED, not waved through.
+     *
+     * This test used to assert the opposite — that an address which already
+     * existed as an unverified subscriber skipped validation entirely, on the
+     * reasoning that it "was judged when it first arrived".
+     *
+     * That premise was false in three real cases, and one of them was
+     * self-perpetuating: a first attempt that FAILED OPEN (SendGrid unreachable,
+     * key missing, quota gone) still created the unverified row, and from then on
+     * the short circuit skipped validation forever. An address SendGrid would
+     * call Invalid sailed through the subscribe form while the admin panel's own
+     * Validate Email tool hard-rejected it.
+     *
+     * The cost concern the short circuit existed for is handled properly by the
+     * RESULT CACHE — 60 days, checked before the cooldown and the quota — which
+     * returns the real verdict where the skip returned none.
+     */
+    public function test_a_resend_is_still_validated_and_still_costs_nothing(): void
     {
         [$site, $key] = $this->site();
         $this->fakeVerdict('Valid');
@@ -284,18 +302,40 @@ class EmailValidationSubscribeTest extends TestCase
         $this->subscribe($site, $key)->assertStatus(202);
         Http::assertSentCount(1);
 
-        // The row now exists unverified. Re-submitting is the resend path on
-        // this codebase, and must not re-judge an address already judged.
-        Cache::flush();
+        // The row now exists unverified. Re-submitting is the resend path.
         $this->subscribe($site, $key)->assertStatus(202);
 
+        // Still ONE upstream call: the second was served from the cache.
         Http::assertSentCount(1);
+
         $resend = EmailValidationLog::latest('id')->firstOrFail();
-        $this->assertSame(ValidationReason::PENDING_RESEND, $resend->reason_code);
-        // A skip is a fail-open: it must never cost anyone a subscription.
-        $this->assertSame(ValidationOutcome::FailedOpen->value, $resend->outcome);
-        // And it spent nothing.
+        // A real verdict, not a skip — this is the whole point of the change.
+        $this->assertSame('Valid', $resend->verdict);
+        $this->assertSame(ValidationOutcome::Allowed->value, $resend->outcome);
+        $this->assertTrue((bool) $resend->was_cached);
         $this->assertSame(1, EmailValidationLog::query()->billed()->count());
+    }
+
+    /** An unverified row with no verdict must NOT grant a permanent free pass. */
+    public function test_an_unjudged_pending_row_is_validated_on_the_next_attempt(): void
+    {
+        [$site, $key] = $this->site();
+
+        // Exactly what a fail-open leaves behind: subscribed, unverified, never
+        // actually judged.
+        \App\Models\Newsletter::create([
+            'site_id'  => $site->id,
+            'email'    => 'someone@example.com',
+            'verified' => false,
+        ]);
+
+        $this->fakeVerdict('Invalid');
+
+        $this->subscribe($site, $key)->assertStatus(422);
+
+        $log = EmailValidationLog::latest('id')->firstOrFail();
+        $this->assertSame('Invalid', $log->verdict);
+        $this->assertSame(ValidationOutcome::HardRejected->value, $log->outcome);
     }
 
     public function test_an_already_verified_address_is_rejected_before_any_credit(): void

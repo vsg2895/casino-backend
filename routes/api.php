@@ -14,6 +14,9 @@ use App\Http\Controllers\Api\Admin\CmsPageController as AdminCmsPageController;
 use App\Http\Controllers\Api\Admin\EmailScheduleController;
 use App\Http\Controllers\Api\Admin\MediaUploadController;
 use App\Http\Controllers\Api\Admin\NavItemController;
+use App\Http\Controllers\Api\Admin\ForumArticleController;
+use App\Http\Controllers\Api\Admin\ForumModerationController;
+use App\Http\Controllers\Api\Admin\ForumTaxonomyController;
 use App\Http\Controllers\Api\Admin\SiteForumController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\MailgunReceiverController;
@@ -42,9 +45,16 @@ use App\Http\Controllers\Api\Admin\UnsubscribeController;
 use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
+use App\Http\Controllers\Api\Public\ForumAuthController;
+use App\Http\Controllers\Api\Public\ForumController as PublicForumController;
+use App\Http\Controllers\Api\Public\ForumPostController;
 use App\Http\Controllers\Api\Public\CasinoReviewController as PublicCasinoReviewController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
 use App\Http\Controllers\Api\Public\CountryController as PublicCountryController;
+use App\Http\Controllers\Api\Admin\BonusCategoryController as AdminBonusCategoryController;
+use App\Http\Controllers\Api\Admin\NewsCategoryController as AdminNewsCategoryController;
+use App\Http\Controllers\Api\Public\BonusController as PublicBonusController;
+use App\Http\Controllers\Api\Public\NewsController as PublicNewsController;
 use App\Http\Controllers\Api\Public\CmsPageController as PublicCmsPageController;
 use App\Http\Controllers\Api\Public\AffiliateClickController;
 use App\Http\Controllers\Api\Public\ArticleController as PublicArticleController;
@@ -138,6 +148,12 @@ Route::prefix('v1')->group(function () {
 
         // Guides — the only content type that belongs to a single site, so it
         // is nested under one rather than living at the top level.
+        // News categories — one site's editorial sections.
+        Route::get('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'index']);
+        Route::post('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'store']);
+        Route::put('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'update']);
+        Route::delete('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'destroy']);
+
         Route::get('sites/{site}/articles', [AdminArticleController::class, 'index']);
         Route::post('sites/{site}/articles', [AdminArticleController::class, 'store']);
         Route::get('sites/{site}/articles/{article}', [AdminArticleController::class, 'show']);
@@ -217,9 +233,53 @@ Route::prefix('v1')->group(function () {
 
         // Countries. The literal `continents` segment is declared BEFORE the
         // resource, or `countries/{country}` would swallow it as an id.
+        // Bonus categories — the sub-items under the Bonus menu. Global, so
+        // they sit at the top level rather than under a site.
+        Route::apiResource('bonus-categories', AdminBonusCategoryController::class)
+            ->parameters(['bonus-categories' => 'bonusCategory']);
+
         Route::get('countries/continents', [AdminCountryController::class, 'continents']);
         Route::apiResource('countries', AdminCountryController::class)
             ->only(['index', 'store', 'update', 'destroy']);
+
+        /*
+         * ── Community forum, admin side ────────────────────────────────────
+         *
+         * Two shapes, because the data has two shapes. The taxonomy and the
+         * discussions belong to ONE site and nest under it, as the Forum
+         * settings screen and News Categories already do. The moderation queue
+         * is cross-cutting — a moderator works the whole network's backlog in
+         * one list — so it sits at the root beside Reviews.
+         *
+         * Literal segments are declared BEFORE anything parameterised, per the
+         * platform convention: `forum-posts/counts` would otherwise be read as
+         * a post id.
+         */
+        Route::get('forum-posts/counts', [ForumModerationController::class, 'counts']);
+        Route::post('forum-posts/act', [ForumModerationController::class, 'act']);
+        Route::get('forum-posts', [ForumModerationController::class, 'index']);
+
+        // Literal before parameterised, per the platform convention.
+        Route::get('forum-members', [ForumModerationController::class, 'members']);
+        Route::get('forum-members/{forumUser}/posts', [ForumModerationController::class, 'memberPosts']);
+        Route::patch('forum-members/{forumUser}/role', [ForumModerationController::class, 'memberRole']);
+        Route::patch('forum-members/{forumUser}', [ForumModerationController::class, 'member']);
+
+        // Per-site taxonomy and discussions.
+        Route::get('sites/{site}/forum-sections', [ForumTaxonomyController::class, 'sections']);
+        Route::post('sites/{site}/forum-sections', [ForumTaxonomyController::class, 'storeSection']);
+        Route::put('sites/{site}/forum-sections/{forumSection}', [ForumTaxonomyController::class, 'updateSection']);
+        Route::delete('sites/{site}/forum-sections/{forumSection}', [ForumTaxonomyController::class, 'destroySection']);
+
+        Route::post('sites/{site}/forum-categories', [ForumTaxonomyController::class, 'storeCategory']);
+        Route::put('sites/{site}/forum-categories/{forumCategory}', [ForumTaxonomyController::class, 'updateCategory']);
+        Route::delete('sites/{site}/forum-categories/{forumCategory}', [ForumTaxonomyController::class, 'destroyCategory']);
+
+        Route::get('sites/{site}/forum-articles', [ForumArticleController::class, 'index']);
+        Route::post('sites/{site}/forum-articles', [ForumArticleController::class, 'store']);
+        Route::get('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'show']);
+        Route::put('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'update']);
+        Route::delete('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'destroy']);
 
         // Visitor reviews (moderation). Literal segments before any parameter
         // route, or `reviews/{casinoReview}` would swallow them as ids.
@@ -512,6 +572,72 @@ Route::prefix('v1')->group(function () {
         Route::get('articles',                [PublicArticleController::class, 'index']);
         Route::get('articles/{slug}',         [PublicArticleController::class, 'show']);
 
+        // Published news. Same table as guides, different section — both 404
+        // unless the site has news_enabled.
+        // The Bonus area: categories with their offers. Drives both the header
+        // dropdown and the home page sections. 404s unless bonus_enabled.
+        Route::get('bonus',                   [PublicBonusController::class, 'index']);
+
+        Route::get('news',                    [PublicNewsController::class, 'index']);
+        // BEFORE news/{slug}, or `featured` is swallowed as a slug and the home
+        // page asks for a post that does not exist.
+        Route::get('news/featured',           [PublicNewsController::class, 'featured']);
+        Route::get('news/{slug}',             [PublicNewsController::class, 'show']);
+
+        /*
+         * ── The community forum ────────────────────────────────────────────
+         *
+         * Every route 404s unless the site has `forum_enabled`; the controllers
+         * enforce that themselves, as countries, guides and news do.
+         *
+         * ORDERING MATTERS HERE. `forum/members/...` and `forum/posts/...` are
+         * literal segments that share a prefix with `forum/{categorySlug}`, so
+         * they are declared FIRST — otherwise "members" is swallowed as a
+         * category slug and the route 404s for a reason nothing explains.
+         */
+        Route::get('forum', [PublicForumController::class, 'index']);
+
+        // --- accounts -------------------------------------------------------
+        // Outside `auth:forum`: these are how a member GETS a token.
+        Route::post('forum/members/register', [ForumAuthController::class, 'register'])
+            ->middleware('throttle:forum-register');
+        Route::post('forum/members/login', [ForumAuthController::class, 'login'])
+            // Same shape as the admin login limiter: tight, IP-keyed, and the
+            // endpoint returns one generic message either way so it cannot be
+            // used to enumerate addresses.
+            ->middleware('throttle:6,1');
+        Route::post('forum/members/forgot-password', [ForumAuthController::class, 'forgotPassword'])
+            ->middleware('throttle:6,1');
+        Route::post('forum/members/reset-password', [ForumAuthController::class, 'resetPassword'])
+            ->middleware('throttle:6,1');
+        /*
+         * POST, not GET, and named so the signed URL can be built.
+         *
+         * The platform's other mail-link endpoints are POST-only for the same
+         * reason: mail clients prefetch GET links, which would confirm addresses
+         * nobody ever clicked.
+         */
+        Route::post('forum/members/{member}/verify', [ForumAuthController::class, 'verify'])
+            ->name('forum.verify')
+            ->middleware('throttle:10,1');
+
+        Route::middleware('auth:forum')->group(function (): void {
+            Route::get('forum/members/me', [ForumAuthController::class, 'me']);
+            Route::post('forum/members/logout', [ForumAuthController::class, 'logout']);
+        });
+
+        // --- writes ---------------------------------------------------------
+        // Reporting is open to guests deliberately — see the controller.
+        Route::post('forum/posts/{post}/report', [ForumPostController::class, 'report'])
+            ->middleware('throttle:forum-report');
+
+        Route::post('forum/articles/{slug}/posts', [ForumPostController::class, 'store'])
+            ->middleware(['auth:forum', 'throttle:forum-post']);
+
+        // --- reads, parameterised last --------------------------------------
+        Route::get('forum/{categorySlug}', [PublicForumController::class, 'category']);
+        Route::get('forum/{categorySlug}/{slug}', [PublicForumController::class, 'article']);
+
         // Click counting for the site's own /go redirect route. Called
         // server-side by that route handler, never from a browser — see the
         // controller. Throttled because it is a write on a public prefix.
@@ -584,6 +710,7 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('receivers/{uniOneReceiver}', [UniOneReceiverController::class, 'destroy']);
 
         // ── sending and the log ─────────────────────────────────────────────
+        Route::get('sends/templates', [UniOneSendController::class, 'templates']);
         Route::post('sends/preview', [UniOneSendController::class, 'preview']);
         Route::post('sends/test', [UniOneSendController::class, 'test']);
         Route::get('sends/export', [UniOneSendController::class, 'export']);

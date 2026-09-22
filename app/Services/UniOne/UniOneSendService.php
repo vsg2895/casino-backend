@@ -21,8 +21,18 @@ use Illuminate\Validation\ValidationException;
  */
 class UniOneSendService
 {
+    /**
+     * Marks a send whose body is rendered per recipient from a template.
+     *
+     * A prefix on `html_body` rather than a new column: the send log still has
+     * one place to look for "what was sent", and an old run's literal HTML is
+     * still readable as itself.
+     */
+    public const string TEMPLATE_MARKER = 'unione-template:';
+
     public function __construct(
         private readonly UniOneAudienceService $audience,
+        private readonly UniOneTemplateService $templates,
     ) {}
 
     /**
@@ -56,6 +66,28 @@ class UniOneSendService
          * pick up a chunk whose row is not yet visible to its connection, and
          * the job would find nothing and return silently.
          */
+        /*
+         * TEMPLATE mode, mirroring how Warmup sends.
+         *
+         * Warmup picks a template and the server renders it; UniOne does the
+         * same with crogambline's promotion template. The stored `html_body` is
+         * then a MARKER rather than markup — the real HTML is rendered per
+         * recipient at send time, because the template personalises the
+         * greeting and one shared body would address everybody identically.
+         *
+         * Raw HTML is still accepted, so a one-off blast does not need a
+         * template row.
+         */
+        $usesTemplate = ($input['template'] ?? null) !== null && ($input['template'] ?? '') !== '';
+
+        if ($usesTemplate) {
+            $input['html_body'] = self::TEMPLATE_MARKER . $input['template'];
+
+            if (trim((string) ($input['subject'] ?? '')) === '') {
+                $input['subject'] = $this->templates->subjectFor();
+            }
+        }
+
         $send = DB::transaction(function () use ($key, $input, $userId, $receivers, $chunks): UniOneSend {
             $send = UniOneSend::query()->create([
                 'unione_api_key_id' => $key->id,
