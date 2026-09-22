@@ -46,9 +46,6 @@ class DispatchDuePromotionSchedules extends Command
         // over the log shows whether the scheduler is ticking at all — and the
         // clock context answers the timing question these reports are usually
         // really about (see {@see ClockFacts}).
-        Log::info('Promotion schedule sweep running', ClockFacts::forLog() + [
-            'matching_minute' => $minute->format('H:i'),
-        ]);
 
         EmailSchedule::query()
             ->where('active', true)

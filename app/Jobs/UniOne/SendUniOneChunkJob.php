@@ -209,19 +209,28 @@ class SendUniOneChunkJob implements ShouldQueue
      */
     private function buildMessage(UniOneSend $send, UniOneApiKey $key, UniOneSendChunk $chunk, $receivers): array
     {
+        $templates = app(\App\Services\UniOne\UniOneTemplateService::class);
+
+        /*
+         * Rendered ONCE for the whole chunk. The only thing that differs per
+         * recipient is the greeting name, so that is the only thing that stays
+         * a substitution — see UniOneTemplateService::sharedBody().
+         */
+        $shared = $this->usesTemplate($send) ? $templates->sharedBody() : null;
+
         return array_filter([
-            'recipients' => $receivers->map(function (UniOneReceiver $r) use ($send): array {
+            'recipients' => $receivers->map(function (UniOneReceiver $r) use ($shared, $templates): array {
                 $subs = [];
 
                 if ($r->name !== null && $r->name !== '') {
+                    // UniOne's reserved substitution: the To: header's display
+                    // name. Left alone when there is no name, so the envelope
+                    // never carries the greeting's "there" fallback.
                     $subs['to_name'] = mb_substr($r->name, 0, 78);
                 }
 
-                if ($this->usesTemplate($send)) {
-                    // Rendered here, once per address, because the template
-                    // personalises the greeting from the receiver's name.
-                    $subs['body_html'] = app(\App\Services\UniOne\UniOneTemplateService::class)
-                        ->renderFor($r->email, $r->name);
+                if ($shared !== null) {
+                    $subs += $templates->substitutionsFor($r->email, $r->name);
                 }
 
                 return array_filter([
@@ -236,17 +245,13 @@ class SendUniOneChunkJob implements ShouldQueue
             'reply_to'   => $send->reply_to,
 
             /*
-             * One `substitutions` slot per recipient carries their rendered
-             * body, and the shared body references it.
-             *
-             * This is how a template send stays ONE request for 500 people
-             * rather than 500 requests: UniOne substitutes per recipient
-             * server-side. A shared literal body could not personalise the
-             * greeting; 500 separate calls would blow the rate limit.
+             * One well-formed document for everybody, plus a real plain-text
+             * alternative. Without the second part UniOne copies the HTML into
+             * `text/plain`, which text-only clients render as raw markup.
              */
             'body' => array_filter([
-                'html'      => $this->htmlFor($send),
-                'plaintext' => $send->plaintext_body,
+                'html'      => $shared['html'] ?? (string) $send->html_body,
+                'plaintext' => $shared['plaintext'] ?? $send->plaintext_body,
             ]),
             'template_engine' => $this->usesTemplate($send) ? 'simple' : 'none',
 
@@ -268,18 +273,6 @@ class SendUniOneChunkJob implements ShouldQueue
     private function usesTemplate(UniOneSend $send): bool
     {
         return str_starts_with((string) $send->html_body, \App\Services\UniOne\UniOneSendService::TEMPLATE_MARKER);
-    }
-
-    /**
-     * The shared body.
-     *
-     * For a template run it is a single substitution placeholder — UniOne
-     * expands it per recipient from the `body_html` above. For a raw run it is
-     * the literal HTML the operator typed.
-     */
-    private function htmlFor(UniOneSend $send): string
-    {
-        return $this->usesTemplate($send) ? '{{body_html}}' : (string) $send->html_body;
     }
 
     /**

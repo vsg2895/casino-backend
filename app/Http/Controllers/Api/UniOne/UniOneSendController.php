@@ -73,17 +73,27 @@ class UniOneSendController extends Controller
             return $this->noKey();
         }
 
-        // The test renders the SAME template the run renders, through the same
-        // service — otherwise it proves nothing about what the run will send.
-        $html = app(\App\Services\UniOne\UniOneTemplateService::class)->renderFor($data['email'], null);
+        /*
+         * The test goes through the SAME path a run does — same shared body,
+         * same substitutions, same template engine — not just the same
+         * template. Rendering it a second way would prove the renderer works
+         * while leaving everything the provider does to the message untested,
+         * which is exactly where the missing hero image lived.
+         */
+        $templates = app(\App\Services\UniOne\UniOneTemplateService::class);
+        $shared = $templates->sharedBody();
 
         $response = (new UniOneClient($key))->send(array_filter([
-            'recipients' => [['email' => $data['email']]],
-            'subject'    => ($data['subject'] ?? null) ?: app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor(),
+            'recipients' => [[
+                'email'         => $data['email'],
+                'substitutions' => $templates->substitutionsFor($data['email'], null),
+            ]],
+            'subject'    => ($data['subject'] ?? null) ?: $templates->subjectFor(),
             'from_email' => $data['from_email'],
             'from_name'  => $data['from_name'] ?? null,
             'reply_to'   => $data['reply_to'] ?? null,
-            'body'       => ['html' => $html],
+            'body'       => ['html' => $shared['html'], 'plaintext' => $shared['plaintext']],
+            'template_engine' => 'simple',
             'track_links' => $key->track_links ? 1 : 0,
             'track_read'  => $key->track_read ? 1 : 0,
             'skip_unsubscribe' => 0,

@@ -514,12 +514,17 @@ class UniOneIntegrationTest extends TestCase
 
         Http::assertSent(function (\Illuminate\Http\Client\Request $request): bool {
             $body = $request->data()['message'] ?? [];
-            $html = $body['recipients'][0]['substitutions']['body_html'] ?? '';
+            $html = (string) ($body['body']['html'] ?? '');
+            $subs = $body['recipients'][0]['substitutions'] ?? [];
 
             return ($body['template_engine'] ?? null) === 'simple'
-                && ($body['body']['html'] ?? null) === '{{body_html}}'
-                && str_contains($html, 'Tamar')
-                && ! str_contains($html, 'unione-placeholder');
+                // ONE well-formed document for the whole chunk...
+                && str_starts_with($html, '<!DOCTYPE html>')
+                && str_contains($html, 'Dear {{greeting_name}},')
+                && ! str_contains($html, 'unione-placeholder')
+                // ...and the greeting is the only thing carried per recipient.
+                && ($subs['greeting_name'] ?? null) === 'Tamar'
+                && ! isset($subs['body_html']);
         });
     }
 
@@ -534,11 +539,23 @@ class UniOneIntegrationTest extends TestCase
             'email' => 'me@example.test', 'from_email' => 'promo@viglinksi.test',
         ])->assertOk();
 
-        $expected = app(\App\Services\UniOne\UniOneTemplateService::class)->renderFor('me@example.test', null);
-        $subject = app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor();
+        $templates = app(\App\Services\UniOne\UniOneTemplateService::class);
+        $expected = $templates->sharedBody();
+        $subject = $templates->subjectFor();
 
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $r): bool => ($r->data()['message']['body']['html'] ?? null) === $expected
-            && ($r->data()['message']['subject'] ?? null) === $subject);
+        // Byte-identical to a run's body, through the same substitution
+        // mechanism — a test that renders the template a second way would prove
+        // the renderer works while leaving the provider's handling untested,
+        // which is exactly where the missing hero image lived.
+        Http::assertSent(function (\Illuminate\Http\Client\Request $r) use ($expected, $subject): bool {
+            $body = $r->data()['message'] ?? [];
+
+            return ($body['body']['html'] ?? null) === $expected['html']
+                && ($body['body']['plaintext'] ?? null) === $expected['plaintext']
+                && ($body['template_engine'] ?? null) === 'simple'
+                && ($body['recipients'][0]['substitutions']['greeting_name'] ?? null) === 'there'
+                && ($body['subject'] ?? null) === $subject;
+        });
     }
 
     public function test_the_template_preview_returns_the_rendered_html_and_subject(): void
