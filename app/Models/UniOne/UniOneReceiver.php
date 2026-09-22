@@ -105,6 +105,12 @@ class UniOneReceiver extends Model
      *   - status active — anything else bounced, was suppressed or opted out
      *   - not inside a temporary-failure hold
      *
+     * Every address on the list is sendable when it is added: an import lands
+     * as `active`, and only UniOne's own webhooks (unsubscribe, bounce,
+     * complaint) or a temporary-failure hold move it out of this set. There is
+     * no separate "sendable" flag to maintain, and the admin no longer shows
+     * one — the status column is the whole story.
+     *
      * ── Consent is NO LONGER checked here ───────────────────────────────────
      *
      * It used to be, and the columns still exist. The check was removed at the
@@ -135,13 +141,15 @@ class UniOneReceiver extends Model
      * in MySQL, so a never-contacted address would silently drop out of the very
      * set it should lead.
      */
-    public function scopeOutsideCooldown(Builder $query, ?int $hours): Builder
+    public function scopeOutsideCooldown(Builder $query, ?int $days): Builder
     {
-        if ($hours === null || $hours < 1) {
+        if ($days === null || $days < 1) {
             return $query;
         }
 
-        $cutoff = now()->subHours($hours);
+        // Days, not hours — the same unit and the same rule as Warmup's
+        // `notContactedWithin()`: "2" skips anyone contacted in the last two days.
+        $cutoff = now()->subDays($days);
 
         return $query->where(function (Builder $q) use ($cutoff): void {
             $q->whereNull('last_sent_at')->orWhere('last_sent_at', '<=', $cutoff);

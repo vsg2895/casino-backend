@@ -710,7 +710,7 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('receivers/{uniOneReceiver}', [UniOneReceiverController::class, 'destroy']);
 
         // ── sending and the log ─────────────────────────────────────────────
-        Route::get('sends/templates', [UniOneSendController::class, 'templates']);
+        Route::get('sends/template-preview', [UniOneSendController::class, 'templatePreview']);
         Route::post('sends/preview', [UniOneSendController::class, 'preview']);
         Route::post('sends/test', [UniOneSendController::class, 'test']);
         Route::get('sends/export', [UniOneSendController::class, 'export']);

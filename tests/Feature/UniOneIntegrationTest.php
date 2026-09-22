@@ -32,6 +32,22 @@ class UniOneIntegrationTest extends TestCase
 
     private const KEY = 'test-unione-key';
 
+    /**
+     * Every run and every test send renders viglinksi's promotion template, so
+     * the site has to exist before a chunk job can run. Created once per test,
+     * with the default template row materialised on first use.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        \App\Models\Site::factory()->create([
+            'slug'   => \App\Services\UniOne\UniOneTemplateService::SITE_SLUG,
+            'name'   => 'Viglinksi',
+            'domain' => 'viglinksi.test',
+        ]);
+    }
+
     private function key(array $attrs = []): UniOneApiKey
     {
         $key = UniOneApiKey::query()->create([
@@ -136,7 +152,7 @@ class UniOneIntegrationTest extends TestCase
             $this->key($attrs),
             [
                 'subject' => 'Hello', 'from_email' => 'promo@viglinksi.com',
-                'html_body' => '<p>Hi</p>', 'count' => $count, 'cooldown_hours' => null,
+                'count' => $count, 'cooldown_days' => null,
             ],
             null,
         );
@@ -481,6 +497,76 @@ class UniOneIntegrationTest extends TestCase
         $this->assertFalse(UniOneWebhookVerifier::verify(str_replace('user_id":1', 'user_id":2', $body), self::KEY));
     }
 
+    // ── the template ─────────────────────────────────────────────────────────
+
+    public function test_every_run_renders_the_viglinksi_promotion_template(): void
+    {
+        Http::fake(['*' => Http::response([
+            'status' => 'success', 'job_id' => 'job-t',
+            'emails' => ['t@example.test'], 'failed_emails' => [],
+        ])]);
+
+        $this->receiver('t@example.test', ['name' => 'Tamar']);
+        $send = $this->dispatchRunSync(1);
+
+        // Stored as a marker, never as markup — the HTML is rendered per recipient.
+        $this->assertStringStartsWith(\App\Services\UniOne\UniOneSendService::TEMPLATE_MARKER, $send->html_body);
+
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request): bool {
+            $body = $request->data()['message'] ?? [];
+            $html = $body['recipients'][0]['substitutions']['body_html'] ?? '';
+
+            return ($body['template_engine'] ?? null) === 'simple'
+                && ($body['body']['html'] ?? null) === '{{body_html}}'
+                && str_contains($html, 'Tamar')
+                && ! str_contains($html, 'unione-placeholder');
+        });
+    }
+
+    public function test_a_test_send_renders_the_same_template_as_a_run(): void
+    {
+        Http::fake(['*' => Http::response(['status' => 'success', 'job_id' => 'job-x', 'emails' => ['me@example.test'], 'failed_emails' => []])]);
+        $key = $this->key();
+
+        $this->actingAsAdmin();
+        $this->postJson('/api/v1/admin/unione/sends/test', [
+            'unione_api_key_id' => $key->id,
+            'email' => 'me@example.test', 'from_email' => 'promo@viglinksi.test',
+        ])->assertOk();
+
+        $expected = app(\App\Services\UniOne\UniOneTemplateService::class)->renderFor('me@example.test', null);
+        $subject = app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor();
+
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $r): bool => ($r->data()['message']['body']['html'] ?? null) === $expected
+            && ($r->data()['message']['subject'] ?? null) === $subject);
+    }
+
+    public function test_the_template_preview_returns_the_rendered_html_and_subject(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->getJson('/api/v1/admin/unione/sends/template-preview')
+            ->assertOk()
+            ->assertJsonPath('data.site', 'viglinksi')
+            ->assertJsonPath('data.subject', app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor());
+
+        $html = $this->getJson('/api/v1/admin/unione/sends/template-preview')->json('data.html');
+        $this->assertStringContainsString('<', $html);
+        $this->assertStringNotContainsString('unione-placeholder', $html);
+    }
+
+    public function test_the_cooldown_is_accepted_in_days(): void
+    {
+        $this->actingAsAdmin();
+        $this->receiver('a@example.test')->forceFill(['last_sent_at' => now()->subDay()])->save();
+        $this->receiver('b@example.test')->forceFill(['last_sent_at' => now()->subDays(5)])->save();
+
+        $this->postJson('/api/v1/admin/unione/sends/preview', ['count' => 10, 'cooldown_days' => 2])
+            ->assertOk()->assertJsonPath('data.eligible', 1);
+        $this->postJson('/api/v1/admin/unione/sends/preview', ['count' => 10, 'cooldown_days' => 0])
+            ->assertOk()->assertJsonPath('data.eligible', 2);
+    }
+
     // ── the sendable scope ───────────────────────────────────────────────────
 
     public function test_only_active_receivers_are_sendable(): void
@@ -534,10 +620,11 @@ class UniOneIntegrationTest extends TestCase
     public function test_the_cooldown_excludes_recently_contacted_but_never_the_untouched(): void
     {
         $this->receiver('never@example.test');
-        $this->receiver('inside@example.test')->forceFill(['last_sent_at' => now()->subHour()])->save();
-        $this->receiver('outside@example.test')->forceFill(['last_sent_at' => now()->subDays(2)])->save();
+        // Days, like Warmup: "2" skips anyone contacted in the last two days.
+        $this->receiver('inside@example.test')->forceFill(['last_sent_at' => now()->subDay()])->save();
+        $this->receiver('outside@example.test')->forceFill(['last_sent_at' => now()->subDays(3)])->save();
 
-        $eligible = UniOneReceiver::query()->sendable()->outsideCooldown(24)->pluck('email')->all();
+        $eligible = UniOneReceiver::query()->sendable()->outsideCooldown(2)->pluck('email')->all();
 
         sort($eligible);
         $this->assertSame(['never@example.test', 'outside@example.test'], $eligible);

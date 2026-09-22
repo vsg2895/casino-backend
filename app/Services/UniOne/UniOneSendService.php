@@ -36,7 +36,7 @@ class UniOneSendService
     ) {}
 
     /**
-     * @param  array{subject: string, from_email: string, from_name?: ?string, reply_to?: ?string, html_body: string, plaintext_body?: ?string, count: int, cooldown_hours?: ?int}  $input
+     * @param  array{subject?: ?string, from_email: string, from_name?: ?string, reply_to?: ?string, count: int, cooldown_days?: ?int}  $input
      *
      * @throws ValidationException
      */
@@ -46,7 +46,7 @@ class UniOneSendService
             throw ValidationException::withMessages(['unione_api_key_id' => 'That key is not active.']);
         }
 
-        $cooldown = $input['cooldown_hours'] ?? null;
+        $cooldown = $input['cooldown_days'] ?? null;
 
         $receivers = $this->audience->select((int) $input['count'], $cooldown);
 
@@ -67,25 +67,19 @@ class UniOneSendService
          * the job would find nothing and return silently.
          */
         /*
-         * TEMPLATE mode, mirroring how Warmup sends.
+         * TEMPLATE mode, always — mirroring how Warmup sends.
          *
-         * Warmup picks a template and the server renders it; UniOne does the
-         * same with crogambline's promotion template. The stored `html_body` is
-         * then a MARKER rather than markup — the real HTML is rendered per
-         * recipient at send time, because the template personalises the
-         * greeting and one shared body would address everybody identically.
-         *
-         * Raw HTML is still accepted, so a one-off blast does not need a
-         * template row.
+         * Every run renders viglinksi's promotion template; there is no raw-HTML
+         * path any more. The stored `html_body` is a MARKER rather than markup —
+         * the real HTML is rendered per recipient at send time, because the
+         * template personalises the greeting and one shared body would address
+         * everybody identically. A test send renders the same template through
+         * the same service, so a test proves what the run will look like.
          */
-        $usesTemplate = ($input['template'] ?? null) !== null && ($input['template'] ?? '') !== '';
+        $input['html_body'] = self::TEMPLATE_MARKER . 'promotion';
 
-        if ($usesTemplate) {
-            $input['html_body'] = self::TEMPLATE_MARKER . $input['template'];
-
-            if (trim((string) ($input['subject'] ?? '')) === '') {
-                $input['subject'] = $this->templates->subjectFor();
-            }
+        if (trim((string) ($input['subject'] ?? '')) === '') {
+            $input['subject'] = $this->templates->subjectFor();
         }
 
         $send = DB::transaction(function () use ($key, $input, $userId, $receivers, $chunks): UniOneSend {
@@ -99,7 +93,7 @@ class UniOneSendService
                 'html_body'         => $input['html_body'],
                 'plaintext_body'    => $input['plaintext_body'] ?? null,
                 'requested_count'   => (int) $input['count'],
-                'cooldown_hours'    => (int) ($input['cooldown_hours'] ?? 0),
+                'cooldown_days'     => (int) ($input['cooldown_days'] ?? 0),
                 'eligible_count'    => $receivers->count(),
                 'chunk_count'       => $chunks->count(),
                 'status'            => UniOneSend::STATUS_SENDING,
@@ -131,9 +125,9 @@ class UniOneSendService
      *
      * @return array{eligible: int, will_send: int, chunks: int, chunk_size: int}
      */
-    public function preview(int $requested, ?int $cooldownHours): array
+    public function preview(int $requested, ?int $cooldownDays): array
     {
-        $eligible = $this->audience->eligibleCount($cooldownHours);
+        $eligible = $this->audience->eligibleCount($cooldownDays);
         $willSend = min($eligible, max(0, $requested));
 
         return [

@@ -26,11 +26,6 @@ class UniOneReceiverResource extends JsonResource
             'send_count'      => (int) $this->send_count,
             'bounce_count'    => (int) $this->bounce_count,
             'complaint_count' => (int) $this->complaint_count,
-            // What the send path would decide, surfaced so the list explains
-            // itself rather than making an operator infer it from four columns.
-            'is_sendable'     => $this->status === 'active'
-                && $this->hasConsent()
-                && ($this->retry_after === null || $this->retry_after->isPast()),
             'notes'           => $this->notes,
             'created_at'      => $this->created_at?->toISOString(),
         ];

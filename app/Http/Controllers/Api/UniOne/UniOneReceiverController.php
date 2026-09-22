@@ -51,7 +51,6 @@ class UniOneReceiverController extends Controller
             'data' => [
                 'total'    => (int) array_sum($byStatus->all()),
                 'by_status' => $byStatus->map(static fn ($v): int => (int) $v),
-                'sendable' => UniOneReceiver::query()->sendable()->count(),
             ],
         ]);
     }

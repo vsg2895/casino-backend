@@ -22,11 +22,11 @@ use Illuminate\Support\Collection;
 class UniOneAudienceService
 {
     /** @return Builder<UniOneReceiver> */
-    public function eligibleQuery(?int $cooldownHours): Builder
+    public function eligibleQuery(?int $cooldownDays): Builder
     {
         return UniOneReceiver::query()
             ->sendable()
-            ->outsideCooldown($cooldownHours);
+            ->outsideCooldown($cooldownDays);
     }
 
     /**
@@ -38,9 +38,9 @@ class UniOneAudienceService
      * the list ever reaches millions this becomes the thing to cap, not the
      * batch selection, which stays flat.
      */
-    public function eligibleCount(?int $cooldownHours): int
+    public function eligibleCount(?int $cooldownDays): int
     {
-        return $this->eligibleQuery($cooldownHours)->count();
+        return $this->eligibleQuery($cooldownDays)->count();
     }
 
     /**
@@ -55,9 +55,9 @@ class UniOneAudienceService
      *
      * @return Collection<int, UniOneReceiver>
      */
-    public function select(int $requested, ?int $cooldownHours): Collection
+    public function select(int $requested, ?int $cooldownDays): Collection
     {
-        $rows = $this->eligibleQuery($cooldownHours)
+        $rows = $this->eligibleQuery($cooldownDays)
             ->rotation()
             ->limit(max(1, $requested))
             ->get(['id', 'email', 'name', 'last_sent_at']);

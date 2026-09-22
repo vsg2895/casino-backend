@@ -25,7 +25,7 @@ class UniOneSendResource extends JsonResource
             'accepted_count'  => (int) $this->accepted_count,
             'failed_count'    => (int) $this->failed_count,
             'chunk_count'     => (int) $this->chunk_count,
-            'cooldown_hours'  => (int) $this->cooldown_hours,
+            'cooldown_days'   => (int) $this->cooldown_days,
             'error'           => $this->error,
             'completed_at'    => $this->completed_at?->toISOString(),
             'created_at'      => $this->created_at?->toISOString(),

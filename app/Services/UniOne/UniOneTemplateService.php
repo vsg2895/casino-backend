@@ -14,10 +14,10 @@ use Illuminate\Validation\ValidationException;
  * ── Which site's template, and why it is a constant ─────────────────────────
  *
  * Warmup renders `idevaffiliation`'s templates (config `warmup.site_slug`).
- * UniOne sends **crogambline**'s promotion template. That is a deliberate
- * separation: the two features build reputation for different sending
- * identities, and crossing them would mean warmup traffic and UniOne campaigns
- * looking like the same brand to a mailbox provider.
+ * UniOne sends **viglinksi**'s promotion template — the one brand whose
+ * domain is verified on the UniOne account, so the creative and the sending
+ * identity match. There is no picker: every run and every test send renders
+ * this template, which is the only way a test can prove what a run will do.
  *
  * It is a class constant rather than an env var because the brief forbids
  * adding to `.env`, and because a wrong value here does not degrade — it mails
@@ -45,7 +45,7 @@ use Illuminate\Validation\ValidationException;
 class UniOneTemplateService
 {
     /** The site whose promotion template UniOne sends. */
-    public const string SITE_SLUG = 'crogambline';
+    public const string SITE_SLUG = 'viglinksi';
 
     public function __construct(private readonly PromotionEmailService $promotions) {}
 
@@ -64,23 +64,21 @@ class UniOneTemplateService
     }
 
     /**
-     * What the admin shows in the template picker.
+     * The rendered template, for the admin's preview before a send.
      *
-     * One entry today. Returned as a list so adding a second template later is
-     * a data change rather than a UI change.
+     * Rendered exactly the way a run renders it — same service, same site,
+     * same stripping of the dead unsubscribe link — for a stand-in recipient,
+     * so what the operator sees is what a receiver gets, greeting aside.
      *
-     * @return list<array{value: string, label: string, description: string}>
+     * @return array{site: string, subject: string, html: string}
      */
-    public function options(): array
+    public function preview(): array
     {
-        $site = Site::query()->where('slug', self::SITE_SLUG)->first();
-
-        return [[
-            'value'       => 'promotion',
-            'label'       => 'Promotion offer — ' . ($site?->name ?? self::SITE_SLUG),
-            'description' => 'The promotion template from the ' . self::SITE_SLUG
-                . ' site, rendered per recipient. Edit the wording in Promotion Emails.',
-        ]];
+        return [
+            'site'    => self::SITE_SLUG,
+            'subject' => $this->subjectFor(),
+            'html'    => $this->renderFor('preview@example.com', 'there'),
+        ];
     }
 
     /** The subject line the template supplies, with placeholders resolved. */
