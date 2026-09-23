@@ -54,15 +54,34 @@ class SpecialOffer extends Model
     }
 
     /**
-     * Slug lifecycle: generated on create/duplicate and REGENERATED whenever the
-     * title changes; left untouched on any other update. Format is user-friendly
-     * and title-based — the title as lowercase words joined by "_", then a final
-     * "_" and a short letters-only unique token, e.g. "welcome_bonus_kmxopt".
+     * Slug lifecycle: generated ONCE, when there is no slug — on create, and on
+     * a duplicate, which replicates without one. Never regenerated afterwards.
+     *
+     * Format is title-based and user-friendly: the title as lowercase words
+     * joined by "_", then a final "_" and a short letters-only unique token,
+     * e.g. "welcome_bonus_kmxopt".
+     *
+     * ── Why renaming no longer moves the URL ────────────────────────────────
+     *
+     * It used to regenerate whenever the title changed, which meant editing an
+     * offer's wording silently moved its public address. Nothing wrote a
+     * redirect, so whatever had been indexed or linked at the old URL simply
+     * started 404ing, and the only visible symptom was traffic that quietly
+     * stopped arriving.
+     *
+     * A slug is an address, not a label. Casino and Article both already
+     * generate once and leave it alone — see Casino::getSlugOptions(), which
+     * calls doNotGenerateSlugsOnUpdate() for the same reason — and this brings
+     * offers in line with them.
+     *
+     * Deliberately renaming an offer's URL is therefore a two-step operation by
+     * design: clear the slug so this regenerates it, and add a redirect from
+     * the old path. The Redirects screen exists for exactly that.
      */
     protected static function booted(): void
     {
         static::saving(function (self $offer): void {
-            if (blank($offer->slug) || ($offer->exists && $offer->isDirty('title'))) {
+            if (blank($offer->slug)) {
                 $offer->slug = static::generateUniqueSlug((string) $offer->title, $offer->getKey());
             }
         });

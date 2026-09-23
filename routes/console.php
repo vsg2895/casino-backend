@@ -10,7 +10,7 @@ Artisan::command('inspire', function () {
 
 // THE OVERLAP EXPIRY IS NOT COSMETIC. `withoutOverlapping()` with no argument
 // holds its cache mutex for 24 HOURS. The mutex is released in a shutdown
-// handler, so a run that is killed rather than finished — a deploy mid-tick, an
+// handler, so a run that is killed rather than finished — a deployment mid-tick, an
 // OOM, a `kill -9`, a Redis restart that drops the release — leaves the lock
 // behind and the command then silently no-ops EVERY MINUTE FOR A DAY. Nothing
 // is logged, because the command never enters handle().
@@ -82,7 +82,7 @@ Schedule::command('promotions:manage-history-partitions')
 //Schedule::command('test:command')->everyMinute();
 
 // Delete token rows that have already expired. Purely housekeeping: an expired
-// token is rejected by Sanctum whether or not the row still exists, so this
+// token is rejected by Sanctum whether the row still exists, so this
 // keeps `personal_access_tokens` from growing without bound and nothing more.
 // The 24-hour grace leaves a recently expired token visible long enough to
 // answer "was I signed out, or did something else happen?".
@@ -108,7 +108,7 @@ Schedule::command('email-validation:prune')->monthlyOn(1, '03:20');
  * nothing populates it for content that ALREADY existed. That gap is exactly how
  * production ended up returning an empty result for every search — the migration
  * created the table, the deploy never ran `search:reindex`, and the observers had
- * nothing to react to because nobody edited anything afterwards.
+ * nothing to react to because nobody edited anything afterward.
  *
  * A nightly rebuild makes the index self-healing: a fresh deploy, a restored
  * database or a missed observer write all correct themselves within a day
@@ -141,17 +141,17 @@ Schedule::command('forum:flush-views')->everyMinute()->withoutOverlapping();
  * Recompute the Hot Threads ranking.
  *
  * The rank is an expression (views + recent replies), and an ORDER BY over an
- * expression can never use an index — so it is materialised into `hot_score`
+ * expression can never use an index — so it is materialized into `hot_score`
  * here and served from forum_articles_hot_idx. Every ten minutes is the trade:
  * the tab is minutes behind, instead of every request paying for a filesort.
  */
-Schedule::command('forum:rescore')->everyTenMinutes()->withoutOverlapping();
+Schedule::command('forum:rescore')->hourly()->withoutOverlapping();
 
 /*
  * Nightly counter reconciliation.
  *
  * The observers keep the totals correct in normal operation; this is the safety
- * net for a drift caused by a direct SQL edit, an interrupted deploy or a bug in
+ * net for a drift caused by a direct SQL edit, an interrupted deployment or a bug in
  * a future observer. Chunked and idempotent, so it is safe while people post.
  *
  * NOT --dry-run: the point is to repair, and a drift that is only reported is a

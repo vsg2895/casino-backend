@@ -9,7 +9,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Materialises the Hot Threads ranking into `forum_articles.hot_score`.
+ * Materializes the Hot Threads ranking into `forum_articles.hot_score`.
  *
  * ── Why a stored column ─────────────────────────────────────────────────────
  *

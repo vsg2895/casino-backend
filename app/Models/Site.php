@@ -152,6 +152,43 @@ class Site extends Model
         return rtrim((string) $base, '/');
     }
 
+    /**
+     * Where this site's pages actually live, for THIS environment.
+     *
+     * Deliberately NOT {@see self::frontendBaseUrl()}. That one is always the
+     * live https domain because it is baked into delivered email — a verify
+     * link pointing at localhost reaches nobody. This one is for links an
+     * operator clicks from the admin panel, where the opposite is true: a
+     * production URL handed to someone working locally opens the live site
+     * instead of the change they just made.
+     *
+     * Derived from `revalidation_url`, which is already exactly this origin —
+     * it is where the backend POSTs to revalidate this site's Next.js app, so
+     * it is localhost in development and the real domain in production, per
+     * site, with no new configuration to keep in step. The path is stripped;
+     * only the scheme, host and port are kept.
+     *
+     * Falls back to the live domain when no revalidation URL is set, which is
+     * the safer of the two mistakes: a link that opens the real site is wrong
+     * but harmless, a link to a port nobody is serving is just broken.
+     */
+    public function adminLinkBaseUrl(): string
+    {
+        $configured = trim((string) $this->revalidation_url);
+
+        if ($configured !== '') {
+            $parts = parse_url($configured);
+
+            if (isset($parts['scheme'], $parts['host'])) {
+                $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+
+                return $parts['scheme'] . '://' . $parts['host'] . $port;
+            }
+        }
+
+        return $this->frontendBaseUrl();
+    }
+
     public function emailTemplate(): HasOne
     {
         return $this->hasOne(SiteEmailTemplate::class);

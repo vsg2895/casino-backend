@@ -42,7 +42,51 @@ class AdminCatalogTest extends TestCase
 
     // ── Special offers ────────────────────────────────────────────────────
 
-    public function test_special_offer_slug_regenerates_when_the_title_changes(): void
+    /**
+     * The admin's "copy public link" must point at THIS environment.
+     *
+     * It was hardcoded to https://{domain}, so an operator working locally
+     * copied a production URL and opened the live site instead of the change
+     * they had just made. Derived from `revalidation_url` now — the origin the
+     * backend already knows this site's Next.js app is served from.
+     */
+    public function test_the_admin_link_origin_follows_the_environment(): void
+    {
+        $site = \App\Models\Site::factory()->create([
+            'slug'             => 'winpalack',
+            'domain'           => 'winpalack.com',
+            'revalidation_url' => 'http://localhost:3002/api/revalidate',
+        ]);
+
+        // Scheme, host and port only — the revalidation path is stripped.
+        $this->assertSame('http://localhost:3002', $site->adminLinkBaseUrl());
+
+        // Email links are a SEPARATE concern and must stay on the live domain:
+        // a verify link pointing at localhost reaches nobody.
+        $this->assertSame('https://winpalack.com', $site->frontendBaseUrl());
+    }
+
+    public function test_the_admin_link_origin_falls_back_to_the_live_domain(): void
+    {
+        $site = \App\Models\Site::factory()->create([
+            'domain'           => 'example-site.com',
+            'revalidation_url' => null,
+        ]);
+
+        // A link that opens the real site is wrong but harmless; a link to a
+        // port nobody serves is simply broken. Fall back to the safer one.
+        $this->assertSame('https://example-site.com', $site->adminLinkBaseUrl());
+    }
+
+    /**
+     * Renaming an offer must NOT move its public URL.
+     *
+     * This asserted the opposite until a rename was found to silently relocate
+     * a live page with no redirect behind it — the offer kept working, and
+     * every link and indexed result pointing at the old address started
+     * 404ing with nothing to show for it.
+     */
+    public function test_special_offer_slug_survives_a_rename(): void
     {
         $this->actingAsAdmin();
         $casino = Casino::factory()->create();
@@ -56,16 +100,37 @@ class AdminCatalogTest extends TestCase
         $original = SpecialOffer::find($id)->slug;
         $this->assertMatchesRegularExpression('/^welcome_offer_[a-z]{6}$/', $original);
 
-        // Rename → slug regenerates from the new title (with a fresh letters suffix).
+        // Rename → the title changes, the address does not.
         $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Summer Bonus'])
             ->assertOk()->assertJsonPath('data.title', 'Summer Bonus');
-        $renamed = SpecialOffer::find($id)->slug;
-        $this->assertMatchesRegularExpression('/^summer_bonus_[a-z]{6}$/', $renamed);
-        $this->assertNotSame($original, $renamed, 'slug must change when the title changes');
+        $this->assertSame($original, SpecialOffer::find($id)->slug, 'a rename must never move the URL');
 
-        // A non-title update leaves the slug untouched.
+        // Any other update leaves it alone too.
         $this->putJson("/api/v1/admin/special-offers/{$id}", ['rating' => 4])->assertOk();
-        $this->assertSame($renamed, SpecialOffer::find($id)->slug, 'slug stays stable when title is unchanged');
+        $this->assertSame($original, SpecialOffer::find($id)->slug);
+    }
+
+    /**
+     * The deliberate escape hatch: clearing the slug regenerates it from the
+     * current title. That is how an editor moves a URL on purpose — paired
+     * with a redirect from the old path — as opposed to by accident.
+     */
+    public function test_clearing_the_slug_regenerates_it_from_the_current_title(): void
+    {
+        $this->actingAsAdmin();
+        $casino = Casino::factory()->create();
+
+        $offer = SpecialOffer::create([
+            'casino_id' => $casino->id,
+            'title'     => 'Welcome Offer',
+            'rating'    => 5,
+        ]);
+
+        $offer->update(['title' => 'Summer Bonus']);
+        $offer->slug = '';
+        $offer->save();
+
+        $this->assertMatchesRegularExpression('/^summer_bonus_[a-z]{6}$/', $offer->fresh()->slug);
     }
 
     public function test_special_offer_slug_is_name_based_with_a_unique_suffix(): void

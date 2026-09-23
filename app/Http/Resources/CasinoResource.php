@@ -57,9 +57,16 @@ class CasinoResource extends JsonResource
         ];
     }
 
-    /** Live public origin for shareable links — always https://{domain}. */
+    /**
+     * Origin for the admin's "copy public link", for THIS environment.
+     *
+     * Was hardcoded to https://{domain}, which meant an operator working
+     * locally copied a production URL and opened the live site rather than
+     * the change they had just made. See Site::adminLinkBaseUrl() for why this
+     * is not the same value email links use.
+     */
     private static function publicBaseUrl(Site $site): string
     {
-        return 'https://' . $site->domain;
+        return $site->adminLinkBaseUrl();
     }
 }
