@@ -14,7 +14,6 @@ use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 
 /**
@@ -28,18 +27,60 @@ use Illuminate\Http\Response;
  */
 class ArticleController extends Controller
 {
-    public function index(Request $request, Site $site): AnonymousResourceCollection
+    /** Rows per page in the admin listing. */
+    private const int PER_PAGE = 15;
+
+    /** @var list<string> The columns a listing row needs — never the body. */
+    private const array LIST_COLUMNS = [
+        'id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path',
+        'published_at', 'position', 'active', 'featured', 'noindex', 'type',
+        'news_category_id', 'source_name', 'source_url', 'updated_at',
+    ];
+
+    /**
+     * PAGINATED, because this list grows on its own.
+     *
+     * News is ingested from feeds on a schedule, so the table gains rows
+     * whether or not anybody is editing. Unpaginated it was already 120 rows
+     * and 111 KB for one site, and at the collector's rate that becomes
+     * megabytes within a year — a page nobody can open to fix the problem.
+     *
+     * `published_count` is in the meta rather than counted in the browser
+     * because the browser now only ever sees one page. The banner above the
+     * table reports how many entries are LIVE, and the guides section's
+     * three-article threshold is read from the same number; counting the
+     * current page would make both wrong the moment a second page existed.
+     */
+    public function index(Request $request, Site $site): JsonResponse
     {
-        return ArticleResource::collection(
-            Article::query()
-                ->with('newsCategory')
-                ->where('site_id', $site->id)
-                ->ofType($this->type($request))
-                ->orderBy('position')
-                ->orderByDesc('published_at')
-                ->orderByDesc('id')
-                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'position', 'active', 'featured', 'noindex', 'type', 'news_category_id', 'source_name', 'source_url', 'updated_at']),
-        );
+        $filters = $request->validate([
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+
+        $type = $this->type($request);
+
+        $base = fn () => Article::query()->where('site_id', $site->id)->ofType($type);
+
+        $articles = $base()
+            ->with('newsCategory')
+            ->orderBy('position')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id')
+            ->paginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
+
+        return response()->json([
+            'data' => ArticleResource::collection($articles->items())->resolve(),
+            'meta' => [
+                'current_page' => $articles->currentPage(),
+                'last_page'    => $articles->lastPage(),
+                'total'        => $articles->total(),
+                'per_page'     => $articles->perPage(),
+                // Both conditions, matching Article::scopeVisible() — the same
+                // rule the public API applies, so the banner cannot claim an
+                // entry is live that a visitor cannot reach.
+                'published_count' => $base()->visible()->count(),
+            ],
+        ]);
     }
 
     public function show(Request $request, Site $site, Article $article): JsonResponse

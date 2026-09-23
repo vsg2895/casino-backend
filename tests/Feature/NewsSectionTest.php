@@ -206,6 +206,68 @@ class NewsSectionTest extends TestCase
         $this->assertSame([], $this->feed());
     }
 
+    /**
+     * The admin listing is PAGINATED.
+     *
+     * News is ingested on a schedule, so this table grows whether or not
+     * anybody is editing — one site was already 120 rows and 111 KB in a single
+     * response before this.
+     */
+    public function test_the_admin_list_is_paginated_at_fifteen(): void
+    {
+        for ($i = 1; $i <= 18; $i++) {
+            $this->article(Article::TYPE_NEWS, "Post {$i}", now()->subDays($i));
+        }
+
+        $this->actingAsAdmin();
+
+        $first = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news")->assertOk();
+
+        $this->assertCount(15, $first->json('data'));
+        $this->assertSame(18, $first->json('meta.total'));
+        $this->assertSame(2, $first->json('meta.last_page'));
+        $this->assertSame(15, $first->json('meta.per_page'));
+
+        $second = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news&page=2")->assertOk();
+
+        $this->assertCount(3, $second->json('data'));
+
+        // No row appears on both pages — an off-by-one in the ordering is the
+        // failure that looks like duplicated content rather than a broken pager.
+        $this->assertSame(
+            [],
+            array_intersect(array_column($first->json('data'), 'id'), array_column($second->json('data'), 'id')),
+        );
+    }
+
+    /**
+     * `published_count` counts the WHOLE section, not the page in hand.
+     *
+     * The banner above the table reports how many entries are live, and the
+     * guides threshold reads the same number. Counting the current page would
+     * understate both the moment a second page existed.
+     */
+    public function test_the_published_count_spans_every_page(): void
+    {
+        // 16 live, plus a draft and a hidden one that must not be counted.
+        for ($i = 1; $i <= 16; $i++) {
+            $this->article(Article::TYPE_NEWS, "Live {$i}", now()->subDays($i));
+        }
+        // A real draft: the helper substitutes a date for null, so the column
+        // is cleared explicitly.
+        $this->article(Article::TYPE_NEWS, 'A draft')->update(['published_at' => null]);
+        $this->article(Article::TYPE_NEWS, 'Hidden', now()->subDay())->update(['active' => false]);
+
+        $this->actingAsAdmin();
+
+        $res = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news")->assertOk();
+
+        $this->assertCount(15, $res->json('data'), 'still one page of rows');
+        $this->assertSame(18, $res->json('meta.total'));
+        // Both conditions, matching Article::scopeVisible().
+        $this->assertSame(16, $res->json('meta.published_count'));
+    }
+
     public function test_the_admin_list_shows_drafts_but_only_of_the_requested_type(): void
     {
         $this->article(Article::TYPE_NEWS, 'News draft', null);
