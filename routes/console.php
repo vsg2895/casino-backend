@@ -57,6 +57,24 @@ Schedule::command('promotions:dispatch-verification')
 // risk than an overlapping tick.
 //Schedule::command('mailgun:dispatch-receivers')->hourly();
 
+// Collect news facts from the configured RSS feeds.
+//
+// CONFIG-GUARDED, and off by default: ingestion starts when an operator sets
+// NEWS_SCRAPE_SCHEDULED=true, never because a deploy shipped the code. Hourly
+// because the feeds publish a handful of items a day between them and a finer
+// tick would re-read a document that cannot have changed.
+//
+// Deliberately no withoutOverlapping(): the run only reads feeds and writes
+// drafts, and the duplicate guard is the (site_id, slug) unique index in the
+// database rather than a cache lock. A stranded mutex would silently mute this
+// command for a day, which is a worse failure than an overlapping tick.
+//
+// `news:rewrite` is NOT scheduled. It spends money per article, so it stays a
+// deliberate command an operator runs after reading what was collected.
+if (config('news.scheduled')) {
+    Schedule::command('news:scrape')->hourly();
+}
+
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();

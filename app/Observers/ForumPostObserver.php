@@ -190,6 +190,14 @@ class ForumPostObserver
      */
     private function adjustAuthored(ForumPost $post, int $delta): void
     {
+        // An editorial reply has no member to tally. Returning early rather
+        // than relying on whereKey(null) matching nothing: the member counts
+        // drive pre-moderation and link permissions, and a staff post must not
+        // silently contribute to either.
+        if ($post->forum_user_id === null) {
+            return;
+        }
+
         ForumUser::query()
             ->whereKey($post->forum_user_id)
             ->update([
@@ -221,6 +229,13 @@ class ForumPostObserver
             // The member's accepted-post tally — what pre-moderation and link
             // permission both read. `posts_count` is every post they ever wrote
             // and only moves on create/destroy.
+            //
+            // Skipped entirely for an editorial reply: it belongs to no member,
+            // and a trust level earned by staff posting would be meaningless.
+            if ($post->forum_user_id === null) {
+                return;
+            }
+
             ForumUser::query()
                 ->whereKey($post->forum_user_id)
                 ->update([

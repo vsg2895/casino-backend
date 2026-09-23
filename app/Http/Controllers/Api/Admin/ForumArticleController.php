@@ -6,6 +6,8 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Forum\ForumArticleResource;
+use App\Http\Resources\Forum\ForumPostResource;
+use App\Services\Forum\ForumPostService;
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\ForumArticle;
 use App\Models\ForumModerationLog;
@@ -67,7 +69,7 @@ class ForumArticleController extends Controller
 
         return response()->json([
             'data' => collect($articles->items())->map(fn (ForumArticle $a): array => [
-                ...(new ForumArticleResource($a))->resolve(),
+                ...(new ForumArticleResource($a))->withRealAuthor()->resolve(),
                 'status'     => $a->status,
                 'created_at' => $a->created_at?->toISOString(),
             ])->all(),
@@ -86,7 +88,7 @@ class ForumArticleController extends Controller
 
         return response()->json([
             'data' => [
-                ...(new ForumArticleResource($forumArticle->load(['category:id,name,slug', 'author:id,name'])))->withBody()->resolve(),
+                ...(new ForumArticleResource($forumArticle->load(['category:id,name,slug', 'author:id,name'])))->withBody()->withRealAuthor()->resolve(),
                 'status' => $forumArticle->status,
             ],
         ]);
@@ -106,7 +108,7 @@ class ForumArticleController extends Controller
 
         $this->refresh($site);
 
-        return response()->json(['data' => (new ForumArticleResource($article))->withBody()->resolve()], Response::HTTP_CREATED);
+        return response()->json(['data' => (new ForumArticleResource($article))->withBody()->withRealAuthor()->resolve()], Response::HTTP_CREATED);
     }
 
     public function update(Request $request, Site $site, ForumArticle $forumArticle): JsonResponse
@@ -117,7 +119,7 @@ class ForumArticleController extends Controller
 
         $this->refresh($site);
 
-        return response()->json(['data' => (new ForumArticleResource($forumArticle))->withBody()->resolve()]);
+        return response()->json(['data' => (new ForumArticleResource($forumArticle))->withBody()->withRealAuthor()->resolve()]);
     }
 
     /**
@@ -133,6 +135,65 @@ class ForumArticleController extends Controller
      * is a bulk UPDATE plus a recount, which is faster and leaves a window where
      * the numbers are wrong.
      */
+    /**
+     * Reply to a discussion as the editorial team.
+     *
+     * The post is stored against the authenticated admin's real `users` row —
+     * taken from the token, never from the body — and published approved. It
+     * renders publicly under the site's team name; nothing writes that name to
+     * the database.
+     *
+     * This is the ONLY way a staff reply is created. Members continue to post
+     * through the public endpoint exactly as before, and nothing here touches
+     * that path.
+     */
+    public function storePost(Request $request, Site $site, ForumArticle $forumArticle, ForumPostService $posts): JsonResponse
+    {
+        $this->assertOwns($site, $forumArticle);
+
+        $data = $request->validate([
+            'body'      => ['required', 'string', 'max:20000'],
+            // A reply to a reply. The service refuses a third level.
+            'parent_id' => ['nullable', 'integer'],
+        ]);
+
+        $admin = $request->user();
+
+        abort_if($admin === null, Response::HTTP_UNAUTHORIZED);
+
+        $post = $posts->createAsTeam($forumArticle, $admin, $data);
+
+        $this->refresh($site);
+
+        return response()->json(
+            ['data' => (new ForumPostResource($post->load('site')))->resolve()],
+            Response::HTTP_CREATED,
+        );
+    }
+
+    /**
+     * Edit a staff reply.
+     *
+     * Restricted to posts the team wrote. A member's words are theirs: the
+     * moderation queue can approve, reject or remove one, but nothing in this
+     * application may rewrite it and leave it attributed to them.
+     */
+    public function updatePost(Request $request, Site $site, ForumArticle $forumArticle, ForumPost $forumPost, ForumPostService $posts): JsonResponse
+    {
+        $this->assertOwns($site, $forumArticle);
+
+        abort_if($forumPost->forum_article_id !== $forumArticle->id, Response::HTTP_NOT_FOUND);
+        abort_unless($forumPost->isStaffAuthored(), Response::HTTP_FORBIDDEN, 'Only the editorial team\'s own replies can be edited here.');
+
+        $data = $request->validate(['body' => ['required', 'string', 'max:20000']]);
+
+        $post = $posts->updateBody($forumPost, $data['body']);
+
+        $this->refresh($site);
+
+        return response()->json(['data' => (new ForumPostResource($post->load('site')))->resolve()]);
+    }
+
     public function destroy(Request $request, Site $site, ForumArticle $forumArticle): JsonResponse
     {
         $this->assertOwns($site, $forumArticle);

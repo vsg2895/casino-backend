@@ -38,7 +38,7 @@ class ArticleController extends Controller
                 ->orderBy('position')
                 ->orderByDesc('published_at')
                 ->orderByDesc('id')
-                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'position', 'active', 'featured', 'noindex', 'type', 'news_category_id', 'updated_at']),
+                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'position', 'active', 'featured', 'noindex', 'type', 'news_category_id', 'source_name', 'source_url', 'updated_at']),
         );
     }
 

@@ -46,6 +46,7 @@ class ForumPost extends Model
         'parent_id',
         'depth',
         'forum_user_id',
+        'user_id',
         'body',
         'status',
     ];
@@ -69,6 +70,25 @@ class ForumPost extends Model
         // constraint exists to catch, so nothing is left to trust.
         static::saving(function (self $post): void {
             $post->depth = $post->parent_id === null ? self::DEPTH_POST : self::DEPTH_COMMENT;
+
+            /*
+             * EXACTLY ONE AUTHOR. A post belongs either to a registered member
+             * or to the editorial team, never to both and never to neither.
+             *
+             * Enforced here rather than as a CHECK constraint because the test
+             * suite runs on SQLite and the application on MySQL — a constraint
+             * that exists on only one of them is worse than a rule that runs on
+             * both. Without it, a post with neither author renders as nobody
+             * and a post with both would be a contradiction nothing resolves.
+             */
+            $member = $post->forum_user_id !== null;
+            $staff  = $post->user_id !== null;
+
+            if ($member === $staff) {
+                throw new \LogicException(
+                    'A forum post needs exactly one author: forum_user_id for a member, user_id for the team.',
+                );
+            }
         });
     }
 
@@ -82,9 +102,28 @@ class ForumPost extends Model
         return $this->belongsTo(ForumArticle::class, 'forum_article_id');
     }
 
+    /**
+     * The MEMBER who wrote it. Null on an editorial reply.
+     *
+     * Kept as `author` rather than renamed: every existing caller, resource and
+     * eager-load in the application already asks for it by this name, and the
+     * member case is still the overwhelming majority of posts.
+     */
     public function author(): BelongsTo
     {
         return $this->belongsTo(ForumUser::class, 'forum_user_id');
+    }
+
+    /** The ADMIN who wrote it, when the editorial team did. Null otherwise. */
+    public function staffAuthor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /** Written by the editorial team rather than by a registered member. */
+    public function isStaffAuthored(): bool
+    {
+        return $this->user_id !== null;
     }
 
     public function parent(): BelongsTo

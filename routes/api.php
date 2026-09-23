@@ -281,6 +281,18 @@ Route::prefix('v1')->group(function () {
         Route::put('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'update']);
         Route::delete('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'destroy']);
 
+        /*
+         * Editorial replies. Nested under the discussion because a reply has no
+         * meaning without one, and the article's ownership check is what scopes
+         * them to the site.
+         *
+         * Members never reach these: they post through the public
+         * `forum/articles/{slug}/posts` endpoint behind `auth:forum`, which is
+         * unchanged.
+         */
+        Route::post('sites/{site}/forum-articles/{forumArticle}/posts', [ForumArticleController::class, 'storePost']);
+        Route::put('sites/{site}/forum-articles/{forumArticle}/posts/{forumPost}', [ForumArticleController::class, 'updatePost']);
+
         // Visitor reviews (moderation). Literal segments before any parameter
         // route, or `reviews/{casinoReview}` would swallow them as ids.
         Route::get('reviews/count', [AdminCasinoReviewController::class, 'count']);

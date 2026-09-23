@@ -14,6 +14,25 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Anthropic
+    |--------------------------------------------------------------------------
+    |
+    | Used in EXACTLY ONE place: `news:rewrite`, which turns scraped facts into
+    | this site's own editorial. Nothing else in the application calls it.
+    |
+    | No fallback value. A missing key stops that command with an explanation
+    | rather than letting it run and report "0 rewritten", which reads like
+    | "nothing to do" and would hide the misconfiguration indefinitely.
+    |
+    | The key is sent as a request header and is never logged, echoed in a
+    | command's output, or included in an exception message.
+    */
+    'anthropic' => [
+        'key' => env('ANTHROPIC_API_KEY'),
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

@@ -41,6 +41,11 @@ class Article extends Model
     protected $fillable = [
         'site_id',
         'type',
+        // Where an ingested item came from. All three are null on anything
+        // written by hand, which is every article that predates ingestion.
+        'source_ref',
+        'source_name',
+        'source_url',
         'news_category_id',
         'title',
         'slug',
@@ -159,6 +164,18 @@ class Article extends Model
     public function scopeVisible(Builder $query): Builder
     {
         return $query->published()->where('active', true);
+    }
+
+    /** Ingested from a feed rather than written in the admin. */
+    public function scopeFromASource(Builder $query): Builder
+    {
+        return $query->whereNotNull('source_ref');
+    }
+
+    /** True when this item came from a feed. */
+    public function isIngested(): bool
+    {
+        return $this->source_ref !== null;
     }
 
     /** The editor's picks — what the home page promotes. */

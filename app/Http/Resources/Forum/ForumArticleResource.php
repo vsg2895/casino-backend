@@ -19,11 +19,61 @@ class ForumArticleResource extends JsonResource
      */
     private bool $withBody = false;
 
+    /**
+     * Whether to name the admin who actually wrote it.
+     *
+     * OFF by default, so every public surface gets the team label without
+     * having to remember to ask for it — including any added later. The admin
+     * panel opts in, because an editor looking at the list needs to know who
+     * wrote which thread.
+     */
+    private bool $withRealAuthor = false;
+
     public function withBody(): self
     {
         $this->withBody = true;
 
         return $this;
+    }
+
+    /** Admin panel only — see {@see self::$withRealAuthor}. */
+    public function withRealAuthor(): self
+    {
+        $this->withRealAuthor = true;
+
+        return $this;
+    }
+
+    /**
+     * What the public sees instead of the admin's personal name.
+     *
+     * ── Why no role check ───────────────────────────────────────────────────
+     *
+     * `forum_articles.user_id` is a foreign key to `users`, the ADMIN table.
+     * Members live in `forum_users` and reach the forum only through
+     * `forum_posts.forum_user_id`. So an article author is staff by
+     * construction — there is no row a member could ever occupy here, and a
+     * role lookup would be asking a question the schema has already answered.
+     *
+     * It also fails in the safe direction. A role check would publish an
+     * admin's personal name the moment somebody created an account without
+     * assigning a role, which is precisely the leak this exists to prevent.
+     *
+     * Member-authored replies are untouched: they render through
+     * ForumPostResource from `forum_users.display_name`, and nothing here can
+     * reach them.
+     *
+     * ── Why the site's own name ─────────────────────────────────────────────
+     *
+     * Derived, not hardcoded: the same admin writes for six domains, and
+     * "Winpalack Team" on another brand's forum would be wrong. The public
+     * request already has its site bound by VerifySiteAccess, so this costs no
+     * query; the relation is the fallback for anything resolved outside a
+     * site-scoped request.
+     */
+    private function teamName(): string
+    {
+        return \App\Support\Forum\ForumTeamName::for($this->resource->site);
     }
 
     /** @return array<string, mixed> */
@@ -48,7 +98,7 @@ class ForumArticleResource extends JsonResource
                 'slug' => $this->category->slug,
             ]),
             'author'      => $this->whenLoaded('author', fn (): ?array => $this->author === null ? null : [
-                'name' => $this->author->name,
+                'name' => $this->withRealAuthor ? $this->author->name : $this->teamName(),
             ]),
         ];
     }

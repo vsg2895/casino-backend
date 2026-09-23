@@ -225,13 +225,18 @@ class ForumController extends Controller
             ->orderByDesc('id')
             ->limit(self::LATEST_LIMIT)
             ->with(['author:id,display_name,slug', 'article:id,title,slug,forum_category_id', 'article.category:id,slug'])
+            ->select(['id', 'site_id', 'forum_user_id', 'user_id', 'forum_article_id', 'body', 'created_at'])
             ->get()
             ->map(fn (ForumPost $p): array => [
                 'id'         => (int) $p->id,
                 // A one-line teaser, not the post. The tab links through.
                 'excerpt'    => \Illuminate\Support\Str::limit($p->body, 140),
                 'created_at' => $p->created_at?->toISOString(),
-                'author'     => $p->author?->display_name,
+                // A staff reply has no member row, so it publishes under the
+                // site's team name — the same name its discussion opener does.
+                'author'     => $p->isStaffAuthored()
+                    ? \App\Support\Forum\ForumTeamName::for($site)
+                    : $p->author?->display_name,
                 'article'    => $p->article === null ? null : [
                     'title'    => $p->article->title,
                     'slug'     => $p->article->slug,

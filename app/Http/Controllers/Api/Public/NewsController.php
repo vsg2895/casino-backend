@@ -41,6 +41,9 @@ class NewsController extends Controller
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'type', 'news_category_id', 'title', 'slug', 'excerpt', 'read_minutes',
         'hero_image_path', 'published_at', 'position', 'active', 'featured', 'updated_at',
+        // Credited on the detail page. Carried on listing rows too so a card
+        // can show its provenance without a second request.
+        'source_name', 'source_url',
     ];
 
     public function index(Request $request): JsonResponse

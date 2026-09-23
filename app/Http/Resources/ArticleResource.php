@@ -24,6 +24,12 @@ class ArticleResource extends JsonResource
             'id'      => $this->id,
             'site_id' => $this->site_id,
             'type'  => $this->type,
+            // Provenance. Null on anything written by hand, which is how both
+            // the admin and the public page tell the two apart. `source_ref`
+            // is internal and deliberately NOT exposed — it is a dedup key,
+            // not information a reader or an editor needs.
+            'source_name' => $this->source_name,
+            'source_url'  => $this->source_url,
             // Null when the body is empty — the card shows nothing rather than
             // claiming "0 min read".
             'read_minutes' => $this->read_minutes,

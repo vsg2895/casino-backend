@@ -7,6 +7,7 @@ namespace App\Services\Forum;
 use App\Models\ForumArticle;
 use App\Models\ForumPost;
 use App\Models\ForumUser;
+use App\Models\User;
 use App\Support\Forum\ForumContent;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -27,6 +28,82 @@ class ForumPostService
      *
      * @throws ValidationException|HttpException
      */
+    /**
+     * A reply written by the editorial team.
+     *
+     * Separate from {@see self::create()} rather than folded into it with a
+     * nullable author, because almost nothing the member path does applies
+     * here. There is no trust level to read, so no pre-moderation decision to
+     * make — staff posts are published approved. There is no posting permission
+     * to check beyond the thread being open, and no IP to record, because this
+     * arrives from an authenticated admin session rather than from the public
+     * internet. Merging the two would have meant a method whose every step was
+     * wrapped in "unless this is staff".
+     *
+     * What it DOES share is the body sanitiser, the parent resolution and the
+     * lock check — the rules that are about the thread rather than the author.
+     */
+    public function createAsTeam(ForumArticle $article, User $staff, array $data): ForumPost
+    {
+        if ($article->locked) {
+            throw ValidationException::withMessages([
+                'body' => 'This discussion is locked.',
+            ]);
+        }
+
+        $parent = $this->resolveParent($article, $data['parent_id'] ?? null);
+        $body = ForumContent::post((string) $data['body']);
+
+        if ($body === '') {
+            throw ValidationException::withMessages([
+                'body' => 'Write something before posting.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($article, $staff, $parent, $body): ForumPost {
+            $post = new ForumPost([
+                'site_id'          => $article->site_id,
+                'forum_article_id' => $article->id,
+                'parent_id'        => $parent?->id,
+                // The real admin, exactly as forum_articles records one. The
+                // team name is applied when it is rendered, never stored.
+                'user_id'          => $staff->id,
+                'forum_user_id'    => null,
+                'body'             => $body,
+                'status'           => ForumPost::STATUS_APPROVED,
+            ]);
+
+            $post->approved_at = now();
+            $post->save();
+
+            return $post;
+        });
+    }
+
+    /**
+     * Edit an existing reply's body.
+     *
+     * Used by the admin panel for staff replies. `edited_at` is stamped so the
+     * public page can show that a post was changed after it was published —
+     * silently rewriting published text is what the field exists to prevent.
+     */
+    public function updateBody(ForumPost $post, string $body): ForumPost
+    {
+        $clean = ForumContent::post($body);
+
+        if ($clean === '') {
+            throw ValidationException::withMessages([
+                'body' => 'Write something before saving.',
+            ]);
+        }
+
+        $post->body = $clean;
+        $post->edited_at = now();
+        $post->save();
+
+        return $post;
+    }
+
     public function create(
         ForumArticle $article,
         ForumUser $author,

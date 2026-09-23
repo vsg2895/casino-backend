@@ -114,7 +114,12 @@ class ForumIndexService
             // relation would reintroduce the per-row query this avoids.
             $category->last_post_article_title = $articles[$category->last_post_article_id] ?? null;
             $category->last_post_article_slug = $slugs[$category->last_post_article_id] ?? null;
-            $category->last_post_author_name = $authors[$category->last_post_user_id] ?? null;
+            // `last_post_user_id` is a MEMBER id and is null when the newest
+            // post is an editorial reply, so the lookup misses by design. The
+            // team name is the honest answer there rather than a blank byline.
+            $category->last_post_author_name = $category->last_post_user_id === null
+                ? ($category->last_post_id === null ? null : \App\Support\Forum\ForumTeamName::for())
+                : ($authors[$category->last_post_user_id] ?? null);
         }
     }
 
