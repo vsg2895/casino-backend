@@ -47,9 +47,6 @@ class UniOneTemplateService
     /** The site whose promotion template UniOne sends. */
     public const string SITE_SLUG = 'viglinksi';
 
-    /** Substitution carrying the greeting name — "Dear {{greeting_name}},". */
-    public const string NAME_VAR = 'greeting_name';
-
     /**
      * Substitution carrying the receiver's own address.
      *
@@ -61,19 +58,14 @@ class UniOneTemplateService
      */
     public const string EMAIL_VAR = 'recipient_email';
 
-    /** Greeting for a receiver with no name — what the preview already shows. */
-    public const string NAME_FALLBACK = 'there';
-
     /**
-     * Stand-ins rendered into the shared copy, then swapped for substitution
-     * placeholders.
+     * Stand-in rendered into the shared copy, then swapped for the substitution
+     * placeholder.
      *
      * Deliberately plain: no HTML-special characters (Blade would escape them),
      * no whitespace (the newline flattening would touch them), and nothing an
      * editor could plausibly type into the template by hand.
      */
-    private const string NAME_SENTINEL = 'UNIONEGREETINGNAMESENTINEL';
-
     private const string EMAIL_SENTINEL = 'unione-recipient@sentinel.invalid';
 
     public function __construct(private readonly PromotionEmailService $promotions) {}
@@ -106,7 +98,10 @@ class UniOneTemplateService
         return [
             'site'    => self::SITE_SLUG,
             'subject' => $this->subjectFor(),
-            'html'    => $this->renderFor('preview@example.com', 'there'),
+            // No name: the promotion blade omits the greeting line entirely
+            // when EmailGreeting::line() returns '', so the preview shows
+            // exactly what a receiver gets.
+            'html'    => $this->renderFor('preview@example.com', null),
         ];
     }
 
@@ -155,16 +150,17 @@ class UniOneTemplateService
      * `<html><body>` and a complete `<!DOCTYPE html>` document ended up nested
      * inside another one, with UniOne's footer appended after our `</html>`.
      *
-     * Nothing about the mail actually varies per recipient except the greeting
-     * name, so that is the only thing that stays a substitution. The body is
-     * now a single well-formed document, which is what UniOne expects and what
-     * every client can parse.
+     * Nothing about the mail varies per recipient at all now: the greeting was
+     * the only per-recipient part, and it is no longer rendered (the imported
+     * list carries addresses without names, so it only ever produced "Dear
+     * there,"). The body is a single well-formed document, which is what
+     * UniOne expects and what every client can parse.
      *
      * @return array{html: string, plaintext: string}
      */
     public function sharedBody(): array
     {
-        $html = $this->renderFor(self::EMAIL_SENTINEL, self::NAME_SENTINEL);
+        $html = $this->renderFor(self::EMAIL_SENTINEL, null);
 
         return [
             'html'      => $this->withPlaceholders($html),
@@ -185,10 +181,16 @@ class UniOneTemplateService
      */
     public function substitutionsFor(string $email, ?string $name): array
     {
-        $name = trim((string) $name);
+        // $name is accepted and ignored: the receiver list is imported from a
+        // file of addresses with no names, so the greeting had no name to use
+        // and every message went out addressed "Dear there,". The greeting is
+        // no longer rendered at all — see sharedBody() — so there is nothing
+        // for a name to substitute into. The parameter stays on the signature
+        // because both callers pass one, and because re-introducing a greeting
+        // should be a change here rather than at every call site.
+        unset($name);
 
         return [
-            self::NAME_VAR  => $name === '' ? self::NAME_FALLBACK : $name,
             self::EMAIL_VAR => $email,
         ];
     }
@@ -197,8 +199,8 @@ class UniOneTemplateService
     private function withPlaceholders(string $text): string
     {
         return str_replace(
-            [self::NAME_SENTINEL, self::EMAIL_SENTINEL],
-            ['{{' . self::NAME_VAR . '}}', '{{' . self::EMAIL_VAR . '}}'],
+            self::EMAIL_SENTINEL,
+            '{{' . self::EMAIL_VAR . '}}',
             $text,
         );
     }

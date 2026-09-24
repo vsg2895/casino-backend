@@ -520,10 +520,14 @@ class UniOneIntegrationTest extends TestCase
             return ($body['template_engine'] ?? null) === 'simple'
                 // ONE well-formed document for the whole chunk...
                 && str_starts_with($html, '<!DOCTYPE html>')
-                && str_contains($html, 'Dear {{greeting_name}},')
+                // ...carrying NO greeting: the receiver list is imported from a
+                // file of addresses with no names, so the line only ever
+                // rendered "Dear there," and is no longer produced at all.
+                && ! str_contains($html, 'Dear ')
+                && ! str_contains($html, 'greeting_name')
                 && ! str_contains($html, 'unione-placeholder')
-                // ...and the greeting is the only thing carried per recipient.
-                && ($subs['greeting_name'] ?? null) === 'Tamar'
+                // Nothing about the mail varies per recipient now.
+                && ! isset($subs['greeting_name'])
                 && ! isset($subs['body_html']);
         });
     }
@@ -553,7 +557,7 @@ class UniOneIntegrationTest extends TestCase
             return ($body['body']['html'] ?? null) === $expected['html']
                 && ($body['body']['plaintext'] ?? null) === $expected['plaintext']
                 && ($body['template_engine'] ?? null) === 'simple'
-                && ($body['recipients'][0]['substitutions']['greeting_name'] ?? null) === 'there'
+                && ! isset($body['recipients'][0]['substitutions']['greeting_name'])
                 && ($body['subject'] ?? null) === $subject;
         });
     }
