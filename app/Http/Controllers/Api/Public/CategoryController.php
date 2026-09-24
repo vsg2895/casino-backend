@@ -25,6 +25,20 @@ class CategoryController extends Controller
      */
     private const PER_PAGE = 6;
 
+    /**
+     * Ceiling for a caller-supplied `per_page`.
+     *
+     * The size is a REQUEST parameter, not a constant, because one surface
+     * needed a different page size from the rest: winpalack's home page shows
+     * 10 per page while every other listing on every other site still shows
+     * PER_PAGE. Changing the constant would have moved all six sites at once.
+     *
+     * Capped because the value reaches a paginate() and is part of a cache key:
+     * an unbounded value is both an unbounded query and unbounded cache churn
+     * from a public, unauthenticated endpoint.
+     */
+    private const MAX_PER_PAGE = 24;
+
     public function index(): JsonResponse
     {
         /** @var Site $site */
@@ -86,20 +100,42 @@ class CategoryController extends Controller
         return $slug === '' ? null : mb_substr($slug, 0, 120);
     }
 
+    /**
+     * Page size for this request: the caller's `per_page`, clamped.
+     *
+     * Absent or unparseable falls back to PER_PAGE, so every existing caller —
+     * five sites and this site's own other listings — keeps the size it has
+     * without sending anything new.
+     */
+    private function perPageScope(): int
+    {
+        $requested = request()->integer('per_page', 0);
+
+        if ($requested < 1) {
+            return self::PER_PAGE;
+        }
+
+        return min($requested, self::MAX_PER_PAGE);
+    }
+
     public function show(string $site, string $slug): JsonResponse
     {
         /** @var Site $site */
         $site = app('current_site');
         $page = max(1, request()->integer('page', 1));
+        $perPage = $this->perPageScope();
         // The category list is nested inside the country filter — see index().
         $country = $this->countryScope();
 
         $data = SiteCache::remember(
             $site->id,
             ['categories', 'casinos'],
-            'categories:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page . ':country:' . ($country ?? 'all'),
+            // per_page is part of the key: two callers asking for different
+            // page sizes must not be served each other's slice.
+            'categories:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page
+                . ':per:' . $perPage . ':country:' . ($country ?? 'all'),
             3600,
-            function () use ($site, $slug, $page, $country) {
+            function () use ($site, $slug, $page, $perPage, $country) {
                 $category = Category::where('slug', $slug)->firstOrFail();
 
                 $paginator = $category->casinos()
@@ -120,7 +156,7 @@ class CategoryController extends Controller
                         'pivot.position',
                         'pivot.featured',
                     ])
-                    ->paginate(self::PER_PAGE, ['*'], 'page', $page);
+                    ->paginate($perPage, ['*'], 'page', $page);
 
                 // `featuredSpecialOffer` is visibility-gated here for the same
                 // reason it is in Public\CasinoController: switching an offer off
