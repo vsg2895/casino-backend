@@ -268,25 +268,38 @@ class ForumPublicApiTest extends TestCase
         $this->assertStringContainsString('moderator', (string) $res->json('data.message'));
     }
 
-    public function test_a_trusted_member_publishes_immediately(): void
+    /**
+     * The rule that replaced "a trusted member publishes immediately".
+     *
+     * There is no trust level that skips review any more: a member with a long
+     * accepted history is held exactly like one who registered a minute ago.
+     */
+    public function test_even_a_long_standing_member_is_held_for_review(): void
     {
         $this->member->forceFill(['approved_posts_count' => 10])->save();
 
         $res = $this->reply(['body' => 'a trusted reply', 'website' => ''], $this->token())->assertCreated();
 
-        $this->assertFalse($res->json('data.pending'));
-        $this->assertNotNull($res->json('data.post.id'));
+        $this->assertTrue($res->json('data.pending'));
+        // A held post is never returned rendered — it is not public yet.
+        $this->assertNull($res->json('data.post'));
+        $this->assertSame(
+            ForumPost::STATUS_PENDING,
+            ForumPost::query()->latest('id')->first()->status,
+        );
     }
 
-    public function test_a_link_from_an_untrusted_member_is_held_even_past_pre_moderation(): void
+    public function test_a_post_containing_a_link_is_held_like_any_other(): void
     {
-        // Past the pre-moderation threshold (3) but below the link one (5).
-        $this->member->forceFill(['approved_posts_count' => 4])->save();
+        // Formerly this exercised the link threshold specifically. Links are no
+        // longer a separate rule — everything is held — so what matters now is
+        // that a link cannot reach the forum unreviewed by ANY route.
+        $this->member->forceFill(['approved_posts_count' => 10])->save();
 
         $res = $this->reply(['body' => 'check https://spam.test out', 'website' => ''], $this->token())->assertCreated();
 
         $this->assertTrue($res->json('data.pending'));
-        $this->assertStringContainsString('links', (string) $res->json('data.message'));
+        $this->assertStringContainsString('every post', (string) $res->json('data.message'));
     }
 
     public function test_a_post_is_stored_as_plain_text_with_every_tag_stripped(): void

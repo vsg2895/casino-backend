@@ -44,6 +44,9 @@ class ForumController extends Controller
 
     private const int HOT_LIMIT = 10;
 
+    /** Ceiling for the account page's discussion picker — a <select>, not a feed. */
+    private const int DISCUSSION_PICKER_LIMIT = 200;
+
     /** Listing columns — never the body. */
     private const array ARTICLE_LIST_COLUMNS = [
         'id', 'site_id', 'forum_category_id', 'user_id', 'title', 'slug', 'excerpt',
@@ -214,6 +217,51 @@ class ForumController extends Controller
         foreach ($posts as $post) {
             $post->setRelation('comments', $comments->get($post->id, collect()));
         }
+    }
+
+    /**
+     * Every discussion a member may post into, flat and grouped by board.
+     *
+     * Exists for one screen: the account page's "which discussion?" picker.
+     * Deliberately thin — id, title, slug and the board it sits in — because a
+     * picker needs nothing else and this is a public, unauthenticated read.
+     *
+     * LOCKED discussions are excluded. Offering one in the picker would let a
+     * member write a post that `assertMayPost()` then refuses, which reads as
+     * a broken form rather than a closed thread.
+     */
+    public function discussions(Request $request, string $site): JsonResponse
+    {
+        $current = $this->site();
+
+        $rows = SiteCache::remember(
+            $current->id,
+            ['forum'],
+            'forum:discussions:site:' . $current->id,
+            600,
+            fn (): array => ForumArticle::query()
+                ->where('site_id', $current->id)
+                ->visible()
+                ->where('locked', false)
+                ->orderByDesc('last_post_at')
+                ->orderByDesc('id')
+                ->with(['category:id,name,slug'])
+                ->select(['id', 'title', 'slug', 'forum_category_id', 'last_post_at'])
+                ->limit(self::DISCUSSION_PICKER_LIMIT)
+                ->get()
+                ->map(fn (ForumArticle $a): array => [
+                    'id'    => (int) $a->id,
+                    'title' => (string) $a->title,
+                    'slug'  => (string) $a->slug,
+                    'board' => $a->category === null ? null : [
+                        'name' => (string) $a->category->name,
+                        'slug' => (string) $a->category->slug,
+                    ],
+                ])
+                ->all(),
+        );
+
+        return response()->json(['data' => $rows]);
     }
 
     /** Newest approved posts across the whole forum. */

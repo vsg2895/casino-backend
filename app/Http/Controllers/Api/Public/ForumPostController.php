@@ -14,14 +14,19 @@ use App\Models\ForumReport;
 use App\Models\ForumUser;
 use App\Models\Site;
 use App\Services\Forum\ForumPostService;
+use App\Support\Forum\ForumContent;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
 /** Writes from the public forum: posting, and reporting. */
 class ForumPostController extends Controller
 {
+    /** Most recent posts shown on a member's own account page. */
+    private const int MINE_LIMIT = 50;
+
     public function __construct(private readonly ForumPostService $posts) {}
 
     /**
@@ -67,16 +72,111 @@ class ForumPostController extends Controller
         return response()->json([
             'data' => [
                 'pending' => $pending,
+                // One message, because there is now one rule: every post is
+                // reviewed. The old pair explained WHICH trust check had held
+                // the post, and both of those are gone.
                 'message' => $pending
-                    ? ($member->isPreModerated()
-                        ? 'Thanks — your first few posts are checked by a moderator before they appear.'
-                        : 'Thanks — posts with links are checked by a moderator before they appear.')
+                    ? 'Thanks — a moderator reviews every post before it appears.'
                     : null,
                 'post'    => $pending
                     ? null
                     : (new ForumPostResource($post->load('author:id,display_name,slug,avatar_path,approved_posts_count')))->resolve(),
             ],
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * The signed-in member's own posts, every status included.
+     *
+     * Deliberately NOT the public `approved()` scope: this is the one place a
+     * member is entitled to see their own pending and rejected posts, because
+     * it is the page where they wait for a decision and fix what they wrote.
+     */
+    public function mine(Request $request): JsonResponse
+    {
+        $current = $this->site();
+
+        /** @var ForumUser $member */
+        $member = $request->user();
+
+        $posts = ForumPost::query()
+            ->where('site_id', $current->id)
+            ->where('forum_user_id', $member->id)
+            ->orderByDesc('id')
+            ->with(['article:id,title,slug,forum_category_id', 'article.category:id,name,slug'])
+            ->limit(self::MINE_LIMIT)
+            ->get();
+
+        return response()->json([
+            'data' => $posts->map(fn (ForumPost $p): array => [
+                'id'         => (int) $p->id,
+                'body'       => (string) $p->body,
+                'status'     => (string) $p->status,
+                // The single fact the account page's UI hangs off: a published
+                // post is a matter of record and is no longer editable.
+                'editable'   => $p->status === ForumPost::STATUS_PENDING,
+                'created_at' => $p->created_at?->toISOString(),
+                'edited_at'  => $p->edited_at?->toISOString(),
+                'article'    => $p->article === null ? null : [
+                    'title'    => (string) $p->article->title,
+                    'slug'     => (string) $p->article->slug,
+                    'category' => $p->article->category?->slug,
+                    'board'    => $p->article->category?->name,
+                ],
+            ])->all(),
+        ]);
+    }
+
+    /**
+     * Edit one of your own posts — only while it is still awaiting review.
+     *
+     * Three separate conditions, each a different answer:
+     *   - not yours            404, so the endpoint cannot be used to probe ids
+     *   - yours, not pending   422 with a reason a person can act on
+     *   - yours and pending    saved
+     *
+     * Once a moderator has published a post it is part of a conversation other
+     * people have already read, so it stops being the author's to rewrite.
+     */
+    public function update(Request $request, string $site, int $post): JsonResponse
+    {
+        $current = $this->site();
+
+        /** @var ForumUser $member */
+        $member = $request->user();
+
+        $model = ForumPost::query()
+            ->where('site_id', $current->id)
+            ->where('forum_user_id', $member->id)
+            ->whereKey($post)
+            ->first();
+
+        abort_if($model === null, Response::HTTP_NOT_FOUND);
+
+        if ($model->status !== ForumPost::STATUS_PENDING) {
+            throw ValidationException::withMessages([
+                'body' => 'This post has already been reviewed and can no longer be edited.',
+            ]);
+        }
+
+        $data = $request->validate([
+            // THE canonical limit, shared with StoreForumPostRequest — an edit
+            // must not be able to exceed what a post was allowed to be.
+            'body'    => ['required', 'string', 'min:2', 'max:' . ForumContent::MAX_POST_LENGTH],
+            'website' => ['present', 'max:0'],
+        ]);
+
+        $this->posts->updateBody($model, $data['body']);
+
+        return response()->json([
+            'data' => [
+                'id'        => (int) $model->id,
+                'body'      => (string) $model->body,
+                'status'    => (string) $model->status,
+                'editable'  => true,
+                'edited_at' => $model->edited_at?->toISOString(),
+            ],
+        ]);
     }
 
     /**

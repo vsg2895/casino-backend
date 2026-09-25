@@ -260,6 +260,12 @@ Route::prefix('v1')->group(function () {
         Route::get('forum-posts', [ForumModerationController::class, 'index']);
 
         // Literal before parameterised, per the platform convention.
+        /*
+         * Member-authored posts, every status. A literal segment declared
+         * before `forum-members/{forumUser}` so it is not read as an id.
+         */
+        Route::get('forum-member-posts', [ForumModerationController::class, 'memberIndex']);
+
         Route::get('forum-members', [ForumModerationController::class, 'members']);
         Route::get('forum-members/{forumUser}/posts', [ForumModerationController::class, 'memberPosts']);
         Route::patch('forum-members/{forumUser}/role', [ForumModerationController::class, 'memberRole']);
@@ -636,6 +642,20 @@ Route::prefix('v1')->group(function () {
         Route::middleware('auth:forum')->group(function (): void {
             Route::get('forum/members/me', [ForumAuthController::class, 'me']);
             Route::post('forum/members/logout', [ForumAuthController::class, 'logout']);
+
+            /*
+             * The member's own account page.
+             *
+             * `me/posts` returns EVERY status, which the public reads never do
+             * — it is the one view where somebody may see their own pending
+             * and rejected posts. Both are literal segments under
+             * `forum/members/...`, already declared before `forum/{categorySlug}`
+             * above, so neither is swallowed as a board slug.
+             */
+            Route::get('forum/members/me/posts', [ForumPostController::class, 'mine']);
+            Route::patch('forum/posts/{post}', [ForumPostController::class, 'update'])
+                ->middleware('throttle:forum-post')
+                ->whereNumber('post');
         });
 
         // --- writes ---------------------------------------------------------
@@ -645,6 +665,13 @@ Route::prefix('v1')->group(function () {
 
         Route::post('forum/articles/{slug}/posts', [ForumPostController::class, 'store'])
             ->middleware(['auth:forum', 'throttle:forum-post']);
+
+        /*
+         * Open discussions, flat, for the "which discussion?" picker on the
+         * member account page. A literal segment, so it is declared with the
+         * other literals and before `forum/{categorySlug}`.
+         */
+        Route::get('forum-discussions', [PublicForumController::class, 'discussions']);
 
         // --- reads, parameterised last --------------------------------------
         Route::get('forum/{categorySlug}', [PublicForumController::class, 'category']);

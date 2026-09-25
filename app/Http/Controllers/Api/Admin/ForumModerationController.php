@@ -111,6 +111,96 @@ class ForumModerationController extends Controller
         ]);
     }
 
+    /**
+     * Everything the SITE'S MEMBERS have written, across every status.
+     *
+     * Deliberately a separate endpoint from index(), not a flag on it, because
+     * the two answer different questions. index() is a triage QUEUE: it
+     * defaults to pending and exists to be emptied. This is a member-content
+     * BROWSE: it defaults to every status, so a moderator can find what
+     * somebody posted last week and see what happened to it.
+     *
+     * `whereNotNull('forum_user_id')` is the whole definition of "member
+     * post". A staff reply carries `user_id` instead (see the
+     * allow_staff_authored_forum_posts migration), so the same table holds
+     * both and only this predicate separates them — which is why it belongs in
+     * one place rather than being re-expressed per caller.
+     */
+    public function memberIndex(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'site_id'   => ['nullable', 'integer', 'exists:sites,id'],
+            'status'    => ['nullable', 'string', 'in:' . implode(',', ForumPost::STATUSES)],
+            'member_id' => ['nullable', 'integer', 'exists:forum_users,id'],
+            'search'    => ['nullable', 'string', 'max:120'],
+            'per_page'  => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+
+        $posts = ForumPost::query()
+            ->whereNotNull('forum_user_id')
+            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
+            // No default: absent means EVERY status, unlike the queue.
+            ->when($data['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->when($data['member_id'] ?? null, fn ($q, $id) => $q->where('forum_user_id', $id))
+            ->when($data['search'] ?? null, fn ($q, $term) => $q->where('body', 'like', '%' . $term . '%'))
+            ->with([
+                'author:id,display_name,slug,email,status,posts_count,approved_posts_count,created_at',
+                'article:id,title,slug,forum_category_id',
+                'article.category:id,name,slug',
+            ])
+            ->withCount(['reports as open_reports_count' => fn ($q) => $q->open()])
+            ->orderByDesc('id')
+            ->paginate($data['per_page'] ?? self::PER_PAGE);
+
+        // Totals for the status tabs, scoped by the SAME site filter but not by
+        // the status one — a tab that counted only its own selection would read
+        // 0 for every tab the moderator is not currently looking at.
+        $counts = ForumPost::query()
+            ->whereNotNull('forum_user_id')
+            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
+            ->selectRaw('status, COUNT(*) AS total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        return response()->json([
+            'data' => collect($posts->items())->map(fn (ForumPost $p): array => [
+                'id'         => (int) $p->id,
+                'body'       => $p->body,
+                'status'     => $p->status,
+                'is_comment' => $p->depth === ForumPost::DEPTH_COMMENT,
+                'created_at' => $p->created_at?->toISOString(),
+                'edited_at'  => $p->edited_at?->toISOString(),
+                'approved_at' => $p->approved_at?->toISOString(),
+                'deleted_at' => $p->deleted_at?->toISOString(),
+                'open_reports_count' => (int) $p->open_reports_count,
+                'site_id'    => (int) $p->site_id,
+                'author'     => $p->author === null ? null : [
+                    'id'           => (int) $p->author->id,
+                    'display_name' => $p->author->display_name,
+                    'email'        => $p->author->email,
+                    'status'       => $p->author->status,
+                    'posts_count'  => (int) $p->author->posts_count,
+                    'approved_posts_count' => (int) $p->author->approved_posts_count,
+                    'registered_at' => $p->author->created_at?->toISOString(),
+                ],
+                'article'    => $p->article === null ? null : [
+                    'id'       => (int) $p->article->id,
+                    'title'    => $p->article->title,
+                    'slug'     => $p->article->slug,
+                    'category' => $p->article->category?->slug,
+                    'board'    => $p->article->category?->name,
+                ],
+            ])->all(),
+            'meta' => [
+                'current_page' => $posts->currentPage(),
+                'last_page'    => $posts->lastPage(),
+                'total'        => $posts->total(),
+                'per_page'     => $posts->perPage(),
+                'by_status'    => $counts->map(static fn ($v): int => (int) $v),
+            ],
+        ]);
+    }
+
     /** Badge counts for the sidebar and the screen's tabs. */
     public function counts(Request $request): JsonResponse
     {

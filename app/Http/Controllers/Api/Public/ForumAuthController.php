@@ -277,19 +277,46 @@ class ForumAuthController extends Controller
     }
 
     /**
-     * The confirmation link.
+     * The confirmation link that goes in the email.
+     *
+     * Points at the SITE, not at the API.
+     *
+     * It used to be the signed API URL itself, which was broken two ways at
+     * once: that route is POST-only (mail clients prefetch GET links, which
+     * would confirm addresses nobody clicked), so clicking it produced a raw
+     * "The GET method is not supported" JSON error; and the host was the
+     * shared API domain, so a winpalack member was sent to a page branded as
+     * another site entirely.
+     *
+     * So the member goes to this site's own /register/verify page, which POSTs
+     * back to the signed route server-side — exactly the shape the newsletter
+     * double opt-in already uses (see SiteVerifyEmail::verifyUrl). It sits
+     * under /register because confirming the address is the last step of
+     * registering, not a forum page.
+     *
+     * `expires` and `signature` are carried across UNTOUCHED and in the order
+     * Laravel emitted them: the signature is computed over the API URL and its
+     * query string, so the page must rebuild that URL byte-for-byte or
+     * hasValidSignature() rejects it. Nothing may be added, removed or
+     * reordered here.
      *
      * The route lives under the public `sites/{site}` prefix, so the site slug
      * is a required segment — signing the URL without it throws rather than
-     * producing a broken link, which is how this was caught.
+     * producing a broken link, which is how the original bug was caught.
      */
     private function verificationLink(ForumUser $member, Site $site): string
     {
-        return URL::temporarySignedRoute(
+        $signed = URL::temporarySignedRoute(
             'forum.verify',
             now()->addDays(7),
             ['site' => $site->slug, 'member' => $member->id],
         );
+
+        $query = (string) parse_url($signed, PHP_URL_QUERY);
+
+        return $site->frontendBaseUrl()
+            . '/register/verify?member=' . $member->id
+            . ($query === '' ? '' : '&' . $query);
     }
 
     private function packedIp(Request $request): ?string

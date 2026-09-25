@@ -47,6 +47,14 @@ class ForumUser extends Authenticatable
      * How many ACCEPTED posts a member needs before their writing publishes
      * without review. Configurable per the spec; three is the default.
      */
+    /**
+     * Retained but no longer consulted: every member post is moderated, so
+     * there is no threshold to cross. Left in place because removing a public
+     * constant is a breaking change for no benefit, and it documents what the
+     * setting used to mean.
+     *
+     * @deprecated Every member post is pre-moderated — see isPreModerated().
+     */
     public const string PREMODERATION_KEY = 'forum.premoderation_threshold';
 
     /** Accepted posts required before a member may post links. */
@@ -155,9 +163,21 @@ class ForumUser extends Authenticatable
      * not the bar, having three posts accepted is. A spammer whose every post is
      * rejected must never graduate on volume alone.
      */
+    /**
+     * Whether this member's posts are held for a moderator — always true.
+     *
+     * It used to be `approved_posts_count < threshold`, so a member who had
+     * had 3 posts accepted then posted straight to the live forum. Every
+     * member post is now reviewed before it appears, so this is true for
+     * everybody, forever. See ForumPostService::decideStatus for the why.
+     *
+     * Kept as a method because it is what the API reports to the site and what
+     * the site renders its "reviewed before it appears" notice from — the
+     * notice must stay accurate, and now it is accurate for every member.
+     */
     public function isPreModerated(): bool
     {
-        return $this->approved_posts_count < (int) config(self::PREMODERATION_KEY, 3);
+        return true;
     }
 
     /** Whether this member is trusted enough to include links. */

@@ -227,16 +227,30 @@ class ForumPostService
      * link, and it is the one signal that is both cheap and highly predictive.
      * A trusted member's link publishes immediately.
      */
+    /**
+     * The status a new member post is created with: ALWAYS pending.
+     *
+     * Every member post is published by a moderator, with no exception and no
+     * way to earn past it. It previously depended on two trust checks — a
+     * member cleared pre-moderation after 3 accepted posts, and could include
+     * links after 5 — so a member who got that far posted straight to the live
+     * forum. That is the behaviour the operator removed: on a gambling
+     * affiliate site an account can be aged cheaply, and an established
+     * account posting an unreviewed link is exactly the outcome worth paying a
+     * little friction to prevent.
+     *
+     * Kept as a method rather than inlined so status is still decided in ONE
+     * place — if a rule ever comes back, this is where it goes, and nothing
+     * else has to change.
+     *
+     * `$author` and `$body` are unused now and deliberately retained: they are
+     * the inputs any future rule would need, and dropping them would mean
+     * changing the call site to bring them back.
+     */
     private function decideStatus(ForumUser $author, string $body): string
     {
-        if ($author->isPreModerated()) {
-            return ForumPost::STATUS_PENDING;
-        }
+        unset($author, $body);
 
-        if (! $author->mayPostLinks() && ForumContent::containsLink($body)) {
-            return ForumPost::STATUS_PENDING;
-        }
-
-        return ForumPost::STATUS_APPROVED;
+        return ForumPost::STATUS_PENDING;
     }
 }
