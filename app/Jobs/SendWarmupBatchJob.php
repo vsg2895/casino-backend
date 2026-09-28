@@ -8,7 +8,9 @@ use App\Models\Site;
 use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
 use App\Models\WarmupSendRecipient;
+use App\Services\Mail\RateLimitDecision;
 use App\Services\Mail\WarmupMailResolver;
+use App\Services\Mail\WarmupRateLimiter;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -45,6 +47,22 @@ use Throwable;
  * Both happen in the same buffered flush, so the two can only ever disagree by
  * whatever was in flight when a worker was killed.
  *
+ * RATE LIMITED. Every send waits for a slot in the shared rolling window first
+ * (see {@see WarmupRateLimiter}) — at most `warmup.rate_limit.max_emails` in any
+ * `window_seconds` stretch, counted across all workers, not per batch and not
+ * per process. The limiter sits immediately before the send attempt and nowhere
+ * else, so retries, failures and every other path through this loop are bound by
+ * it too.
+ *
+ * THAT MAKES A BATCH SLOW, which changes one thing about this job's lifetime: 100
+ * addresses at ten a minute need roughly ten minutes, and `send_timeout` is 240
+ * seconds. A job killed by its timeout is retried, and this job's retry re-sends
+ * its WHOLE payload — so the limit would have bought deliverability at the price
+ * of duplicate mail. Instead the loop watches a time budget derived from that
+ * timeout and, when it is nearly spent, re-queues the addresses it has not
+ * reached as another batch of the same run. Same class, same queue, same run id;
+ * no new retry mechanism, and no address is attempted twice.
+ *
  * Runs on the LOW queue, like the fan-out that dispatched it.
  */
 class SendWarmupBatchJob implements ShouldQueue
@@ -64,6 +82,16 @@ class SendWarmupBatchJob implements ShouldQueue
     /** Fallback when config is unavailable. */
     private const int HISTORY_FLUSH_SIZE = 25;
 
+    /**
+     * Seconds held back from the time budget, on top of one rate-limit window.
+     *
+     * The budget is tested BEFORE a send, and that send may then wait up to a
+     * whole window for its slot; this covers the final history flush and the
+     * re-queue after it, so an invocation that decides to continue still returns
+     * before the queue kills it.
+     */
+    private const int BUDGET_MARGIN_SECONDS = 20;
+
     /** Sending is sequential and network-bound; must stay below `retry_after`. */
     public int $timeout;
 
@@ -78,7 +106,7 @@ class SendWarmupBatchJob implements ShouldQueue
         $this->timeout = (int) config('warmup.send_timeout', 240);
     }
 
-    public function handle(WarmupMailResolver $resolver): void
+    public function handle(WarmupMailResolver $resolver, WarmupRateLimiter $limiter): void
     {
         if ($this->emails === []) {
             return;
@@ -128,11 +156,65 @@ class SendWarmupBatchJob implements ShouldQueue
         $flushSize = $this->flushSize();
         $sent = 0;
         $failed = 0;
+        $attempted = 0;
+
+        // Wall-clock budget for THIS invocation, not for the batch: whatever is
+        // left over when it runs out goes back on the queue. Measured from the
+        // same Carbon clock the limiter uses, so a test that fakes time fakes
+        // both consistently.
+        $budget = $this->timeBudgetSeconds($limiter);
+        $startedAtMs = (int) Carbon::now()->getPreciseTimestamp(3);
+
+        /** @var list<string> $deferred Addresses handed to a follow-up batch. */
+        $deferred = [];
+        $cancelled = false;
 
         /** @var list<array<string, mixed>> $buffer */
         $buffer = [];
 
-        foreach ($this->emails as $email) {
+        foreach ($this->emails as $index => $email) {
+            // Skipped on the first address, so every invocation attempts at least
+            // one send. Without that, a batch could hand itself straight back to
+            // the queue forever and the run would never advance.
+            if ($attempted > 0 && $this->budgetSpent($startedAtMs, $budget)) {
+                // Everything from here on, INCLUDING this address: nothing was
+                // attempted for it and no slot was taken for it.
+                $deferred = array_values(array_slice($this->emails, (int) $index));
+
+                break;
+            }
+
+            // THE RATE LIMIT. Immediately before the attempt and nowhere else, so
+            // there is exactly one place in the send path that can consume a slot
+            // and no path around it. Blocks until the rolling window has room.
+            $decision = $limiter->acquire(
+                function (RateLimitDecision $refused, float $wait): void {
+                    Log::info('[Warmup] Rate limit reached. Waiting '.$this->seconds($wait).' seconds.', [
+                        'warmup_send_id' => $this->warmupSendId,
+                        'rate_window'    => $refused->occupancy(),
+                        'wait_seconds'   => round($wait, 2),
+                    ]);
+                },
+            );
+
+            // Cancellation, checked AFTER the wait rather than before it.
+            //
+            // A rate-limited batch spends nearly all of its time waiting, so the
+            // stop an operator issues almost always arrives DURING a wait — and
+            // the message that wait was for is then the one that must not go out.
+            // The slot the limiter just granted is forfeited, which is the right
+            // way round: a wasted slot costs nothing, one more message after
+            // "stop" is exactly what the button is for.
+            //
+            // The check at the top of this method still covers a batch that was
+            // already cancelled when the worker picked it up.
+            if (WarmupSend::isCancelled($this->warmupSendId)) {
+                $cancelled = true;
+
+                break;
+            }
+
+            $attempted++;
             $email = (string) $email;
             $error = null;
             $mailable = null;
@@ -143,6 +225,15 @@ class SendWarmupBatchJob implements ShouldQueue
 
                 $mailer->to($email)->send($mailable);
                 $sent++;
+
+                // Debug, not info: at the configured rate this is one line every
+                // few seconds for the length of a run, and the batch summary
+                // below is what an operator reads normally. No address here —
+                // the window occupancy is the operational fact, and the failure
+                // warning below is the one place an address is worth naming.
+                Log::debug('[Warmup] Email sent. Rate window: '.$decision->occupancy().'.', [
+                    'warmup_send_id' => $this->warmupSendId,
+                ]);
             } catch (Throwable $e) {
                 // One unroutable address must not abort the rest of the batch.
                 $failed++;
@@ -170,6 +261,8 @@ class SendWarmupBatchJob implements ShouldQueue
             }
         }
 
+        // History before the hand-off, always: the follow-up batch must never be
+        // in flight while the attempts that preceded it are still only in memory.
         $this->flush($buffer);
 
         // Release what the loop no longer needs before the batch returns. A queue
@@ -178,15 +271,134 @@ class SendWarmupBatchJob implements ShouldQueue
         unset($buffer, $ids, $mailer);
         $resolver->flushTemplates();
 
+        if ($cancelled) {
+            Log::info('[Warmup] Chunk stopped: the run was cancelled', [
+                'warmup_send_id' => $this->warmupSendId,
+                'sent'           => $sent,
+                'failed'         => $failed,
+                'not_attempted'  => count($this->emails) - $attempted,
+            ]);
+
+            return;
+        }
+
         // One line per batch, not per recipient.
-        Log::info('Warmup batch processed', [
+        Log::info('[Warmup] Chunk completed.', [
             'warmup_send_id' => $this->warmupSendId,
             'site_id'        => $site->id,
             'template'       => $this->template,
             'sent'           => $sent,
             'failed'         => $failed,
             'total'          => count($this->emails),
+            'attempted'      => $attempted,
+            'deferred'       => count($deferred),
+            'rate_window'    => $limiter->max().' per '.$limiter->windowSeconds().'s',
         ]);
+
+        if ($deferred !== []) {
+            $this->requeue($deferred);
+
+            // Deliberately no completion line here: the run is not finished, it is
+            // continuing in another job.
+            return;
+        }
+
+        $this->logRunCompletion();
+    }
+
+    /**
+     * Hand the addresses this invocation did not reach back to the queue.
+     *
+     * The SAME job class, queue and run id — this is a continuation, not a retry
+     * and not a new mechanism. `queued_count` on the run is untouched, because
+     * these addresses were already counted when the fan-out queued them.
+     *
+     * @param  list<string>  $emails
+     */
+    private function requeue(array $emails): void
+    {
+        self::dispatch($emails, $this->siteId, $this->template, $this->warmupSendId);
+
+        Log::info('[Warmup] Time budget reached; remaining addresses re-queued.', [
+            'warmup_send_id' => $this->warmupSendId,
+            'requeued'       => count($emails),
+        ]);
+    }
+
+    /**
+     * Seconds this invocation may spend before deferring the rest.
+     *
+     * Derived from the job's own timeout rather than configured separately, so the
+     * two can never drift into the combination that kills a batch mid-send.
+     */
+    private function timeBudgetSeconds(WarmupRateLimiter $limiter): float
+    {
+        $reserve = $limiter->windowSeconds() + self::BUDGET_MARGIN_SECONDS;
+
+        // At least one second, so a nonsensically small timeout still sends the
+        // one address every invocation is guaranteed to attempt.
+        return max((float) $this->timeout - $reserve, 1.0);
+    }
+
+    /**
+     * Milliseconds, from the same clock the limiter uses — so faking time in a
+     * test moves the window and the budget together.
+     */
+    private function budgetSpent(int $startedAtMs, float $budget): bool
+    {
+        $elapsed = ((int) Carbon::now()->getPreciseTimestamp(3) - $startedAtMs) / 1000;
+
+        return $elapsed >= $budget;
+    }
+
+    /** A wait rendered for a log line: "6" and "0.4", never "6.0000001". */
+    private function seconds(float $wait): string
+    {
+        return rtrim(rtrim(number_format($wait, 1, '.', ''), '0'), '.') ?: '0';
+    }
+
+    /**
+     * Log once when the LAST batch of a run finishes.
+     *
+     * There is no completion hook to hang this on: the fan-out returns long before
+     * the batches it queued, and the batches do not know about each other. The
+     * count of recorded attempts reaching the run's `queued_count` is the one
+     * signal available, and it is exact — every attempt writes a history row,
+     * delivered or not.
+     *
+     * Best-effort by design. `queued_count` is written when the fan-out finishes,
+     * so a run whose batches all complete before that (an inline `sync` queue, for
+     * instance) simply gets no line, and a retried batch can push the count past
+     * the total — hence `>=`. Never allowed to fail a batch that has sent.
+     */
+    private function logRunCompletion(): void
+    {
+        try {
+            $queued = (int) (WarmupSend::query()->whereKey($this->warmupSendId)->value('queued_count') ?? 0);
+
+            if ($queued <= 0) {
+                return;
+            }
+
+            $recorded = WarmupSendRecipient::query()
+                ->where('warmup_send_id', $this->warmupSendId)
+                ->count();
+
+            if ($recorded < $queued) {
+                return;
+            }
+
+            Log::info('[Warmup] Warmup completed.', [
+                'warmup_send_id' => $this->warmupSendId,
+                'attempts'       => $recorded,
+                'queued'         => $queued,
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('[Warmup] Could not determine whether the run finished', [
+                'warmup_send_id' => $this->warmupSendId,
+                'error'          => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

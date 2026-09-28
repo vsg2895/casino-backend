@@ -190,6 +190,14 @@ Route::prefix('v1')->group(function () {
         // verified subscriber.
         Route::get('verification-promotion', [VerificationPromotionEmailController::class, 'show']);
         Route::put('verification-promotion', [VerificationPromotionEmailController::class, 'update']);
+        /*
+         * Per-site image + link overrides. Literal segments under
+         * `verification-promotion`, declared alongside the others so the
+         * prefix is read consistently.
+         */
+        Route::get('verification-promotion/overrides', [VerificationPromotionEmailController::class, 'overrides']);
+        Route::put('verification-promotion/overrides/{site}', [VerificationPromotionEmailController::class, 'updateOverride']);
+
         Route::post('verification-promotion/preview', [VerificationPromotionEmailController::class, 'preview']);
         Route::post('verification-promotion/test', [VerificationPromotionEmailController::class, 'sendTest']);
 

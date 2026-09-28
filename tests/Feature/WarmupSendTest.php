@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Schema;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\WarmupMailResolver;
+use App\Services\Mail\WarmupRateLimiter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -402,9 +403,11 @@ class WarmupSendTest extends TestCase
             'cancelled_at' => now(),
         ]);
 
-        // A batch already on the queue when the stop was issued.
+        // A batch already on the queue when the stop was issued. The rate limiter
+        // is a second dependency of handle() now; it is never reached here,
+        // because the cancellation check precedes the send loop entirely.
         (new SendWarmupBatchJob(['seed@example.com'], $site->id, EmailTemplateCatalog::TYPE_PROMOTION, $send->id))
-            ->handle(app(WarmupMailResolver::class));
+            ->handle(app(WarmupMailResolver::class), app(WarmupRateLimiter::class));
 
         $this->assertSame(0, WarmupSendRecipient::count(), 'a cancelled run must not send');
         $this->assertNull(WarmupEmail::sole()->last_sent_at, 'and must not start a cooldown');

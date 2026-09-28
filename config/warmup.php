@@ -30,6 +30,41 @@ return [
     */
     'mailer' => 'smtp',
 
+    /*
+    |--------------------------------------------------------------------------
+    | Sending rate — a ROLLING window, not a delay between messages
+    |--------------------------------------------------------------------------
+    |
+    | The ceiling a warmup run may never exceed: at most `max_emails` messages
+    | in ANY `window_seconds` stretch, counted across every worker.
+    |
+    | This is not the same thing as pausing between messages. A fixed delay
+    | spaces sends out but bounds nothing — two workers each waiting six seconds
+    | send twenty a minute between them, and a backlog released after a stall
+    | goes out with no pause at all. A rolling window bounds the stretch itself,
+    | which is what a receiving mail host actually measures.
+    |
+    | Env-overridable because the right number is a property of the mailbox being
+    | warmed and of how far through its schedule it is — an operator setting, not
+    | a code constant. Enforced by App\Services\Mail\WarmupRateLimiter.
+    |
+    | There is deliberately NO value that switches the limit off: zero or a
+    | negative number falls back to the defaults below. The limiter exists to
+    | protect a mailbox's reputation, and a typo in .env must not be able to
+    | disable that quietly.
+    |
+    | RAISING max_emails costs nothing. LOWERING it makes each batch take longer
+    | in wall-clock time, which `send_timeout` below is sized against — read the
+    | note there before changing it.
+    */
+    'rate_limit' => [
+
+        'max_emails' => (int) env('WARMUP_EMAILS_PER_MINUTE', 10),
+
+        'window_seconds' => (int) env('WARMUP_RATE_LIMIT_WINDOW_SECONDS', 60),
+
+    ],
+
     // Addresses per queued send job. Sending is sequential and network-bound,
     // so this is the granularity of failure and retry.
     'send_batch_size' => 100,
@@ -45,9 +80,23 @@ return [
     // a slow fan-out is handed to a second worker and addresses are queued twice.
     'fan_out_timeout' => 900,
 
-    // Seconds a single warmup batch may run. MUST stay below the queue
-    // connection's `retry_after` (config/queue.php), or a slow batch gets handed
-    // to a second worker and the same addresses are mailed twice.
+    /*
+    | Seconds a single warmup batch may run.
+    |
+    | MUST stay below the queue connection's `retry_after` (config/queue.php), or
+    | a slow batch gets handed to a second worker and the same addresses are
+    | mailed twice.
+    |
+    | Since the rate limit above exists, this is no longer a ceiling on how long
+    | a batch of `send_batch_size` addresses takes — at 10 per minute, 100
+    | addresses need roughly ten minutes of wall clock, far past any safe
+    | timeout. The batch job therefore treats this value as a TIME BUDGET: when
+    | the budget is nearly spent it re-queues whatever addresses are left as
+    | another batch of the same run and returns cleanly, instead of being killed
+    | mid-flight and retried — which would re-send everything it had already
+    | delivered. So this number controls how much a single job invocation gets
+    | through, not how much the run gets through.
+    */
     'send_timeout' => 240,
 
     /*

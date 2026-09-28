@@ -9,6 +9,7 @@ use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
+use App\Models\VerificationPromotionOverride;
 use App\Support\EmailGreeting;
 use Illuminate\Support\Carbon;
 
@@ -109,6 +110,70 @@ class PostVerificationPromotionEmailService
      * Every visible brand string comes from config instead — see the class
      * docblock.
      */
+    /**
+     * Swap in this site's own hero image and links, if it has any.
+     *
+     * Applied AFTER render(), for two reasons. It runs on the finished strings,
+     * so a site's link is never put through placeholder substitution and cannot
+     * be mangled by a stray `{{ }}` in a URL. And it is the last word, so the
+     * result is unambiguous: whatever the override sets, wins.
+     *
+     * ── What this may and may not touch ─────────────────────────────────────
+     *
+     * ONLY the hero image and the outbound links. No title, heading, button
+     * LABEL, disclaimer or footer line is reachable from here — the override
+     * model has no column for any of them. That is deliberate and is the whole
+     * requirement: the email keeps its existing copy for every site, and only
+     * where the reader is SENT changes.
+     *
+     * Two links are excluded by design. The unsubscribe URL is minted per
+     * recipient from their own token, so an overridable one would let a site's
+     * setting opt the wrong person out. The contact mailto is pinned to config.
+     * Neither has a column on the override table, so neither can be reached.
+     *
+     * A site with no row, or a row whose fields are blank, returns the rendered
+     * template untouched — which is what keeps every other site rendering
+     * exactly what it rendered before this existed.
+     *
+     * @param  array<string, mixed>  $rendered
+     * @return array<string, mixed>
+     */
+    private function withSiteOverrides(array $rendered, Site $site): array
+    {
+        $row = VerificationPromotionOverride::query()
+            ->where('site_id', $site->id)
+            ->first();
+
+        if ($row === null) {
+            return $rendered;
+        }
+
+        $rendered = array_replace($rendered, $row->overrides());
+
+        // Footer links are re-POINTED, never replaced: each keeps the label the
+        // template gave it and only its href changes. That is what stops this
+        // feature from being able to alter a word of the email.
+        $targets = $row->footerLinkTargets();
+
+        if ($targets !== []) {
+            $links = $rendered['footer_links'] ?? [];
+
+            foreach ($targets as $i => $url) {
+                // Only positions the template actually has. A stale target —
+                // left behind after a footer link was deleted from the global
+                // template — is ignored rather than appended as a link with no
+                // label.
+                if (isset($links[$i]) && is_array($links[$i])) {
+                    $links[$i]['url'] = $url;
+                }
+            }
+
+            $rendered['footer_links'] = $links;
+        }
+
+        return $rendered;
+    }
+
     public function mailFor(
         Site $site,
         VerificationPromotionEmail $template,
@@ -120,7 +185,7 @@ class PostVerificationPromotionEmailService
         $context = $this->context($email, $unsubscribeUrl);
 
         return new PostVerificationPromotionEmail(
-            template: $template->render($context),
+            template: $this->withSiteOverrides($template->render($context), $site),
             // From config, NOT $site — the layout's header, image alt text and
             // footer address line all read these.
             siteName: $context['site_name'],

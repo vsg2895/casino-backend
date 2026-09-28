@@ -9,8 +9,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateVerificationPromotionEmailRequest;
 use App\Http\Resources\VerificationPromotionEmailResource;
+use App\Http\Requests\Admin\UpdateVerificationPromotionOverrideRequest;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
+use App\Models\VerificationPromotionOverride;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
@@ -93,6 +95,101 @@ class VerificationPromotionEmailController extends Controller
 
         return response()->json([
             'html' => $this->promotions->previewMail($site, $template)->render(),
+        ]);
+    }
+
+    /**
+     * Per-site image + link overrides, one entry per registered site.
+     *
+     * Returns a row for EVERY site, including sites with nothing set, so the
+     * admin screen can render the full list without inventing placeholders and
+     * without the operator having to create a row before editing one.
+     */
+    public function overrides(): JsonResponse
+    {
+        $rows = VerificationPromotionOverride::query()
+            ->get()
+            ->keyBy('site_id');
+
+        $sites = Site::query()->orderBy('name')->get(['id', 'name', 'slug', 'domain']);
+
+        // The template's own footer links, label-only. The screen renders one
+        // URL input PER default link, captioned with its label, so an operator
+        // can see they are re-pointing "Privacy Policy" and not renaming it.
+        $labels = collect(VerificationPromotionEmail::query()->first()?->footer_links ?? [])
+            ->map(static fn ($l): string => (string) ($l['label'] ?? ''))
+            ->all();
+
+        return response()->json([
+            'footer_link_labels' => $labels,
+            'data' => $sites->map(static function (Site $site) use ($rows): array {
+                /** @var VerificationPromotionOverride|null $row */
+                $row = $rows->get($site->id);
+
+                return [
+                    'site_id'   => (int) $site->id,
+                    'site_name' => $site->name,
+                    'site_slug' => $site->slug,
+                    'domain'    => $site->domain,
+                    // Whether this site currently changes anything at all — the
+                    // screen shows it as a badge, and it is the honest answer to
+                    // "is this site still on the defaults?".
+                    'active'    => $row !== null && $row->overrides() !== [],
+                    'hero_image_url'        => $row?->hero_image_url,
+                    'hero_url'              => $row?->hero_url,
+                    'top_button_url'        => $row?->top_button_url,
+                    'cta_button_url'        => $row?->cta_button_url,
+                    'email_preferences_url' => $row?->email_preferences_url,
+                    'footer_link_urls'      => $row?->footer_link_urls ?? [],
+                ];
+            })->all(),
+        ]);
+    }
+
+    /**
+     * Save one site's overrides.
+     *
+     * An upsert, because the screen edits sites rather than rows: the operator
+     * never creates an override, they fill one in. Clearing every field leaves
+     * a row of nulls, which `overrides()` reads as "nothing set" and the send
+     * path ignores — so clearing the form restores the default without the
+     * operator having to find a delete button.
+     */
+    public function updateOverride(
+        UpdateVerificationPromotionOverrideRequest $request,
+        Site $site,
+    ): JsonResponse {
+        $data = $request->validated();
+
+        /*
+         * Only when the caller actually sent the key.
+         *
+         * Every other field follows validated(), which omits absent keys and
+         * so leaves them untouched. Defaulting this one to [] instead made a
+         * partial update silently wipe the footer targets — inconsistent with
+         * the rest of the payload and a quiet way to lose settings.
+         *
+         * Positional, so gaps are preserved rather than compacted: entry 2
+         * must stay entry 2 even when entry 1 is blank, or clearing one link
+         * would silently re-point the next one.
+         */
+        if ($request->has('footer_link_urls')) {
+            $data['footer_link_urls'] = array_map(
+                static fn ($u): ?string => trim((string) $u) === '' ? null : trim((string) $u),
+                $data['footer_link_urls'] ?? [],
+            );
+        }
+
+        $row = VerificationPromotionOverride::query()->updateOrCreate(
+            ['site_id' => $site->id],
+            $data,
+        );
+
+        return response()->json([
+            'data' => [
+                'site_id' => (int) $site->id,
+                'active'  => $row->overrides() !== [],
+            ],
         ]);
     }
 
