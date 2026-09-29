@@ -11,15 +11,31 @@ use App\Http\Resources\{CasinoCollection, CasinoResource};
 use App\Models\Casino;
 use App\Services\Search\SearchIndexer;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class CasinoController extends Controller
 {
     public function __construct(private readonly SearchIndexer $indexer) {}
 
-    public function index(): CasinoCollection
+    /** Rows per page when the admin asks for none. */
+    private const PER_PAGE = 15;
+
+    /** Ceiling on `?per_page`, so one request cannot ask for the whole table. */
+    private const MAX_PER_PAGE = 100;
+
+    /**
+     * `per_page` is honoured because the admin table offers a rows-per-page
+     * control. It was fixed at 15 and the parameter ignored, which made the
+     * control a lie: picking 50 asked for 50, received 15, and left the
+     * paginator computing page numbers from a size the response never used.
+     */
+    public function index(Request $request): CasinoCollection
     {
+        $perPage = $request->integer('per_page') ?: self::PER_PAGE;
+        $perPage = min(max($perPage, 1), self::MAX_PER_PAGE);
+
         return new CasinoCollection(
-            Casino::with('categories')->latest()->paginate(15)
+            Casino::with('categories')->latest()->paginate($perPage)
         );
     }
 

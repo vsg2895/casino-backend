@@ -42,13 +42,26 @@ class CmsPageController extends Controller
         }
     }
 
+    /** Rows per page when the admin asks for none. */
+    private const PER_PAGE = 50;
+
+    /** Ceiling on `?per_page`, so one request cannot ask for the whole table. */
+    private const MAX_PER_PAGE = 200;
+
+    /**
+     * `per_page` is honoured because the admin table offers a rows-per-page
+     * control. It was fixed at 50 and the parameter ignored, which made that
+     * control a lie: picking 100 asked for 100, received 50, and left the
+     * paginator computing page numbers from a size the response never used.
+     */
     public function index(Request $request): AnonymousResourceCollection
     {
         $this->authorize('viewAny', CmsPage::class);
 
         $siteId = $request->integer('site_id') ?: null;
+        $perPage = min(max($request->integer('per_page') ?: self::PER_PAGE, 1), self::MAX_PER_PAGE);
 
-        return CmsPageResource::collection($this->service->paginate(50, $siteId));
+        return CmsPageResource::collection($this->service->paginate($perPage, $siteId));
     }
 
     public function store(StoreCmsPageRequest $request): JsonResponse

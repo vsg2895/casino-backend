@@ -20,9 +20,26 @@ class SiteController extends Controller
 {
     public function __construct(private readonly CmsPageService $cmsPages) {}
 
+    /**
+     * EVERY site, unpaginated — deliberately.
+     *
+     * This endpoint is not only the Sites screen: it is the site picker behind
+     * roughly thirty admin controls (attachments, templates, schedules, page
+     * and article filters). Paginating it at 15 meant a sixteenth site would
+     * silently vanish from all of them at once — no error, no empty state, just
+     * a domain that could no longer be chosen anywhere in the admin.
+     *
+     * A site is a registered domain and the set is bounded by how many the
+     * operator runs — six today, and adding one is a deliberate act, not
+     * user-generated growth. Sending them all is a handful of rows and removes
+     * a whole class of "where did that site go" bug.
+     *
+     * The response keeps its `data` envelope, so every existing caller reads it
+     * exactly as before; only the pagination meta nobody consumed is gone.
+     */
     public function index(): AnonymousResourceCollection
     {
-        return SiteResource::collection(Site::latest()->paginate(15));
+        return SiteResource::collection(Site::latest()->get());
     }
 
     public function store(StoreSiteRequest $request): SiteRegistrationResource

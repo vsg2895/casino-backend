@@ -28,10 +28,19 @@ use Throwable;
  */
 class EmailScheduleController extends Controller
 {
-    public function index(): AnonymousResourceCollection
+    /** Rows per page when the admin asks for none. */
+    private const PER_PAGE = 50;
+
+    /** Ceiling on `?per_page`, so one request cannot ask for the whole table. */
+    private const MAX_PER_PAGE = 200;
+
+    /** `per_page` is honoured because the admin table offers a rows-per-page control. */
+    public function index(Request $request): AnonymousResourceCollection
     {
+        $perPage = min(max($request->integer('per_page') ?: self::PER_PAGE, 1), self::MAX_PER_PAGE);
+
         return EmailScheduleResource::collection(
-            EmailSchedule::with(['site', 'sendgridKey', 'mailgunKey'])->latest()->paginate(50),
+            EmailSchedule::with(['site', 'sendgridKey', 'mailgunKey'])->latest()->paginate($perPage),
         );
     }
 
