@@ -393,6 +393,11 @@ Route::prefix('v1')->group(function () {
         // Who a run with the current settings would reach — the same query the
         // send itself uses, so the preview can never promise a different number.
         Route::get('warmup-emails/recipients', [WarmupEmailController::class, 'recipients']);
+        // The addresses themselves, in send order — "preview batch" for warmup.
+        // Declared before the line above would also have matched nothing, but it
+        // keeps the pair together; both are literals under the same prefix and
+        // both precede the apiResource, which is what actually matters here.
+        Route::get('warmup-emails/recipients/preview', [WarmupEmailController::class, 'recipientsPreview']);
         // Per-address delivery history: address, site, template, timestamp.
         // Also what makes the cooldown auditable after the fact.
         Route::get('warmup-emails/history', [WarmupEmailController::class, 'history']);

@@ -98,7 +98,10 @@ class SpecialOfferController extends Controller
     private function baseQuery(Site $site)
     {
         return SpecialOffer::query()
-            ->with('casino')
+            // `bonusCategory` because the card's call to action is decided by
+            // the bonus type — see SpecialOfferResource. Eager-loaded so a page
+            // of offers costs one extra query rather than one per row.
+            ->with(['casino', 'bonusCategory'])
             ->whereHas('casino.sites', function ($q) use ($site): void {
                 $q->where('sites.id', $site->id)->where('casino_site.active', true);
             });

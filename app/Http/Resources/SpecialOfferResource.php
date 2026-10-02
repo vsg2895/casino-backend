@@ -18,6 +18,22 @@ class SpecialOfferResource extends JsonResource
             'id'                 => $this->id,
             'casino_id'          => $this->casino_id,
             'bonus_category_id' => $this->bonus_category_id,
+
+            /*
+             * The bonus type's SLUG, not just its id.
+             *
+             * The front end decides which bonuses carry a "Claim" call to
+             * action from the type they are filed under, and an id cannot
+             * express that rule: ids differ between a developer's database and
+             * production, so a hardcoded one would silently pick the wrong
+             * category — or none — on deploy. The slug is generated once and
+             * never regenerated (BonusCategory::getSlugOptions), so it is the
+             * stable name for the type even after an editor renames it.
+             *
+             * Resolved through the relationship rather than a join so an offer
+             * with no type simply returns null.
+             */
+            'bonus_category_slug' => $this->bonusCategory?->slug,
             'casino'             => new CasinoResource($this->whenLoaded('casino')),
             'title'              => $this->title,
             'slug'               => $this->slug,

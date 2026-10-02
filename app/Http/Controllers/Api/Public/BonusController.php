@@ -81,7 +81,7 @@ class BonusController extends Controller
                                 $q->where('sites.id', $site->id)->where('casino_site.active', true);
                             })
                             ->whereHas('casino', fn ($q) => $q->where('casinos.active', true))
-                            ->with('casino')
+                            ->with(['casino', 'bonusCategory'])
                             ->orderBy('sort_order');
 
                         // 0 means "no cap" — the full listing page.

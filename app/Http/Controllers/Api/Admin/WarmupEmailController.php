@@ -25,6 +25,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Collection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -416,6 +417,69 @@ class WarmupEmailController extends Controller
     }
 
     /**
+     * The ACTUAL ADDRESSES a run with these settings would take, in send order.
+     *
+     * The counts endpoint above answers "how many"; this answers "which ones" —
+     * the question an operator actually has before pressing Send, and the same
+     * one the Mailgun receivers screen answers with its "Preview batch" button.
+     *
+     * READ-ONLY, and it changes nothing about sending. It walks the SAME
+     * {@see WarmupRecipientService} stream the fan-out walks, with the same limit
+     * and the same cooldown, so the list shown is the list that would be mailed
+     * and in the same order. Nothing is written: no `last_sent_at`, no history
+     * row, no lock, no job.
+     *
+     * Capped at `PREVIEW_LIMIT` rows. A whole-list run can be tens of thousands
+     * of addresses and the dialog is a sanity check, not an export — `meta`
+     * carries the real totals so the screen can say "showing the first 200 of
+     * 4 812".
+     */
+    public function recipientsPreview(Request $request, WarmupRecipientService $recipients): AnonymousResourceCollection
+    {
+        $limit = $this->clampedCount($request);
+        $cooldown = $this->clampedCooldown($request);
+
+        $eligible = $recipients->eligible($cooldown);
+        // What the run would reach: the requested cap, or everything eligible.
+        $wouldReach = $limit === null ? $eligible : min($eligible, $limit);
+        // What this preview shows: never more than the cap above, never more
+        // than PREVIEW_LIMIT.
+        $show = min($wouldReach, self::PREVIEW_LIMIT);
+
+        /** @var list<WarmupEmail> $rows */
+        $rows = [];
+
+        if ($show > 0) {
+            $recipients->eachChunk(
+                $show,
+                $cooldown,
+                min($show, self::PREVIEW_READ_CHUNK),
+                function (Collection $chunk) use (&$rows): void {
+                    foreach ($chunk as $row) {
+                        $rows[] = $row;
+                    }
+                },
+            );
+        }
+
+        return WarmupEmailResource::collection($rows)->additional([
+            'meta' => [
+                // The same three numbers the counts endpoint reports, so the two
+                // can never disagree on the screen that shows both.
+                'total'          => $recipients->available(),
+                'eligible_count' => $eligible,
+                'would_reach'    => $wouldReach,
+                // What is on screen, and the ceiling that produced it.
+                'preview_count' => count($rows),
+                'preview_limit' => self::PREVIEW_LIMIT,
+                'truncated'     => $wouldReach > count($rows),
+                'cooldown_days' => $cooldown,
+                'count'         => $limit,
+            ],
+        ]);
+    }
+
+    /**
      * Per-address delivery history: which address, from which site, with which
      * template, and when.
      *
@@ -436,6 +500,18 @@ class WarmupEmailController extends Controller
 
         return WarmupSendRecipientResource::collection($query->paginate($perPage));
     }
+
+    /**
+     * Addresses the batch preview will show at most.
+     *
+     * The dialog is a sanity check before pressing Send — "are these the people
+     * I meant" — not a data export, and a whole-list run can be tens of
+     * thousands of rows. The response says when it truncated.
+     */
+    private const int PREVIEW_LIMIT = 200;
+
+    /** Rows per database round-trip while collecting the preview. */
+    private const int PREVIEW_READ_CHUNK = 200;
 
     /** Total matching the current history filters, as a dedicated COUNT. */
     public function historyCount(Request $request): JsonResponse

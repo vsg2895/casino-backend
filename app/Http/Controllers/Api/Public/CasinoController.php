@@ -48,6 +48,10 @@ class CasinoController extends Controller
             'detail',
             'featuredSpecialOffer' => $visibleOnly,
             'specialOffers'        => $visibleOnly,
+            // Both offer relations carry the bonus type, because the resource
+            // reads it to tell the front end which call to action to render.
+            'featuredSpecialOffer.bonusCategory',
+            'specialOffers.bonusCategory',
         ];
     }
 

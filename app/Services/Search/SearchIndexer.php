@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Search;
 
+use App\Models\BonusCategory;
 use App\Models\Casino;
 use App\Models\CasinoReview;
 use App\Models\Category;
@@ -87,11 +88,67 @@ class SearchIndexer
             'section'   => 'special_offers',
             'title'     => (string) $offer->title,
             'subtitle'  => $casino?->name,
-            'body'      => $this->excerpt($offer->description),
+            /*
+             * The BONUS LINE first, then the description.
+             *
+             * `bonuses` is the headline the card actually shows — "100% up to
+             * €2,000", "100 Free Spins for Registration. No Deposit needed" —
+             * and it was the one thing about an offer that could not be
+             * searched: "deposit needed" and "welcome package" both returned
+             * nothing while sitting in plain sight on the cards.
+             *
+             * Ordered before the description because `excerpt()` truncates at
+             * `search.body_limit`, and a long description would otherwise push
+             * the line a visitor is most likely to type out of the index
+             * entirely.
+             */
+            'body'      => $this->excerpt(trim(($offer->bonuses ?? '') . ' ' . (string) $offer->description)),
             'slug'      => (string) $offer->slug,
             'url'       => '/special-offers/' . $offer->slug,
             'image_url' => $offer->image_path ?: $casino?->image_path,
         ], $siteIds));
+
+        // CASCADE. A bonus type is visible on a site only while it still has a
+        // claimable offer there, so publishing or hiding THIS offer can add or
+        // remove the whole heading. Guarded on the column being loaded so an
+        // offer with no type costs no extra query.
+        if ($offer->bonus_category_id !== null) {
+            $bonusCategory = BonusCategory::find($offer->bonus_category_id);
+
+            if ($bonusCategory !== null) {
+                $this->syncBonusCategory($bonusCategory);
+            }
+        }
+    }
+
+    /**
+     * Sync one bonus category — the bonus TYPE, not the offers under it.
+     *
+     * Visibility is DERIVED, like Category's, but from a different chain: a
+     * bonus type is worth suggesting on a site only where that site actually
+     * publishes at least one claimable offer filed under it. The derivation
+     * mirrors {@see \App\Http\Controllers\Api\Public\BonusController} exactly,
+     * including the `sites.bonus_enabled` gate — that endpoint 404s for a site
+     * without the Bonus area, so a suggestion leading there would be a link to
+     * a 404.
+     *
+     * The URL is the offers listing plus the category's anchor. That page
+     * renders every bonus section with `id="bonus-<slug>"`, so it is the one
+     * address that always exists for a category; the home page carries the same
+     * anchors but only for the categories it had room to show.
+     */
+    public function syncBonusCategory(BonusCategory $category): void
+    {
+        $this->write(BonusCategory::class, (int) $category->id, array_map(fn (int $siteId): array => [
+            'site_id'   => $siteId,
+            'section'   => 'bonus_categories',
+            'title'     => (string) $category->name,
+            'subtitle'  => null,
+            'body'      => $this->excerpt($category->description),
+            'slug'      => (string) $category->slug,
+            'url'       => '/special-offers#bonus-' . $category->slug,
+            'image_url' => null,
+        ], $this->bonusCategorySiteIds($category)));
     }
 
     public function syncCategory(Category $category): void
@@ -300,6 +357,48 @@ class SearchIndexer
      *
      * @return list<int>
      */
+    /**
+     * Sites where this bonus type has at least one claimable, visible offer.
+     *
+     * One query, and deliberately the same conditions the public Bonus endpoint
+     * applies — offer active and unexpired, casino active and attached and
+     * active on the site, the site's Bonus area switched on. An inactive bonus
+     * category yields no sites at all, which is what clears its rows.
+     *
+     * @return list<int>
+     */
+    private function bonusCategorySiteIds(BonusCategory $category): array
+    {
+        if (! $category->active) {
+            return [];
+        }
+
+        $today = now()->toDateString();
+
+        return DB::table('special_offers')
+            ->join('casinos', 'casinos.id', '=', 'special_offers.casino_id')
+            ->join('casino_site', 'casino_site.casino_id', '=', 'casinos.id')
+            ->join('sites', 'sites.id', '=', 'casino_site.site_id')
+            ->where('special_offers.bonus_category_id', $category->id)
+            ->where('special_offers.active', true)
+            ->whereNull('special_offers.deleted_at')
+            // `claimable()`, inlined: no end date, or one that has not passed.
+            ->where(static function ($q) use ($today): void {
+                $q->whereNull('special_offers.expires_at')
+                    ->orWhereDate('special_offers.expires_at', '>=', $today);
+            })
+            ->where('casinos.active', true)
+            ->whereNull('casinos.deleted_at')
+            ->where('casino_site.active', true)
+            // The Bonus area is a per-site switch, and its endpoint 404s without
+            // it. Suggesting a bonus type on such a site would link to nothing.
+            ->where('sites.bonus_enabled', true)
+            ->distinct()
+            ->pluck('casino_site.site_id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+    }
+
     private function categorySiteIds(Category $category): array
     {
         return DB::table('casino_category')

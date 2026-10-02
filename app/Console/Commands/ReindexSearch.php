@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\BonusCategory;
 use App\Models\Casino;
 use App\Models\CasinoReview;
 use App\Models\Category;
@@ -38,7 +39,7 @@ class ReindexSearch extends Command
 {
     protected $signature = 'search:reindex
                             {--site= : Limit the report to one site (slug or id); indexing itself is global}
-                            {--section= : Only this section (casinos, special_offers, categories, pages, forum)}
+                            {--section= : Only this section (casinos, special_offers, bonus_categories, categories, pages, forum)}
                             {--chunk=200 : Rows per chunk}
                             {--prune : Also delete rows whose source entity no longer exists}';
 
@@ -71,6 +72,15 @@ class ReindexSearch extends Command
         if ($only('special_offers')) {
             $this->walk('special_offers', SpecialOffer::withTrashed(), $chunk,
                 fn (SpecialOffer $m) => $indexer->syncSpecialOffer($m));
+        }
+
+        if ($only('bonus_categories')) {
+            // After special_offers on purpose: syncSpecialOffer() already
+            // resyncs each offer's bonus category, so this pass is usually a
+            // cheap confirmation — and it is what catches a category whose last
+            // offer was deleted outright rather than hidden.
+            $this->walk('bonus_categories', BonusCategory::query(), $chunk,
+                fn (BonusCategory $m) => $indexer->syncBonusCategory($m));
         }
 
         if ($only('categories')) {
@@ -144,6 +154,7 @@ class ReindexSearch extends Command
             Casino::class       => 'casinos',
             SpecialOffer::class => 'special_offers',
             Category::class     => 'categories',
+            BonusCategory::class => 'bonus_categories',
             CmsPage::class      => 'cms_pages',
             CasinoReview::class => 'casino_reviews',
         ];

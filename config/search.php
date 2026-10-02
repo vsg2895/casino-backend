@@ -9,12 +9,12 @@ declare(strict_types=1);
 |
 | Drives the header overlay's grouped suggestions. Everything is served from
 | the denormalised `search_index` table rather than by UNION-ing the entities,
-| because the five sections scope to a site three different ways — casinos
-| through the `casino_site` pivot, special offers indirectly through their
-| casino's pivot, reviews and pages through their own `site_id`, and categories
-| not at all (they are global rows whose visibility is DERIVED from whether any
-| attached casino is active on the site). One flat, pre-scoped table turns that
-| into a single indexed query per keystroke.
+| because the sections scope to a site three different ways — casinos through
+| the `casino_site` pivot, special offers indirectly through their casino's
+| pivot, reviews and pages through their own `site_id`, and the two category
+| kinds not at all (they are global rows whose visibility is DERIVED from
+| whether anything attached to them is visible on the site). One flat,
+| pre-scoped table turns that into a single indexed query per keystroke.
 |
 */
 
@@ -26,7 +26,7 @@ return [
     | `weight` is a static per-section boost multiplied into the MATCH()
     | relevance score. The spread matters more than the absolute numbers: a
     | casino must outrank a review that merely mentions it, which is why `forum`
-    | is deliberately the lowest of the five. Casinos match mainly on title,
+    | is deliberately the lowest. Casinos match mainly on title,
     | reviews mainly on body, and body matches already score lower — the weight
     | makes that ordering explicit rather than incidental.
     |
@@ -38,9 +38,29 @@ return [
             'weight' => 100,
         ],
         'special_offers' => [
-            'label'  => 'Special Offers',
+            // "Bonuses" rather than "Special Offers": that is the word the one
+            // site with a search overlay uses for them in its nav, its header
+            // menu and its headings, and a pill that disagrees with the rest of
+            // the site reads as a different feature — which is exactly how the
+            // section came to look missing.
+            'label'  => 'Bonuses',
             'weight' => 80,
         ],
+
+        /*
+        | The bonus TYPE — "No Deposit", "Free Spins" — not the offers under it.
+        |
+        | Ranked just under the offers themselves: someone typing "free spins"
+        | usually wants an offer they can claim, and the heading that groups them
+        | is the more useful answer only when it is the thing they named. Sits
+        | above `categories` because a bonus type is a closer match for a bonus
+        | query than a casino category is.
+        */
+        'bonus_categories' => [
+            'label'  => 'Bonus Categories',
+            'weight' => 75,
+        ],
+
         'categories' => [
             'label'  => 'Categories',
             'weight' => 70,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Models\BonusCategory;
 use App\Models\Casino;
 use App\Models\CmsPage;
 use App\Models\CasinoReview;
@@ -18,6 +19,7 @@ use App\Observers\SiteForumFlagObserver;
 use App\Observers\CasinoObserver;
 use App\Observers\Search\CasinoReviewSearchObserver;
 use App\Observers\Search\CasinoSearchObserver;
+use App\Observers\Search\BonusCategorySearchObserver;
 use App\Observers\Search\CategorySearchObserver;
 use App\Observers\Search\CmsPageSearchObserver;
 use App\Observers\Search\SpecialOfferSearchObserver;
@@ -153,6 +155,7 @@ class AppServiceProvider extends ServiceProvider
         Casino::observe(CasinoSearchObserver::class);
         SpecialOffer::observe(SpecialOfferSearchObserver::class);
         Category::observe(CategorySearchObserver::class);
+        BonusCategory::observe(BonusCategorySearchObserver::class);
         CasinoReview::observe(CasinoReviewSearchObserver::class);
         CmsPage::observe(CmsPageSearchObserver::class);
 

@@ -135,6 +135,6 @@ return [
     | loudly: rendering some other brand's template would put the wrong branding
     | in real inboxes, which is worse than not sending.
     */
-    'site_slug' => env('WARMUP_SITE_SLUG', 'idevaffiliation'),
+    'site_slug' => env('WARMUP_SITE_SLUG', 'crogambline'),
 
 ];
