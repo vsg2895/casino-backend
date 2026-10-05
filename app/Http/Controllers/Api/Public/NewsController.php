@@ -35,12 +35,12 @@ class NewsController extends Controller
     private const int FEATURED_LIMIT = 8;
 
     /** How many entries the feed's "Most popular" rail holds. */
-    private const int POPULAR_LIMIT = 5;
+    private const int POPULAR_LIMIT = 8;
 
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'type', 'news_category_id', 'title', 'slug', 'excerpt', 'read_minutes',
-        'hero_image_path', 'published_at', 'position', 'active', 'featured', 'updated_at',
+        'hero_image_path', 'published_at', 'position', 'active', 'featured', 'to_be_most_popular', 'updated_at',
         // Credited on the detail page. Carried on listing rows too so a card
         // can show its provenance without a second request.
         'source_name', 'source_url',
@@ -87,11 +87,20 @@ class NewsController extends Controller
                  * It is the site's standing picks; re-filtering it would leave a
                  * near-empty rail next to a narrow feed, and the whole point of
                  * the rail is to offer a way OUT of a narrow view.
+                 *
+                 * Driven by `to_be_most_popular`, its OWN flag — it used to
+                 * reuse `featured`, which meant promoting a post to the home
+                 * page silently put it in this rail too, and the two surfaces
+                 * could never be curated apart.
+                 *
+                 * Ordered newest first rather than by `position`: the rail is
+                 * "the latest of the picks", so the feed's editorial ordering
+                 * must not reach in and reorder it.
                  */
                 $popular = $base()
-                    ->featured()
+                    ->toBeMostPopular()
                     ->with('newsCategory')
-                    ->inListingOrder()
+                    ->newestFirst()
                     ->limit(self::POPULAR_LIMIT)
                     ->get(self::LIST_COLUMNS);
 

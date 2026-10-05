@@ -56,6 +56,7 @@ class Article extends Model
         'position',
         'active',
         'featured',
+        'to_be_most_popular',
         'meta_title',
         'meta_description',
         'canonical_url',
@@ -70,6 +71,7 @@ class Article extends Model
             'noindex'      => 'boolean',
             'active'       => 'boolean',
             'featured'     => 'boolean',
+            'to_be_most_popular' => 'boolean',
             'read_minutes' => 'integer',
         ];
     }
@@ -182,6 +184,26 @@ class Article extends Model
     public function scopeFeatured(Builder $query): Builder
     {
         return $query->where('featured', true);
+    }
+
+    /** Picked for the news page's "Most Popular" rail. */
+    public function scopeToBeMostPopular(Builder $query): Builder
+    {
+        return $query->where('to_be_most_popular', true);
+    }
+
+    /**
+     * Newest first, and nothing else.
+     *
+     * The rail is explicitly "the latest of the picks", so `position` — which
+     * orders the FEED — must not get a say here. Ordering by it would let an
+     * editor's feed arrangement silently reorder a list whose whole promise is
+     * recency. `id` breaks ties, because an import stamps many rows with one
+     * timestamp.
+     */
+    public function scopeNewestFirst(Builder $query): Builder
+    {
+        return $query->orderByDesc('published_at')->orderByDesc('id');
     }
 
     /** Editorial order first, then newest — the order the listing renders in. */

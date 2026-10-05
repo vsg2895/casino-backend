@@ -581,7 +581,9 @@ class NewsSectionTest extends TestCase
         $payments = $this->category('Payments');
 
         $pick = $this->article(Article::TYPE_NEWS, 'Picked payment story');
-        $pick->update(['featured' => true, 'news_category_id' => $payments->id]);
+        // `to_be_most_popular`, not `featured`: the rail and the home page strip
+        // are separate picks now — see NewsMostPopularTest.
+        $pick->update(['to_be_most_popular' => true, 'news_category_id' => $payments->id]);
         $other = $this->article(Article::TYPE_NEWS, 'Licence story');
         $other->update(['news_category_id' => $licensing->id]);
 

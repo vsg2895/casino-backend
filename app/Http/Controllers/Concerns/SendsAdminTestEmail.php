@@ -37,6 +37,7 @@ use Throwable;
  */
 trait SendsAdminTestEmail
 {
+
     protected function sendAdminTestEmail(Mailable&SenderOverridable $mailable, string $to): JsonResponse
     {
         $mailer = (string) config('mail.admin_test_mailer', 'smtp');

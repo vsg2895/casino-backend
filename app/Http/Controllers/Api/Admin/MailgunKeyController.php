@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\ResolvesTestSubscriber;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendMailgunKeyTestRequest;
 use App\Http\Requests\Admin\StoreMailgunKeyRequest;
@@ -46,6 +47,8 @@ use Throwable;
  */
 class MailgunKeyController extends Controller
 {
+    use ResolvesTestSubscriber;
+
     /**
      * This screen's own connection-test template.
      *
@@ -190,7 +193,7 @@ class MailgunKeyController extends Controller
         // template carries that subscriber's REAL per-stream tokens — the
         // unsubscribe / verify links in the test are therefore live ones.
         // Identical to the per-site test buttons.
-        $newsletter = Newsletter::firstOrCreate(['site_id' => $site->id, 'email' => $to]);
+        $newsletter = $this->testSubscriberFor($site, $to);
         // In memory only, so testing never overwrites a real subscriber's name.
         $newsletter->full_name = $request->validated('name');
 

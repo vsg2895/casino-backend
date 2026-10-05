@@ -9,6 +9,7 @@ use App\Models\Country;
 use Database\Seeders\GermanySlovakiaCountrySeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -31,6 +32,16 @@ class GermanySlovakiaCountrySeederTest extends TestCase
     {
         parent::setUp();
 
+        /*
+         * BOTH fakes, and the Storage one is not optional.
+         *
+         * The seeder calls `countries:fetch-flags`, which WRITES the downloaded
+         * bytes to the public disk. Faking only the HTTP response left the write
+         * real, so running this test replaced the actual flag artwork in
+         * storage/app/public/flags with the six-byte stub below — silently, and
+         * for every country the seeder touches.
+         */
+        Storage::fake('public');
         Http::fake(['*' => Http::response('<svg/>', 200)]);
         Continent::create(['name' => 'Europe', 'slug' => 'europe', 'position' => 10]);
     }

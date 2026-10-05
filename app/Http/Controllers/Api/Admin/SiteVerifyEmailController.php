@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\ResolvesTestSubscriber;
 use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
@@ -26,6 +27,8 @@ use Illuminate\Http\Response;
  */
 class SiteVerifyEmailController extends Controller
 {
+    use ResolvesTestSubscriber;
+
     use SendsAdminTestEmail;
 
     public function __construct(private readonly VerifyEmailService $emails) {}
@@ -68,7 +71,7 @@ class SiteVerifyEmailController extends Controller
     public function sendTest(SendTestSiteEmailRequest $request, Site $site): JsonResponse
     {
         $to = $request->validated('to');
-        $newsletter = Newsletter::firstOrCreate(['site_id' => $site->id, 'email' => $to]);
+        $newsletter = $this->testSubscriberFor($site, $to);
         // The optional name from the test modal drives the "Dear {name}," greeting.
         // Set in memory only (not saved) so testing never overwrites a real
         // subscriber's stored name; a blank name yields no greeting.

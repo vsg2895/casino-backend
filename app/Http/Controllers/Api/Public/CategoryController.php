@@ -9,6 +9,7 @@ use App\Http\Resources\CasinoWithAttachmentResource;
 use App\Http\Resources\CategoryResource;
 use App\Models\Casino;
 use App\Models\Category;
+use App\Models\Country;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
@@ -56,9 +57,14 @@ class CategoryController extends Controller
             'categories:index:site:' . $site->id . ':country:' . ($country ?? 'all'),
             3600,
             function () use ($site, $country) {
+            // Country ids this filter means: the chosen country AND the
+            // Worldwide wildcard. Resolved once, outside the closure, so the
+            // lookup is not repeated for the existence check and the count.
+            $countryIds = $country === null ? null : Country::publicFilterIds($country);
+
             // Only categories that have at least one active casino attached to THIS site,
             // ordered by priority (sort_order), each with a per-site casino count.
-            $attachedToSite = function ($query) use ($site, $country): void {
+            $attachedToSite = function ($query) use ($site, $countryIds): void {
                 $query->where('casinos.active', true)
                     ->whereHas('sites', function ($s) use ($site): void {
                         $s->where('sites.id', $site->id)->where('casino_site.active', true);
@@ -67,10 +73,8 @@ class CategoryController extends Controller
                 // Same predicate drives BOTH the "which categories exist" filter
                 // and the count, so a category can never appear with a count of
                 // zero for the selected country.
-                if ($country !== null) {
-                    $query->whereHas('countries', function ($c) use ($country): void {
-                        $c->where('countries.slug', $country)->where('countries.active', true);
-                    });
+                if ($countryIds !== null) {
+                    self::scopeToCountries($query, $countryIds);
                 }
             };
 
@@ -143,12 +147,9 @@ class CategoryController extends Controller
                     ->where('pivot.site_id', $site->id)
                     ->where('pivot.active', true)
                     ->where('casinos.active', true)
-                    // whereHas, not a join: joining casino_country would
-                    // multiply rows for a casino serving several countries and
-                    // corrupt both the ordering and the pagination totals.
-                    ->when($country !== null, fn ($q) => $q->whereHas('countries', function ($c) use ($country): void {
-                        $c->where('countries.slug', $country)->where('countries.active', true);
-                    }))
+                    // The same predicate as the chip count above, so the number
+                    // on a chip is always the number of rows this query returns.
+                    ->when($country !== null, fn ($q) => self::scopeToCountries($q, Country::publicFilterIds((string) $country)))
                     ->orderBy('pivot.position')
                     ->select([
                         'casinos.*',
@@ -184,5 +185,32 @@ class CategoryController extends Controller
         );
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Narrow a casino query to a set of country ids.
+     *
+     * whereExists against the pivot rather than whereHas/join, for two separate
+     * reasons that both matter here:
+     *
+     *  - a JOIN would multiply rows for a casino serving several countries, and
+     *    the filter now always carries at least two ids (the country and the
+     *    Worldwide wildcard), so that duplication would corrupt the ordering and
+     *    the pagination totals of the listing;
+     *  - it is the same construction {@see \App\Http\Controllers\Api\Public\CountryController}
+     *    uses, which is what guarantees a chip count here and a country card
+     *    there are computed from one definition of "in this country".
+     *
+     * An empty id list matches nothing, which is how an unknown `?country=` has
+     * always behaved.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Casino>  $query
+     * @param  list<int>  $countryIds
+     */
+    private static function scopeToCountries($query, array $countryIds): void
+    {
+        $query->whereExists(fn ($q) => $q->from('casino_country')
+            ->whereColumn('casino_country.casino_id', 'casinos.id')
+            ->whereIn('casino_country.country_id', $countryIds));
     }
 }

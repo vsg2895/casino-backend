@@ -124,6 +124,54 @@ class Country extends Model
     }
 
     /**
+     * The country ids a public `?country=` filter must match.
+     *
+     * This country PLUS the Worldwide wildcard, because a casino attached to the
+     * wildcard is listed under EVERY country — that is the whole meaning of the
+     * row, and /countries/<slug> has always honoured it.
+     *
+     * It lives on the model because two surfaces answer the same question and
+     * they had drifted apart: the country card's count and its listing included
+     * the wildcard, while filtering a CATEGORY by the same country did not. A
+     * card could therefore promise casinos that choosing that country on the
+     * home page then refused to show — most starkly for a country whose only
+     * casinos are worldwide ones, where the card said "1" and the filtered page
+     * offered no categories at all.
+     *
+     * worldwideId() is null on a database where the seeder has not run, and the
+     * filter then means exactly this country, as it did before.
+     *
+     * @return list<int>
+     */
+    public function filterIds(): array
+    {
+        return array_values(array_unique(array_filter([
+            (int) $this->id,
+            $this->isWorldwide() ? null : self::worldwideId(),
+        ])));
+    }
+
+    /**
+     * {@see filterIds()} for a slug, or an EMPTY list when the slug names no
+     * active country.
+     *
+     * Empty is deliberate and is what callers must pass to whereIn: an unknown
+     * or deactivated `?country=` has always matched nothing rather than silently
+     * widening to every casino.
+     *
+     * @return list<int>
+     */
+    public static function publicFilterIds(string $slug): array
+    {
+        $country = self::query()
+            ->where('slug', $slug)
+            ->where('active', true)
+            ->first(['id', 'slug']);
+
+        return $country === null ? [] : $country->filterIds();
+    }
+
+    /**
      * The wildcard row's id, or null when the seeder has never been run.
      *
      * Deliberately NOT memoised. A function-static would live for the whole PHP

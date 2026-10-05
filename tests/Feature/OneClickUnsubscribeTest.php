@@ -105,20 +105,29 @@ class OneClickUnsubscribeTest extends TestCase
 
     // ── Admin test send now carries a working token ───────────────────────
 
-    public function test_admin_test_send_registers_subscriber_and_uses_real_token(): void
+    public function test_admin_test_send_uses_an_existing_subscribers_real_token(): void
     {
+        /*
+         * A test sent to someone already ON the list renders with that person's
+         * own token, so the unsubscribe link and the one-click header work end
+         * to end.
+         *
+         * The subscriber is seeded here rather than created by the send: a test
+         * button must never add anybody to the list — see
+         * TestEmailsDoNotSubscribeTest.
+         */
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
+
+        $sub = Newsletter::create(['site_id' => $site->id, 'email' => 'tester@example.com']);
 
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/email-template/test",
             ['to' => 'tester@example.com'],
         )->assertOk()->assertJson(['ok' => true]);
 
-        // The test recipient is now a subscriber with a real token.
-        $this->assertDatabaseHas('newsletters', ['site_id' => $site->id, 'email' => 'tester@example.com']);
-        $sub = Newsletter::where('site_id', $site->id)->where('email', 'tester@example.com')->firstOrFail();
+        $this->assertSame(1, Newsletter::count(), 'the send must not have added a second row');
 
         Mail::assertSent(NewsletterSubscribedMail::class, function (NewsletterSubscribedMail $mail) use ($sub): bool {
             return str_contains($mail->unsubscribeUrl, (string) $sub->unsubscribe_token)
@@ -127,18 +136,20 @@ class OneClickUnsubscribeTest extends TestCase
         });
     }
 
-    public function test_promotion_test_send_uses_real_promotion_token(): void
+    public function test_promotion_test_send_uses_an_existing_subscribers_real_token(): void
     {
         Mail::fake();
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
+
+        $sub = Newsletter::create(['site_id' => $site->id, 'email' => 'tester@example.com']);
 
         $this->postJson(
             "/api/v1/admin/sites/{$site->id}/promotion-email/test",
             ['to' => 'tester@example.com'],
         )->assertOk();
 
-        $sub = Newsletter::where('site_id', $site->id)->where('email', 'tester@example.com')->firstOrFail();
+        $this->assertSame(1, Newsletter::count(), 'the send must not have added a second row');
 
         Mail::assertSent(PromotionEmail::class, fn (PromotionEmail $mail): bool =>
             str_contains($mail->unsubscribeUrl, (string) $sub->promotion_unsubscribe_token));

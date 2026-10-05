@@ -45,6 +45,9 @@ class UpdateArticleRequest extends FormRequest
             'canonical_url'   => ['nullable', 'string', 'max:500', 'regex:#^https?://#'],
             'active'          => ['sometimes', 'boolean'],
             'featured'        => ['sometimes', 'boolean'],
+            // The news page's "Most Popular" rail. Its own flag, not a
+            // synonym for `featured` — see the migration.
+            'to_be_most_popular' => ['sometimes', 'boolean'],
             'news_category_id' => ['nullable', 'integer', 'exists:news_categories,id'],
             'noindex'         => ['sometimes', 'boolean'],
         ];

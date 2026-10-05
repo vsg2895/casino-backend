@@ -53,6 +53,7 @@ class ArticleResource extends JsonResource
             'position'        => (int) $this->position,
             'active'   => (bool) $this->active,
             'featured' => (bool) $this->featured,
+            'to_be_most_popular' => (bool) $this->to_be_most_popular,
             'meta_title'      => $this->meta_title,
             'meta_description' => $this->meta_description,
             'canonical_url'   => $this->canonical_url,

@@ -8,6 +8,7 @@ use App\Mail\NewsletterSubscribedMail;
 use App\Mail\PromotionEmail;
 use App\Mail\VerifyEmailMail;
 use App\Models\EmailSchedule;
+use App\Models\Newsletter;
 use App\Models\SendgridKey;
 use App\Models\Site;
 use App\Services\Mail\EmailTemplateCatalog;
@@ -281,14 +282,28 @@ class SendgridKeyTest extends TestCase
         [$siteB] = $this->siteWithKey();
         $key = $this->makeKey();
 
+        /*
+         * The same address is on BOTH lists, so the only thing that can tell the
+         * two renders apart is which subscriber the controller picked.
+         *
+         * This used to be proved by asserting a row was CREATED against the
+         * chosen site — but a test send no longer writes to the newsletter list
+         * at all (see TestEmailsDoNotSubscribeTest), so the proof moved to the
+         * token the email actually carries.
+         */
+        $subA = Newsletter::create(['site_id' => $siteA->id, 'email' => 'admin@example.com']);
+        $subB = Newsletter::create(['site_id' => $siteB->id, 'email' => 'admin@example.com']);
+
         $this->postJson("/api/v1/admin/sendgrid-keys/{$key->id}/test", $this->testPayload($siteB))
             ->assertOk()
             ->assertJsonFragment(['ok' => true]);
 
-        // The recipient is registered against the CHOSEN site, so the rendered
-        // template carries that site's tokens — not the other site's.
-        $this->assertDatabaseHas('newsletters', ['site_id' => $siteB->id, 'email' => 'admin@example.com']);
-        $this->assertDatabaseMissing('newsletters', ['site_id' => $siteA->id, 'email' => 'admin@example.com']);
+        Mail::assertSent(PromotionEmail::class, fn (PromotionEmail $mail): bool =>
+            str_contains($mail->unsubscribeUrl, (string) $subB->promotion_unsubscribe_token)
+            && ! str_contains($mail->unsubscribeUrl, (string) $subA->promotion_unsubscribe_token));
+
+        // And it added nobody: two seeded rows in, two rows out.
+        $this->assertSame(2, Newsletter::count());
     }
 
     public function test_an_inactive_key_can_still_be_tested(): void

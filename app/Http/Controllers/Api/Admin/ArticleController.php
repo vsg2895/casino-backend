@@ -33,7 +33,7 @@ class ArticleController extends Controller
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path',
-        'published_at', 'position', 'active', 'featured', 'noindex', 'type',
+        'published_at', 'position', 'active', 'featured', 'to_be_most_popular', 'noindex', 'type',
         'news_category_id', 'source_name', 'source_url', 'updated_at',
     ];
 

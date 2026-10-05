@@ -39,66 +39,91 @@ class CountryController extends Controller
         $site = app('current_site');
         $this->assertEnabled($site);
 
-        $data = SiteCache::remember($site->id, ['countries', 'casinos'], 'countries:index:site:' . $site->id, 3600, function () use ($site) {
-            /*
-             * Counts only the casinos attached to THIS site, so a card never
-             * advertises another domain's catalogue — and now also counts the
-             * Worldwide casinos that the country's own page will list.
-             *
-             * Written as a correlated subquery rather than withCount() because
-             * the condition spans two country ids (this one OR the wildcard) and
-             * has to de-duplicate: a casino attached to both must be counted
-             * once. COUNT(DISTINCT) over a relation is not something withCount
-             * can express.
-             *
-             * The joins re-state what the Eloquent relation used to imply, so
-             * each one matters: `deleted_at IS NULL` because casinos are
-             * soft-deleted and a raw builder does not apply that scope, and the
-             * casino_site pair because an attachment can be present but inactive.
-             */
-            $worldwideId = Country::worldwideId();
+        /*
+         * Optional category scope, the mirror image of CategoryController's
+         * `?country=`.
+         *
+         * On /categories/<slug> the CATEGORY is the outer filter and the country
+         * dropdown narrows within it, so a country card reading "3" there has to
+         * mean three casinos IN THIS CATEGORY — otherwise choosing it lands on
+         * "No casinos", which is the same broken promise the chips used to make.
+         *
+         * Absent on the hub and on /casinos, where the country is the outer
+         * filter and the honest number is the site-wide one. The parameter is
+         * therefore opt-in and every existing caller keeps what it had.
+         */
+        $category = $this->categoryScope();
 
-            $casinoCount = DB::table('casino_country as cc')
-                ->join('casinos', 'casinos.id', '=', 'cc.casino_id')
-                ->join('casino_site as cs', 'cs.casino_id', '=', 'casinos.id')
-                ->where('cs.site_id', $site->id)
-                ->where('cs.active', true)
-                ->where('casinos.active', true)
-                ->whereNull('casinos.deleted_at')
-                ->where(function ($q) use ($worldwideId): void {
-                    $q->whereColumn('cc.country_id', 'countries.id');
+        $data = SiteCache::remember(
+            $site->id,
+            ['countries', 'casinos', 'categories'],
+            'countries:index:site:' . $site->id . ':category:' . ($category ?? 'all'),
+            3600,
+            function () use ($site, $category) {
+                /*
+                 * Counts only the casinos attached to THIS site, so a card never
+                 * advertises another domain's catalogue — and now also counts the
+                 * Worldwide casinos that the country's own page will list.
+                 *
+                 * Written as a correlated subquery rather than withCount() because
+                 * the condition spans two country ids (this one OR the wildcard) and
+                 * has to de-duplicate: a casino attached to both must be counted
+                 * once. COUNT(DISTINCT) over a relation is not something withCount
+                 * can express.
+                 *
+                 * The joins re-state what the Eloquent relation used to imply, so
+                 * each one matters: `deleted_at IS NULL` because casinos are
+                 * soft-deleted and a raw builder does not apply that scope, and the
+                 * casino_site pair because an attachment can be present but inactive.
+                 */
+                $worldwideId = Country::worldwideId();
 
-                    if ($worldwideId !== null) {
-                        $q->orWhere('cc.country_id', $worldwideId);
-                    }
-                })
-                ->selectRaw('COUNT(DISTINCT casinos.id)');
+                $casinoCount = DB::table('casino_country as cc')
+                    ->join('casinos', 'casinos.id', '=', 'cc.casino_id')
+                    ->join('casino_site as cs', 'cs.casino_id', '=', 'casinos.id')
+                    ->where('cs.site_id', $site->id)
+                    ->where('cs.active', true)
+                    ->where('casinos.active', true)
+                    ->whereNull('casinos.deleted_at')
+                    ->where(function ($q) use ($worldwideId): void {
+                        $q->whereColumn('cc.country_id', 'countries.id');
 
-            // EVERY active country is listed, grouped by continent — not only
-            // those that already have a casino.
-            //
-            // This reverses the previous rule ("a card whose Show casinos leads
-            // to an empty page is worse than no card"), and it is a deliberate
-            // product decision: the hub is a browsable directory, and hiding
-            // most of the world until the attachments are filled in left the
-            // page blank. The honesty is preserved by the COUNT on each card —
-            // a country with none says so — and by the detail page, which states
-            // plainly that no casinos are listed yet rather than looking broken.
-            //
-            // The sitemap still excludes zero-casino countries, so nothing thin
-            // is ever submitted for indexing.
-            $continents = Continent::query()
-                ->whereHas('countries', fn ($q) => $q->where('active', true))
-                ->with(['countries' => function ($q) use ($casinoCount): void {
-                    $q->where('active', true)
-                        ->select('countries.*')
-                        ->selectSub($casinoCount, 'casinos_count');
-                }])
-                ->ordered()
-                ->get();
+                        if ($worldwideId !== null) {
+                            $q->orWhere('cc.country_id', $worldwideId);
+                        }
+                    })
+                    ->when($category !== null, fn ($q) => $q->whereExists(fn ($inner) => $inner->from('casino_category')
+                        ->join('categories', 'categories.id', '=', 'casino_category.category_id')
+                        ->whereColumn('casino_category.casino_id', 'casinos.id')
+                        ->where('categories.slug', $category)))
+                    ->selectRaw('COUNT(DISTINCT casinos.id)');
 
-            return ContinentResource::collection($continents)->resolve();
-        });
+                // EVERY active country is listed, grouped by continent — not only
+                // those that already have a casino.
+                //
+                // This reverses the previous rule ("a card whose Show casinos leads
+                // to an empty page is worse than no card"), and it is a deliberate
+                // product decision: the hub is a browsable directory, and hiding
+                // most of the world until the attachments are filled in left the
+                // page blank. The honesty is preserved by the COUNT on each card —
+                // a country with none says so — and by the detail page, which states
+                // plainly that no casinos are listed yet rather than looking broken.
+                //
+                // The sitemap still excludes zero-casino countries, so nothing thin
+                // is ever submitted for indexing.
+                $continents = Continent::query()
+                    ->whereHas('countries', fn ($q) => $q->where('active', true))
+                    ->with(['countries' => function ($q) use ($casinoCount): void {
+                        $q->where('active', true)
+                            ->select('countries.*')
+                            ->selectSub($casinoCount, 'casinos_count');
+                    }])
+                    ->ordered()
+                    ->get();
+
+                return ContinentResource::collection($continents)->resolve();
+            },
+        );
 
         return response()->json(['data' => $data]);
     }
@@ -133,10 +158,7 @@ class CountryController extends Controller
                  * worldwideId() is null on a database where the seeder has not
                  * run, and the query then behaves exactly as it did before.
                  */
-                $countryIds = array_values(array_unique(array_filter([
-                    $country->id,
-                    $country->isWorldwide() ? null : Country::worldwideId(),
-                ])));
+                $countryIds = $country->filterIds();
 
                 $paginator = Casino::query()
                     ->whereExists(fn ($q) => $q->from('casino_country')
@@ -180,6 +202,21 @@ class CountryController extends Controller
         );
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * The `?category=` slug, or null when absent.
+     *
+     * Null means "count across the whole site", which is what the hub and the
+     * /casinos filter want. Truncated for the same reason CategoryController
+     * truncates its country: the value is part of a cache key on a public,
+     * unauthenticated endpoint.
+     */
+    private function categoryScope(): ?string
+    {
+        $slug = trim((string) request()->query('category', ''));
+
+        return $slug === '' ? null : mb_substr($slug, 0, 120);
     }
 
     /**

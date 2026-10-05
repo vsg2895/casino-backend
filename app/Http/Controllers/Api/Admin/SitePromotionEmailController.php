@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\ResolvesTestSubscriber;
 use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
@@ -27,6 +28,8 @@ use Illuminate\Http\Response;
  */
 class SitePromotionEmailController extends Controller
 {
+    use ResolvesTestSubscriber;
+
     use SendsAdminTestEmail;
 
     public function __construct(private readonly PromotionEmailService $emails) {}
@@ -75,15 +78,16 @@ class SitePromotionEmailController extends Controller
      * per-site sender) so strict SMTP servers that enforce an authenticated
      * sender still accept the test.
      *
-     * The test recipient is registered as a subscriber (firstOrCreate) so the
-     * email carries that subscriber's REAL promotion token — the unsubscribe
-     * link and the RFC 8058 one-click header therefore work end-to-end.
+     * The test recipient is NEVER registered as a subscriber. An address
+     * already on the list renders with its real token, so the unsubscribe link
+     * and the RFC 8058 one-click header work end-to-end; anyone else gets a
+     * transient stand-in that is not saved. See testSubscriberFor().
      */
     public function sendTest(SendTestSiteEmailRequest $request, Site $site): JsonResponse
     {
         $template = $site->promotionEmailOrDefault();
         $to = $request->validated('to');
-        $newsletter = Newsletter::firstOrCreate(['site_id' => $site->id, 'email' => $to]);
+        $newsletter = $this->testSubscriberFor($site, $to);
         // The optional name from the test modal drives the "Dear {name}," greeting.
         // Set in memory only (not saved) so testing never overwrites a real
         // subscriber's stored name; a blank name yields no greeting.
