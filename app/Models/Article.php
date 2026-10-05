@@ -93,6 +93,55 @@ class Article extends Model
                 $article->slug = Str::slug((string) $article->title);
             }
         });
+
+        // The moment a news post goes live is its publish date — see
+        // stampPublishDateOnGoingLive().
+        static::saving(function (self $article): void {
+            $article->stampPublishDateOnGoingLive();
+        });
+    }
+
+    /**
+     * A NEWS post's publish date is when THIS site published it.
+     *
+     * Ingested rows carry the SOURCE's date, which is right while they sit as
+     * drafts — the feed's chronology has to be truthful the moment an editor
+     * approves one. It stops being right the moment it is approved: a post
+     * collected twelve days ago and turned on today was published today, and
+     * the card saying "12 days ago" is describing someone else's publication,
+     * not ours. So going live restamps it.
+     *
+     * Three things it will NOT overwrite, in the order they are checked:
+     *
+     *  - a GUIDE's date. Guides are evergreen and editorially ordered; their
+     *    date is a fact about the writing, not a release.
+     *  - a date the editor set IN THE SAME SAVE. Typing a date and switching
+     *    the post on is an explicit statement about when it was published, and
+     *    believing the person beats believing the clock.
+     *  - a FUTURE date. That is the scheduling feature ({@see scopePublished});
+     *    stamping now() over it would publish the post immediately and make the
+     *    field a lie.
+     *
+     * Only fires on the transition, so re-saving a live post leaves its date
+     * alone. Switching a post off and on again DOES re-date it — on this feed
+     * that is the honest reading of "published", but it is the one surprise
+     * here worth knowing about.
+     */
+    protected function stampPublishDateOnGoingLive(): void
+    {
+        if (! $this->isNews() || ! $this->active) {
+            return;
+        }
+
+        if (! $this->isDirty('active') || $this->isDirty('published_at')) {
+            return;
+        }
+
+        if ($this->published_at?->isFuture()) {
+            return;
+        }
+
+        $this->published_at = now();
     }
 
     /**
