@@ -73,11 +73,52 @@ class NewsletterController extends Controller
     {
         $siteId = $request->integer('site_id') ?: null;
         $verified = $this->verifiedFilter($request);
+        $search = $this->searchTerm($request);
 
         return Newsletter::query()
             ->when($siteId, fn ($q) => $q->where('site_id', $siteId))
             ->when($request->boolean('trashed'), fn ($q) => $q->onlyTrashed())
-            ->when($verified !== null, fn ($q) => $q->where('verified', $verified));
+            ->when($verified !== null, fn ($q) => $q->where('verified', $verified))
+            // ESCAPE is spelled out rather than left to the driver's default:
+            // MySQL treats `\` as the escape character on its own, SQLite (the
+            // test database) does not, so without this an escaped `_` matches
+            // nothing there and the protection would go untested.
+            ->when($search !== null, fn ($q) => $q->whereRaw('email LIKE ? ESCAPE ?', [$search, '\\']));
+    }
+
+    /**
+     * The `?search=` term as a ready-made LIKE pattern, or null for "no search".
+     *
+     * PREFIX by default, CONTAINS when the term starts with `@`. The split is
+     * about what an index can actually do, and it lines up with how the two
+     * searches are used:
+     *
+     *   kate            → `kate%`      — an address someone is looking up, or
+     *                                    pasted whole. Served as a range scan
+     *                                    on (site_id, email), or on the email
+     *                                    index when no site is chosen.
+     *   @gmail.com      → `%@gmail.com%` — everyone at a domain. No index can
+     *                                    serve a leading wildcard, so this one
+     *                                    scans; it is opt-in by typing the `@`
+     *                                    rather than the cost of every keystroke.
+     *
+     * The term is escaped before it becomes a pattern: an address can legally
+     * contain `_`, and a subscriber typing `a_b@x.com` must not get every
+     * `aXb@x.com` back. `%` and `\` are escaped for the same reason.
+     *
+     * Length-capped because this reaches a query from a text input.
+     */
+    private function searchTerm(Request $request): ?string
+    {
+        $term = trim((string) $request->query('search', ''));
+
+        if ($term === '') {
+            return null;
+        }
+
+        $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], mb_substr($term, 0, 190));
+
+        return str_starts_with($term, '@') ? '%' . $escaped . '%' : $escaped . '%';
     }
 
     /**
