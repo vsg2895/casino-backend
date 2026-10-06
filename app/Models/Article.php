@@ -53,7 +53,6 @@ class Article extends Model
         'body',
         'hero_image_path',
         'published_at',
-        'position',
         'active',
         'featured',
         'to_be_most_popular',
@@ -67,11 +66,11 @@ class Article extends Model
     {
         return [
             'published_at' => 'datetime',
-            'position'     => 'integer',
             'noindex'      => 'boolean',
             'active'       => 'boolean',
             'featured'     => 'boolean',
             'to_be_most_popular' => 'boolean',
+            'most_popular_at'    => 'datetime',
             'read_minutes' => 'integer',
         ];
     }
@@ -98,7 +97,28 @@ class Article extends Model
         // stampPublishDateOnGoingLive().
         static::saving(function (self $article): void {
             $article->stampPublishDateOnGoingLive();
+            $article->stampMostPopularPick();
         });
+    }
+
+    /**
+     * `most_popular_at` follows the flag it describes.
+     *
+     * Set when a post is picked for the rail, cleared when it is dropped from
+     * it — so the column can never claim a pick date for something that is not
+     * picked, and a post put back in the rail goes to the top where the editor
+     * who just promoted it expects to find it.
+     *
+     * Not fillable, and never taken from a request: it is a record of an action,
+     * not a field anyone fills in.
+     */
+    protected function stampMostPopularPick(): void
+    {
+        if (! $this->isDirty('to_be_most_popular')) {
+            return;
+        }
+
+        $this->most_popular_at = $this->to_be_most_popular ? now() : null;
     }
 
     /**
@@ -242,22 +262,41 @@ class Article extends Model
     }
 
     /**
-     * Newest first, and nothing else.
+     * The "Most Popular" rail's order: most recently PICKED first.
      *
-     * The rail is explicitly "the latest of the picks", so `position` — which
-     * orders the FEED — must not get a say here. Ordering by it would let an
-     * editor's feed arrangement silently reorder a list whose whole promise is
-     * recency. `id` breaks ties, because an import stamps many rows with one
+     * The rail is a curated list, so what ranks it is when the editor put each
+     * post there — `published_at` is about the story, not about the pick. It
+     * stays as the tiebreak for rows picked in the same second (and for any
+     * pick made before {@see \App\Models\Article::stampMostPopularPick()}
+     * existed), with `id` last, because an import stamps many rows with one
      * timestamp.
+     *
+     * MySQL sorts NULL last under DESC, which is the behaviour wanted here: a
+     * pick with no date recorded sits below every dated one rather than on top.
      */
-    public function scopeNewestFirst(Builder $query): Builder
+    public function scopeMostPopularFirst(Builder $query): Builder
     {
-        return $query->orderByDesc('published_at')->orderByDesc('id');
+        return $query
+            ->orderByDesc('most_popular_at')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id');
     }
 
-    /** Editorial order first, then newest — the order the listing renders in. */
+    /**
+     * Newest first, and nothing else — the order BOTH sections render in.
+     *
+     * There used to be a `position` column ahead of the date, and an ordering
+     * that differed per section. News dropped it first: a feed's order IS its
+     * chronology, and a hand-set position pinned an older story above a newer
+     * one with nothing on the page to explain it. Guides followed, because in
+     * practice nothing but a seeder ever set the value — it was a control
+     * nobody used that still had to be explained, validated and reasoned about
+     * everywhere. An editor who wants a guide higher up moves its date.
+     *
+     * `id` breaks ties, because an import stamps many rows with one timestamp.
+     */
     public function scopeInListingOrder(Builder $query): Builder
     {
-        return $query->orderBy('position')->orderByDesc('published_at');
+        return $query->orderByDesc('published_at')->orderByDesc('id');
     }
 }

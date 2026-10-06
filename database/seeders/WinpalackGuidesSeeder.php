@@ -38,9 +38,10 @@ use Illuminate\Support\Carbon;
  * --------------------------------------------
  * The copy is the seeder's: title, excerpt, body and the two meta fields are
  * rewritten on every run, so re-running is how a correction ships. The editor's
- * decisions are NOT: `published_at`, `position`, `active` and `featured` are set
- * only when the row is first created. Re-running therefore cannot unpublish
- * something, reorder the section, or undo a scheduled date.
+ * decisions are NOT: `published_at`, `active` and `featured` are set only when
+ * the row is first created. Re-running therefore cannot unpublish something,
+ * reorder the section — the dates it staggers are the order — or undo a
+ * scheduled date.
  *
  * The one exception is a row that exists with no publish date at all. That is a
  * draft this seeder created and nobody finished, so it gets published rather
@@ -95,7 +96,6 @@ class WinpalackGuidesSeeder extends Seeder
                 // Staggered backwards so the section has a real chronology
                 // instead of three articles stamped the same minute.
                 $article->published_at = Carbon::now()->subDays(4 + $i * 4)->setTime(10, 0);
-                $article->position     = ($i + 1) * 10;
                 $article->active       = true;
                 $article->featured     = false;
             } elseif ($article->published_at === null) {

@@ -33,14 +33,13 @@ class AdminNewsListingTest extends TestCase
     use InteractsWithSites;
     use RefreshDatabase;
 
-    private function newsFor(int $siteId, string $title, string $publishedAt, int $position = 0): Article
+    private function newsFor(int $siteId, string $title, string $publishedAt): Article
     {
         return Article::create([
             'site_id'      => $siteId,
             'type'         => Article::TYPE_NEWS,
             'title'        => $title,
             'slug'         => str($title)->slug()->value(),
-            'position'     => $position,
             'active'       => true,
             'published_at' => Carbon::parse($publishedAt),
         ]);
@@ -52,6 +51,19 @@ class AdminNewsListingTest extends TestCase
         $res = $this->getJson("/api/v1/admin/sites/{$siteId}/articles?type=news&per_page={$perPage}")->assertOk();
 
         return array_column($res->json('data'), 'title');
+    }
+
+    public function test_the_listing_is_newest_first(): void
+    {
+        // The admin list has to render in the order the public feed does, or
+        // the screen an editor reads is not the page a visitor reads.
+        [$site] = $this->siteWithKey(['news_enabled' => true]);
+        $this->actingAsAdmin();
+
+        $this->newsFor($site->id, 'Oldest', '2026-09-01 10:00:00');
+        $this->newsFor($site->id, 'Newest', '2026-09-20 10:00:00');
+
+        $this->assertSame(['Newest', 'Oldest'], $this->titles($site->id));
     }
 
     public function test_the_listing_honours_the_requested_page_size(): void
@@ -112,7 +124,6 @@ class AdminNewsListingTest extends TestCase
         $this->putJson("/api/v1/admin/sites/{$site->id}/articles/{$middle->id}?type=news", [
             'title'        => 'Midday, revised',
             'published_at' => $middle->published_at->toIso8601String(),
-            'position'     => 0,
             'active'       => true,
         ])->assertOk();
 
@@ -144,7 +155,6 @@ class AdminNewsListingTest extends TestCase
             'title'        => 'Midday',
             // What the old form sent: the day, with the time thrown away.
             'published_at' => '2026-09-28',
-            'position'     => 0,
             'active'       => true,
         ])->assertOk();
 

@@ -50,7 +50,6 @@ class ArticleResource extends JsonResource
             // ISO-8601 STRING, not Carbon: these responses go through SiteCache,
             // and a serialized Carbon comes back as __PHP_Incomplete_Class.
             'published_at'    => $this->published_at?->toISOString(),
-            'position'        => (int) $this->position,
             'active'   => (bool) $this->active,
             'featured' => (bool) $this->featured,
             'to_be_most_popular' => (bool) $this->to_be_most_popular,

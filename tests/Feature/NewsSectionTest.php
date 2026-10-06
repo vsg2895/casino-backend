@@ -38,7 +38,7 @@ class NewsSectionTest extends TestCase
         ]);
     }
 
-    private function article(string $type, string $title, ?Carbon $publishedAt = null, int $position = 0): Article
+    private function article(string $type, string $title, ?Carbon $publishedAt = null): Article
     {
         return Article::create([
             'site_id'      => $this->site->id,
@@ -46,7 +46,6 @@ class NewsSectionTest extends TestCase
             'title'        => $title,
             'body'         => 'Body copy.',
             'excerpt'      => 'Excerpt.',
-            'position'     => $position,
             'published_at' => $publishedAt ?? Carbon::now()->subDay(),
         ]);
     }
@@ -118,21 +117,32 @@ class NewsSectionTest extends TestCase
         $this->assertSame([], $this->feed());
     }
 
-    public function test_position_controls_the_order(): void
+    public function test_the_feed_is_newest_first(): void
     {
-        $this->article(Article::TYPE_NEWS, 'Third', Carbon::now()->subDays(1), 30);
-        $this->article(Article::TYPE_NEWS, 'First', Carbon::now()->subDays(3), 10);
-        $this->article(Article::TYPE_NEWS, 'Second', Carbon::now()->subDays(2), 20);
+        // Written oldest-first, so insertion order cannot be what produces the
+        // answer. There is no editorial ordering any more: the date is it.
+        $this->article(Article::TYPE_NEWS, 'Oldest', Carbon::now()->subDays(3));
+        $this->article(Article::TYPE_NEWS, 'Middle', Carbon::now()->subDays(2));
+        $this->article(Article::TYPE_NEWS, 'Newest', Carbon::now()->subDays(1));
 
-        $this->assertSame(['First', 'Second', 'Third'], $this->feed());
+        $this->assertSame(['Newest', 'Middle', 'Oldest'], $this->feed());
     }
 
-    public function test_equal_positions_fall_back_to_newest_first(): void
+    public function test_guides_are_newest_first_too(): void
     {
-        $this->article(Article::TYPE_NEWS, 'Older', Carbon::now()->subDays(5), 0);
-        $this->article(Article::TYPE_NEWS, 'Newer', Carbon::now()->subDay(), 0);
+        // `position` ordered this section until it was dropped; guides now
+        // follow the same rule as news.
+        $this->article(Article::TYPE_GUIDE, 'Oldest guide', Carbon::now()->subDays(3));
+        $this->article(Article::TYPE_GUIDE, 'Newest guide', Carbon::now()->subDays(1));
+        $this->article(Article::TYPE_GUIDE, 'Middle guide', Carbon::now()->subDays(2));
 
-        $this->assertSame(['Newer', 'Older'], $this->feed());
+        $titles = array_column(
+            $this->getJson($this->publicBase($this->site) . '/articles', $this->siteHeaders($this->key))
+                ->assertOk()->json('data'),
+            'title',
+        );
+
+        $this->assertSame(['Newest guide', 'Middle guide', 'Oldest guide'], $titles);
     }
 
     // ── the per-site flag ────────────────────────────────────────────────────
@@ -181,12 +191,12 @@ class NewsSectionTest extends TestCase
 
     // ── the admin CRUD ───────────────────────────────────────────────────────
 
-    public function test_admin_can_create_edit_reorder_and_delete_news(): void
+    public function test_admin_can_create_edit_and_delete_news(): void
     {
         $this->actingAsAdmin();
         $base = "/api/v1/admin/sites/{$this->site->id}/articles?type=news";
 
-        $id = $this->postJson($base, ['title' => 'Draft post', 'body' => 'Body', 'position' => 5])
+        $id = $this->postJson($base, ['title' => 'Draft post', 'body' => 'Body'])
             ->assertCreated()
             ->json('data.id');
 
@@ -194,12 +204,11 @@ class NewsSectionTest extends TestCase
         $this->assertSame(Article::TYPE_NEWS, Article::findOrFail($id)->type);
 
         $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$id}?type=news", [
-            'title' => 'Published post', 'body' => 'Body', 'position' => 1,
+            'title' => 'Published post', 'body' => 'Body',
             'published_at' => Carbon::now()->subHour()->toDateTimeString(),
         ])->assertOk();
 
         $this->assertSame(['Published post'], $this->feed());
-        $this->assertSame(1, Article::findOrFail($id)->position);
 
         $this->deleteJson("/api/v1/admin/sites/{$this->site->id}/articles/{$id}?type=news")
             ->assertNoContent();
@@ -350,21 +359,6 @@ class NewsSectionTest extends TestCase
             ->assertNotFound();
     }
 
-    public function test_position_can_be_changed_from_the_admin_and_reorders_the_feed(): void
-    {
-        $first = $this->article(Article::TYPE_NEWS, 'Was first', null, 10);
-        $second = $this->article(Article::TYPE_NEWS, 'Was second', null, 20);
-        $this->assertSame(['Was first', 'Was second'], $this->feed());
-
-        $this->actingAsAdmin();
-        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$second->id}?type=news", [
-            'title' => $second->title, 'body' => $second->body, 'position' => 1,
-        ])->assertOk();
-
-        $this->assertSame(['Was second', 'Was first'], $this->feed());
-        $this->assertSame(1, $second->fresh()->position);
-    }
-
     /** New posts are shown unless the editor says otherwise. */
     public function test_a_new_post_defaults_to_shown(): void
     {
@@ -391,7 +385,7 @@ class NewsSectionTest extends TestCase
 
         $this->assertNotNull($row, 'A hidden post must remain editable in the admin.');
         $this->assertFalse($row['active']);
-        $this->assertArrayHasKey('position', $row);
+        $this->assertArrayHasKey('published_at', $row);
     }
 
     // ── best news (featured) ────────────────────────────────────────────────
@@ -448,7 +442,7 @@ class NewsSectionTest extends TestCase
     public function test_the_home_page_strip_is_capped(): void
     {
         foreach (range(1, 11) as $i) {
-            $post = $this->article(Article::TYPE_NEWS, "Pick {$i}", Carbon::now()->subDays($i), $i);
+            $post = $this->article(Article::TYPE_NEWS, "Pick {$i}", Carbon::now()->subDays($i));
             $post->update(['featured' => true]);
         }
 
@@ -456,14 +450,15 @@ class NewsSectionTest extends TestCase
         $this->assertCount(8, $this->featuredFeed(), 'The strip must be capped server-side.');
     }
 
-    public function test_picks_honour_position_order(): void
+    public function test_the_strip_is_newest_first(): void
     {
-        foreach ([['Second', 20], ['First', 10]] as [$title, $position]) {
-            $post = $this->article(Article::TYPE_NEWS, $title, Carbon::now()->subDay(), $position);
+        // Same rule as the feed: the home page shows the LATEST picks.
+        foreach ([['Older', 3], ['Newer', 1]] as [$title, $daysAgo]) {
+            $post = $this->article(Article::TYPE_NEWS, $title, Carbon::now()->subDays($daysAgo));
             $post->update(['featured' => true]);
         }
 
-        $this->assertSame(['First', 'Second'], $this->featuredFeed());
+        $this->assertSame(['Newer', 'Older'], $this->featuredFeed());
     }
 
     /** `featured` is a literal segment and must not be read as a slug. */

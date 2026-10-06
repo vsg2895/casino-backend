@@ -9,7 +9,7 @@ use App\Models\Article;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Console\Command;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\{Carbon, Collection};
 
 /**
  * Moves every live news post's publish date to a recent day, in one pass.
@@ -121,7 +121,7 @@ class RestampNewsDates extends Command
         return self::SUCCESS;
     }
 
-    /** @return \Illuminate\Support\Collection<int, Site> */
+    /** @return Collection<int, Site> */
     private function sites()
     {
         $filter = trim((string) $this->option('site'));

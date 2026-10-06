@@ -36,7 +36,7 @@ class ArticleController extends Controller
                 ->ofType(Article::TYPE_GUIDE)
                 ->visible()
                 ->inListingOrder()
-                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'position', 'active', 'featured', 'updated_at']);
+                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'active', 'featured', 'updated_at']);
 
             return ArticleResource::collection($articles)->resolve();
         });

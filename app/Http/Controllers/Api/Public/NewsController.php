@@ -40,7 +40,7 @@ class NewsController extends Controller
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'type', 'news_category_id', 'title', 'slug', 'excerpt', 'read_minutes',
-        'hero_image_path', 'published_at', 'position', 'active', 'featured', 'to_be_most_popular', 'updated_at',
+        'hero_image_path', 'published_at', 'active', 'featured', 'to_be_most_popular', 'updated_at',
         // Credited on the detail page. Carried on listing rows too so a card
         // can show its provenance without a second request.
         'source_name', 'source_url',
@@ -93,14 +93,16 @@ class NewsController extends Controller
                  * page silently put it in this rail too, and the two surfaces
                  * could never be curated apart.
                  *
-                 * Ordered newest first rather than by `position`: the rail is
-                 * "the latest of the picks", so the feed's editorial ordering
-                 * must not reach in and reorder it.
+                 * Ordered by WHEN EACH POST WAS PICKED, newest pick first, so
+                 * the feed's editorial ordering never reaches in and reorders
+                 * it — and neither does publication date, which is a fact about
+                 * the story rather than about the pick. Promoting a post today
+                 * puts it at the top of the rail today, whatever it is dated.
                  */
                 $popular = $base()
                     ->toBeMostPopular()
                     ->with('newsCategory')
-                    ->newestFirst()
+                    ->mostPopularFirst()
                     ->limit(self::POPULAR_LIMIT)
                     ->get(self::LIST_COLUMNS);
 

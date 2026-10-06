@@ -18,14 +18,25 @@ use Tests\TestCase;
  * promoting a post to the home page strip silently put it in this rail, and
  * taking it out of the rail removed it from the home page.
  *
- * The rail is "the latest of the picks", so it orders by `published_at`
- * descending and ignores `position` entirely — otherwise an editor arranging
- * the FEED would silently reorder a list whose whole promise is recency.
+ * What ranks it is `most_popular_at`, the moment each post was picked; these
+ * tests freeze the clock so every pick shares one instant and `published_at`,
+ * the tiebreak, is what they measure.
+ * {@see NewsMostPopularPickDateTest} covers the pick date itself.
  */
 class NewsMostPopularTest extends TestCase
 {
     use InteractsWithSites;
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // One instant for every pick in this class, so the rail's first sort
+        // key ties and these tests go on measuring what they were written to
+        // measure: the dates.
+        Carbon::setTestNow('2026-10-06 09:00:00');
+    }
 
     /** @return array{0: \App\Models\Site, 1: string} */
     private function newsSite(): array
@@ -45,7 +56,6 @@ class NewsMostPopularTest extends TestCase
             'slug'         => str($title)->slug()->value(),
             'active'       => true,
             'published_at' => Carbon::parse($publishedAt),
-            'position'     => $flags['position'] ?? 0,
             'featured'     => $flags['featured'] ?? false,
             'to_be_most_popular' => $flags['popular'] ?? false,
         ]);
@@ -78,17 +88,14 @@ class NewsMostPopularTest extends TestCase
         $this->assertSame([], $this->rail($site, $key));
     }
 
-    public function test_the_rail_is_newest_first_and_ignores_position(): void
+    public function test_the_rail_is_newest_first(): void
     {
-        /*
-         * `position` is deliberately set to fight the dates: the oldest post is
-         * given the lowest position, which would put it first under the feed's
-         * own ordering. The rail must still lead with the newest.
-         */
+        // Picked in the same frozen instant, so `most_popular_at` ties and the
+        // publish date — the rail's second sort key — is what decides.
         [$site, $key] = $this->newsSite();
-        $this->newsPost($site->id, 'Oldest', '2026-09-01 10:00:00', ['popular' => true, 'position' => 0]);
-        $this->newsPost($site->id, 'Middle', '2026-09-10 10:00:00', ['popular' => true, 'position' => 5]);
-        $this->newsPost($site->id, 'Newest', '2026-09-20 10:00:00', ['popular' => true, 'position' => 9]);
+        $this->newsPost($site->id, 'Oldest', '2026-09-01 10:00:00', ['popular' => true]);
+        $this->newsPost($site->id, 'Middle', '2026-09-10 10:00:00', ['popular' => true]);
+        $this->newsPost($site->id, 'Newest', '2026-09-20 10:00:00', ['popular' => true]);
 
         $this->assertSame(['Newest', 'Middle', 'Oldest'], $this->rail($site, $key));
     }

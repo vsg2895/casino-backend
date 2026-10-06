@@ -39,7 +39,6 @@ class UpdateArticleRequest extends FormRequest
             'body'    => ['nullable', 'string'],
             'hero_image_path' => ['nullable', 'string', 'max:500'],
             'published_at'    => ['nullable', 'date'],
-            'position'        => ['sometimes', 'integer', 'min:0', 'max:9999'],
             'meta_title'      => ['nullable', 'string', 'max:255'],
             'meta_description' => ['nullable', 'string', 'max:500'],
             'canonical_url'   => ['nullable', 'string', 'max:500', 'regex:#^https?://#'],

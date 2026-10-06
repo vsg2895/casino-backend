@@ -33,7 +33,7 @@ class ArticleController extends Controller
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path',
-        'published_at', 'position', 'active', 'featured', 'to_be_most_popular', 'noindex', 'type',
+        'published_at', 'active', 'featured', 'to_be_most_popular', 'noindex', 'type',
         'news_category_id', 'source_name', 'source_url', 'updated_at',
     ];
 
@@ -61,11 +61,12 @@ class ArticleController extends Controller
 
         $base = fn () => Article::query()->where('site_id', $site->id)->ofType($type);
 
+        // The order the public section renders in, so the list an editor reads
+        // is the page a visitor reads. Both sections are chronological now —
+        // see Article::scopeInListingOrder().
         $articles = $base()
             ->with('newsCategory')
-            ->orderBy('position')
-            ->orderByDesc('published_at')
-            ->orderByDesc('id')
+            ->inListingOrder()
             ->paginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
 
         return response()->json([

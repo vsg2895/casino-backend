@@ -96,7 +96,6 @@ class NewsDemoSeeder extends Seeder
                     // Staggered backwards so the feed has a real chronology and
                     // the lead story is not simply the last row inserted.
                     'published_at' => $now->copy()->subDays(2 + $i * 3)->setTime(9, 30),
-                    'position'     => ($i + 1) * 10,
                     'deleted_at'   => null,
                     'meta_title'       => $post['title'],
                     'meta_description' => $post['excerpt'],

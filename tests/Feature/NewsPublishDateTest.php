@@ -139,7 +139,8 @@ class NewsPublishDateTest extends TestCase
         // The order the feed renders in is the order it was in before.
         $this->assertSame(
             ['Newest', 'Middle', 'Oldest'],
-            Article::query()->ofType(Article::TYPE_NEWS)->newestFirst()->pluck('title')->all(),
+            Article::query()->ofType(Article::TYPE_NEWS)
+                ->orderByDesc('published_at')->orderByDesc('id')->pluck('title')->all(),
         );
     }
 
