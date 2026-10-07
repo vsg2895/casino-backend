@@ -84,6 +84,9 @@ class MailgunReceiverMessage extends Mailable
                 'backgroundColor' => $palette['background_color'],
                 'mutedColor'      => $palette['muted_text_color'],
                 'accentColor'     => $palette['accent_color'],
+                // Wording only — the link itself is appended by the layout and
+                // cannot be removed by editing the template.
+                'unsubscribeLabel' => $palette['unsubscribe_label'],
             ],
         );
     }

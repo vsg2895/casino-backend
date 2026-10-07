@@ -54,10 +54,19 @@ final class MailgunReceiverTemplate
     public const array PLAIN_FIELDS = [
         'preheader',
         'heading',
+        // The site promotion template's greeting line, and its three footer
+        // identity fields. Added so this message can carry EVERY block that
+        // template has — the campaign is meant to look like it, and a component
+        // the editor cannot reach is a difference they cannot fix.
+        'greeting',
         'button_text',
         'button_url',
         'hero_image_url',
         'hero_url',
+        'postal_address',
+        'contact_email',
+        'copyright_text',
+        'unsubscribe_label',
     ];
 
     /**
@@ -100,6 +109,10 @@ final class MailgunReceiverTemplate
         return [
             'preheader'        => '',
             'heading'          => '',
+            // Rendered above the body, exactly where the site template puts it.
+            // `{{name}}` and `{{email}}` are substituted per receiver, so
+            // "Hi {{name}}," is a working greeting rather than a literal.
+            'greeting'         => '',
             'intro_text'       => '',
             'secondary_text'   => '',
             'button_text'      => '',
@@ -108,6 +121,18 @@ final class MailgunReceiverTemplate
             'hero_url'         => '',
             'disclaimer_text'  => '',
             'footer_text'      => '',
+            // The structured footer the promotion template renders: address and
+            // contact on one line, copyright under it. Separate fields rather
+            // than one blob because that is how the layout lays them out, and
+            // because CAN-SPAM/GDPR expect a postal address to be identifiable
+            // as one.
+            'postal_address'   => '',
+            'contact_email'    => '',
+            'copyright_text'   => '',
+            // Wording of the unsubscribe line. The LINK is structural — the
+            // wrapper appends it and no template can remove it — but what it
+            // says is editorial.
+            'unsubscribe_label' => '',
             'button_text_font_size' => self::BUTTON_TEXT_DEFAULT_SIZE,
             ...self::COLOR_DEFAULTS,
         ];
@@ -209,10 +234,11 @@ final class MailgunReceiverTemplate
         //
         // Both are empty on every site template today, so in practice the footer
         // seeds empty and the message ends at the unsubscribe line.
-        $footer = implode("\n", array_filter([
-            $resolve('postal_address'),
-            $resolve('contact_email'),
-        ], static fn (string $line): bool => trim($line) !== ''));
+        // The footer's identity fields now map ACROSS, one for one, instead of
+        // being folded into the free-text block: the layout renders them in the
+        // same shape the site template does, so an imported message footer looks
+        // like the one it was imported from.
+        $footer = '';
 
         $size = (int) ($promo->button_text_font_size ?? 0);
 
@@ -226,8 +252,13 @@ final class MailgunReceiverTemplate
             // Same fallback chain the site layout uses for its top button, so the
             // imported button points where that template's button points.
             'button_url'      => $resolve('top_button_url') ?: ($resolve('cta_button_url') ?: $resolve('hero_url')),
+            'greeting'        => $resolve('greeting'),
             'hero_image_url'  => $resolve('hero_image_url'),
             'hero_url'        => $resolve('hero_url'),
+            'postal_address'  => $resolve('postal_address'),
+            'contact_email'   => $resolve('contact_email'),
+            'copyright_text'  => $resolve('copyright_text'),
+            'unsubscribe_label' => $resolve('unsubscribe_label'),
             'disclaimer_text' => $resolve('disclaimer_text'),
             'footer_text'     => $footer,
             'button_text_font_size' => $size > 0 ? $size : self::BUTTON_TEXT_DEFAULT_SIZE,
@@ -385,8 +416,16 @@ final class MailgunReceiverTemplate
             'message_template.button_url'       => ['nullable', 'string', 'url', 'max:2048'],
             'message_template.hero_image_url'   => ['nullable', 'string', 'url', 'max:2048'],
             'message_template.hero_url'         => ['nullable', 'string', 'url', 'max:2048'],
+            'message_template.greeting'         => ['nullable', 'string', 'max:255'],
             'message_template.disclaimer_text'  => ['nullable', 'string', 'max:20000'],
             'message_template.footer_text'      => ['nullable', 'string', 'max:20000'],
+            'message_template.postal_address'   => ['nullable', 'string', 'max:255'],
+            // Validated as an address, not free text: it is rendered as a
+            // mailto: link, and a typo there is a dead contact on a commercial
+            // message — which is one of the things that gets a domain reported.
+            'message_template.contact_email'    => ['nullable', 'string', 'email', 'max:255'],
+            'message_template.copyright_text'   => ['nullable', 'string', 'max:255'],
+            'message_template.unsubscribe_label' => ['nullable', 'string', 'max:120'],
             'message_template.button_text_font_size' => [
                 'nullable', 'integer',
                 'min:' . self::BUTTON_TEXT_MIN_SIZE,

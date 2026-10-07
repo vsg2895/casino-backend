@@ -12,6 +12,7 @@ use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Sleep;
 use Throwable;
 
 /**
@@ -30,6 +31,29 @@ use Throwable;
  */
 final class ReceiverCampaignSender
 {
+    /**
+     * Messages per minute, across one run of this sender.
+     *
+     * Pacing ONLY — nothing about which addresses are chosen, what is sent or
+     * how a failure is handled changes with it. After each send ATTEMPT the loop
+     * waits `60 / rate` seconds before the next one, so fifteen is one message
+     * roughly every four seconds.
+     *
+     * Why a pause at all: a provider that receives a hundred messages in two
+     * seconds from a young sending domain reads it as a burst, and bursts are
+     * what trips rate limiting and spam folders. Spreading the same volume over
+     * the minute costs nothing — the run is queued — and looks like a mailing
+     * list rather than a script.
+     *
+     * A SKIPPED receiver (already claimed, duplicate history row) does not wait:
+     * nothing left the server, so there is nothing to pace.
+     *
+     * Configurable in config/newsletters.php (RECEIVER_CAMPAIGN_PER_MINUTE),
+     * because the right number depends on the provider and the domain's age.
+     * 0 or less disables the wait entirely.
+     */
+    private const int DEFAULT_PER_MINUTE = 15;
+
     /**
      * @param  list<int>  $receiverIds
      * @return array{requested:int,eligible:int,sent:int,failed:int,skipped:int,suppressed:int,duration_ms:int}
@@ -152,6 +176,11 @@ final class ReceiverCampaignSender
                         'error'         => $message,
                     ]);
                 }
+
+                // Pace the NEXT message. Reached after a success and after a
+                // failure alike — both put a request on the provider — and never
+                // after a skip, which sent nothing. See DEFAULT_PER_MINUTE.
+                $this->pause();
             }
         } finally {
             // Release the chunk before returning so a worker processing many
@@ -168,6 +197,36 @@ final class ReceiverCampaignSender
             'suppressed'  => $suppressed,
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ];
+    }
+
+    /**
+     * Wait out this message's share of the minute.
+     *
+     * `Sleep` rather than `sleep()`: it is fakeable, so the tests assert the
+     * pacing without actually waiting, and a suite that sent twenty messages
+     * would otherwise take eighty seconds.
+     */
+    private function pause(): void
+    {
+        $seconds = $this->pauseSeconds();
+
+        if ($seconds > 0) {
+            Sleep::for($seconds)->seconds();
+        }
+    }
+
+    /**
+     * Seconds between messages, from the configured rate.
+     *
+     * `config()`, never `env()`: with `config:cache` — which every deploy runs —
+     * `env()` outside a config file returns null, and the pause would silently
+     * switch itself off in production and nowhere else.
+     */
+    private function pauseSeconds(): float
+    {
+        $perMinute = (int) config('newsletters.receiver_campaign_per_minute', self::DEFAULT_PER_MINUTE);
+
+        return $perMinute > 0 ? 60 / $perMinute : 0.0;
     }
 
     /**

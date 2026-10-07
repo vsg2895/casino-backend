@@ -91,6 +91,7 @@ class SmtpCredentialTestMessage extends Mailable
                 'backgroundColor' => $template['background_color'],
                 'mutedColor'      => $template['muted_text_color'],
                 'accentColor'     => $template['accent_color'],
+                'unsubscribeLabel' => $template['unsubscribe_label'],
             ],
         );
     }

@@ -637,6 +637,15 @@ Route::prefix('v1')->group(function () {
             // endpoint returns one generic message either way so it cannot be
             // used to enumerate addresses.
             ->middleware('throttle:6,1');
+        /*
+         * Google sign-in. Same prefix and the same site scoping as the password
+         * endpoints: an account is valid on one domain, and so is this token.
+         * Throttled a little looser than password login because there is no
+         * secret here to guess — the ID token either verifies against Google or
+         * it does not.
+         */
+        Route::post('forum/members/google', [ForumAuthController::class, 'google'])
+            ->middleware('throttle:12,1');
         Route::post('forum/members/forgot-password', [ForumAuthController::class, 'forgotPassword'])
             ->middleware('throttle:6,1');
         Route::post('forum/members/reset-password', [ForumAuthController::class, 'resetPassword'])

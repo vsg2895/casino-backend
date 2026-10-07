@@ -190,19 +190,19 @@ class WinpalackGuidesSeeder extends Seeder
                     <p>A wagering requirement is the amount you have to stake before bonus money becomes money you can withdraw. It is written as a multiplier — 30x, 40x — and that single number is what every banner leads with. On its own it tells you very little, because four other terms decide what the multiplier is actually applied to.</p>
 
                     <h2>What the multiplier multiplies</h2>
-                    <p>The first question is whether the requirement runs on the bonus alone or on the deposit and the bonus together. "30x bonus" on a £50 bonus is £1,500 of staking. "30x deposit + bonus" on a £50 deposit matched with £50 is £3,000 — the same headline multiplier, twice the work. Both are common, and only the terms page distinguishes them.</p>
+                    <p>The first question is whether the requirement runs on the bonus alone or on the deposit and the bonus together. "30x bonus" on a €50 bonus is €1,500 of staking. "30x deposit + bonus" on a €50 deposit matched with €50 is €3,000 — the same headline multiplier, twice the work. Both are common, and only the terms page distinguishes them.</p>
 
                     <h2>Game weighting</h2>
-                    <p>Not every stake counts the same. Slots typically contribute 100%, while table games often contribute a fraction — sometimes 10%, sometimes nothing at all. If blackjack contributes 10%, then £10 wagered moves the requirement by £1. A player who intends to clear a bonus at the tables is doing ten times the turnover they think they are.</p>
+                    <p>Not every stake counts the same. Slots typically contribute 100%, while table games often contribute a fraction — sometimes 10%, sometimes nothing at all. If blackjack contributes 10%, then €10 wagered moves the requirement by €1. A player who intends to clear a bonus at the tables is doing ten times the turnover they think they are.</p>
 
                     <h2>Maximum stake while a bonus is active</h2>
                     <p>Most bonuses cap the stake per spin or per hand until the requirement is cleared. Exceed it once and the usual penalty is forfeiture of the bonus and anything won from it. This is the term that most often turns a completed requirement into a refused withdrawal, and it is rarely on the banner.</p>
 
                     <h2>The clock, and the ceiling</h2>
-                    <p>Two limits close the picture. An expiry — commonly somewhere between seven and thirty days — after which whatever is left of the bonus is removed. And a maximum conversion, which caps how much of the winnings can become withdrawable regardless of what you actually won. A cap of 5x the bonus on a £20 bonus means £100 leaves with you and the rest does not.</p>
+                    <p>Two limits close the picture. An expiry — commonly somewhere between seven and thirty days — after which whatever is left of the bonus is removed. And a maximum conversion, which caps how much of the winnings can become withdrawable regardless of what you actually won. A cap of 5x the bonus on a €20 bonus means €100 leaves with you and the rest does not.</p>
 
                     <h2>A worked example</h2>
-                    <p>Assume a £50 deposit matched with £50, a 35x requirement on deposit plus bonus, slots at 100%, and a £5 maximum stake. The requirement is £3,500 of turnover. At £1 a spin that is 3,500 spins. Nothing about that is unusual or unfair — it is simply the actual size of the offer, and it is a different proposition from the "£50 free" on the banner.</p>
+                    <p>Assume a €50 deposit matched with €50, a 35x requirement on deposit plus bonus, slots at 100%, and a €5 maximum stake. The requirement is €3,500 of turnover. At €1 a spin that is 3,500 spins. Nothing about that is unusual or unfair — it is simply the actual size of the offer, and it is a different proposition from the "€50 free" on the banner.</p>
 
                     <h2>What to do with this</h2>
                     <p>Read the multiplier, then find the base it applies to, the weighting for the games you actually play, the maximum stake, the expiry and the conversion cap. Five numbers. If any of them is not published, treat that as the answer: an offer whose real cost cannot be calculated before you deposit is one you cannot evaluate.</p>
@@ -250,7 +250,7 @@ class WinpalackGuidesSeeder extends Seeder
                     <p>Most complaints about slow payouts are not about a casino refusing to pay. They are about limits that were published all along, in a section nobody reads until they have won. Here is what to look for, and when to look for it.</p>
 
                     <h2>The caps</h2>
-                    <p>Withdrawal limits are usually stated per day, per week or per month, and sometimes all three. A monthly cap is the one that bites: a win larger than the cap is not refused, it is paid out in instalments across as many months as it takes. A £10,000 win against a £2,000 monthly limit is five months of waiting, and every one of those payments is correct under the terms.</p>
+                    <p>Withdrawal limits are usually stated per day, per week or per month, and sometimes all three. A monthly cap is the one that bites: a win larger than the cap is not refused, it is paid out in instalments across as many months as it takes. A €10,000 win against a €2,000 monthly limit is five months of waiting, and every one of those payments is correct under the terms.</p>
                     <p>Caps also vary by account tier and by payment method. The number in the general terms is often the lowest one; the figure that applies to you may be better or worse.</p>
 
                     <h2>The pending period</h2>

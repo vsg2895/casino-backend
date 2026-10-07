@@ -387,6 +387,7 @@ class MailgunKeyController extends Controller
             'backgroundColor' => $template['background_color'],
             'mutedColor'      => $template['muted_text_color'],
             'accentColor'     => $template['accent_color'],
+            'unsubscribeLabel' => $template['unsubscribe_label'],
         ])->render();
 
         return response()->json(['html' => $html]);

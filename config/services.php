@@ -160,4 +160,20 @@ return [
         'token' => env('CONVERSION_POSTBACK_TOKEN'),
     ],
 
+    /*
+    | Google Sign-In for FORUM MEMBERS (never the admin panel).
+    |
+    | Only the client id is needed, and only to check the `aud` claim: the
+    | browser obtains the ID token itself through Google Identity Services, and
+    | this application verifies it rather than exchanging anything. There is no
+    | client SECRET here on purpose — the implicit/ID-token flow does not use
+    | one, and an unused secret in .env is a credential waiting to leak.
+    |
+    | Unset means the feature is off: the endpoint refuses every request and the
+    | sites hide the button.
+    */
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+    ],
+
 ];

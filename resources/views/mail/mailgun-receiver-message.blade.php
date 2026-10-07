@@ -34,7 +34,10 @@
                 <tbody>
                 <tr>
                     <td align="center" style="padding:0 20px 30px; text-align:center; font-family:Arial,Helvetica,sans-serif; font-size:12px; line-height:1.5; color:{{ $mutedColor }};">
-                        <a href="{{ $unsubscribeUrl }}" style="color:{{ $accentColor }}; text-decoration:underline;">Unsubscribe</a>
+                        {{-- The LINK is structural; only its wording is editorial.
+                             A blank label falls back to "Unsubscribe" rather than
+                             rendering an empty anchor nobody can see. --}}
+                        <a href="{{ $unsubscribeUrl }}" style="color:{{ $accentColor }}; text-decoration:underline;">{{ trim((string) ($unsubscribeLabel ?? '')) !== '' ? $unsubscribeLabel : 'Unsubscribe' }}</a>
                     </td>
                 </tr>
                 </tbody>

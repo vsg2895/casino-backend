@@ -10,10 +10,12 @@ use App\Jobs\SendForumAccountEmail;
 use App\Mail\ForumAccountEmail;
 use App\Models\ForumUser;
 use App\Models\Site;
+use App\Services\Auth\GoogleIdentityService;
 use App\Services\Forum\ForumPasswordResetService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -127,6 +129,124 @@ class ForumAuthController extends Controller
                 'member' => $this->profile($member),
             ],
         ]);
+    }
+
+    /**
+     * Sign in with Google.
+     *
+     * The browser obtains an ID token from Google Identity Services and posts it
+     * here; nothing in this flow redirects, and no client secret exists. See
+     * {@see GoogleIdentityService} for what is checked before any of this runs —
+     * in particular that the token was minted for OUR client id.
+     *
+     * THREE outcomes, and the middle one is the reason this is not just a
+     * create:
+     *
+     *   known Google link  → sign that member in.
+     *   known EMAIL        → attach the Google id to the existing account. A
+     *                        member who registered with a password and later
+     *                        presses the Google button must land in their own
+     *                        account, not a second one holding none of their
+     *                        posts. The address is Google-verified, so this is
+     *                        not a way to seize an account: the person proved
+     *                        control of the mailbox the account already names.
+     *   neither            → create the account, already verified, because the
+     *                        thing the verification email exists to prove has
+     *                        just been proven by Google.
+     *
+     * A created account still gets a password column — it is NOT NULL — so one
+     * is generated and discarded. Signing in with it is impossible; "forgot
+     * password" is the way across to the password flow.
+     */
+    public function google(Request $request, GoogleIdentityService $google): JsonResponse
+    {
+        $site = $this->site();
+
+        if (! $google->configured()) {
+            return response()->json(['message' => 'Google sign-in is not available.'], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+
+        $validated = $request->validate([
+            // Long: a Google ID token is a JWT with a full profile in it.
+            'id_token' => ['required', 'string', 'max:4096'],
+        ]);
+
+        $identity = $google->verify($validated['id_token']);
+
+        if ($identity === null) {
+            // One message for every failure — a bad audience, an expired token
+            // and an unverified address are not distinguished, because naming
+            // the failing check only helps whoever is probing.
+            return response()->json(['message' => 'Could not sign in with Google.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $member = ForumUser::query()
+            ->where('site_id', $site->id)
+            ->where(fn ($q) => $q->where('google_id', $identity['sub'])->orWhere('email', $identity['email']))
+            // A row matching on google_id wins over one matching only on email,
+            // which matters in the rare case where the address moved between
+            // two Google accounts.
+            ->orderByRaw('google_id = ? DESC', [$identity['sub']])
+            ->first();
+
+        if ($member === null) {
+            $member = new ForumUser([
+                'site_id'      => $site->id,
+                'display_name' => $this->displayNameFor($identity),
+                'email'        => $identity['email'],
+                'password'     => Str::password(32),
+            ]);
+        }
+
+        if ($member->status === ForumUser::STATUS_BANNED) {
+            return response()->json(['message' => 'This account cannot sign in.'], Response::HTTP_FORBIDDEN);
+        }
+
+        $member->forceFill([
+            'google_id' => $identity['sub'],
+            // Google has verified the address. An account that arrived this way
+            // can post immediately, which is the whole appeal of the button.
+            'email_verified_at' => $member->email_verified_at ?? now(),
+            'last_seen_at'      => now(),
+        ])->save();
+
+        // Same session cap as the password path — see login().
+        $member->tokens()
+            ->orderByDesc('id')
+            ->skip(self::MAX_TOKENS - 1)
+            ->take(PHP_INT_MAX)
+            ->get()
+            ->each->delete();
+
+        return response()->json([
+            'data' => [
+                'token'  => $member->createToken('forum:' . $site->slug)->plainTextToken,
+                'member' => $this->profile($member),
+            ],
+        ]);
+    }
+
+    /**
+     * A display name for an account being created from a Google profile.
+     *
+     * Google omits `name` for a profile that has none, and the column is NOT
+     * NULL with its own uniqueness handled by the model's slug. The local part
+     * of the address is the fallback — never the full address, which would put
+     * somebody's email on every post they write.
+     *
+     * @param  array{sub: string, email: string, name: string}  $identity
+     */
+    private function displayNameFor(array $identity): string
+    {
+        $name = trim($identity['name']);
+
+        if ($name !== '') {
+            return mb_substr($name, 0, 60);
+        }
+
+        $local = Str::before($identity['email'], '@');
+
+        return mb_substr($local === '' ? 'Member' : $local, 0, 60);
     }
 
     public function logout(Request $request): JsonResponse

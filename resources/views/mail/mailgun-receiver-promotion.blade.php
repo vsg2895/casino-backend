@@ -48,13 +48,22 @@
                     <td valign="top" bgcolor="{{ $t['background_color'] }}" style="padding:0; background-color:{{ $t['background_color'] }};">
 
                         {{-- Copy first: heading and both paragraphs. --}}
-                        @if ($has('heading') || $has('intro_text') || $has('secondary_text'))
+                        @if ($has('heading') || $has('greeting') || $has('intro_text') || $has('secondary_text'))
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
                                 <tbody>
                                 <tr>
                                     <td align="center" style="padding:30px 20px; text-align:center; color:{{ $t['text_color'] }}; font-family:{{ $face }};">
                                         @if ($has('heading'))
                                             <h2 style="margin:0 0 20px; font-size:24px; font-weight:600; line-height:1.4; color:{{ $t['heading_color'] }};">{{ $t['heading'] }}</h2>
+                                        @endif
+
+                                        {{-- Greeting, between the heading and the body —
+                                             the same position the site's promotion
+                                             template gives it. Plain text: {{name}} is
+                                             substituted per receiver by the mailable, and
+                                             anything else an editor types stays literal. --}}
+                                        @if ($has('greeting'))
+                                            <p style="margin:0 0 20px; font-size:17px; line-height:1.6; color:{{ $t['text_color'] }};">{{ $t['greeting'] }}</p>
                                         @endif
 
                                         @if ($has('intro_text'))
@@ -149,6 +158,29 @@
                                 <tr>
                                     <td align="center" style="padding:0 20px 8px; text-align:center; font-family:{{ $face }}; font-size:11px; line-height:1.5; color:{{ $t['muted_text_color'] }};">{!! $t['footer_text'] !!}</td>
                                 </tr>
+                                </tbody>
+                            </table>
+                        @endif
+
+                        {{-- The identity footer, in the shape the site's promotion
+                             template renders it: sender address and a contact on one
+                             line, the copyright under it. Separate fields rather than
+                             one blob because commercial mail is expected to carry a
+                             postal address that READS as one, and because the contact
+                             is a mailto: link rather than text. --}}
+                        @if ($has('postal_address') || $has('contact_email') || $has('copyright_text'))
+                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="{{ $block }}">
+                                <tbody>
+                                @if ($has('postal_address') || $has('contact_email'))
+                                    <tr>
+                                        <td align="center" style="padding:0 20px 4px; text-align:center; font-family:{{ $face }}; font-size:11px; line-height:1.5; color:{{ $t['muted_text_color'] }};">{{ $t['postal_address'] }}@if ($has('postal_address') && $has('contact_email')) &nbsp;·&nbsp; @endif @if ($has('contact_email'))<a href="mailto:{{ $t['contact_email'] }}" style="color:{{ $t['accent_color'] }}; text-decoration:underline;">{{ $t['contact_email'] }}</a>@endif</td>
+                                    </tr>
+                                @endif
+                                @if ($has('copyright_text'))
+                                    <tr>
+                                        <td align="center" style="padding:0 20px 8px; text-align:center; font-family:{{ $face }}; font-size:11px; line-height:1.5; color:{{ $t['muted_text_color'] }};">{{ $t['copyright_text'] }}</td>
+                                    </tr>
+                                @endif
                                 </tbody>
                             </table>
                         @endif
