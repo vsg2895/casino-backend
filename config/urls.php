@@ -30,5 +30,7 @@ return [
         'viglinksi'       => env('SITE_URL_VIGLINKSI', 'https://viglinksi.com'),
         'nongambles'      => env('SITE_URL_NONGAMBLES', 'https://nongambles.com'),
         'crogambline'     => env('SITE_URL_CROGAMBLINE', 'https://crogambline.com'),
+        'partnerplaypro'  => env('SITE_URL_PARTNERPLAYPRO', 'https://partnerplaypro.com'),
+        'luckysevenhub'   => env('SITE_URL_LUCKYSEVENHUB', 'https://luckysevenhub.com'),
     ],
 ];
