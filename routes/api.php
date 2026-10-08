@@ -608,6 +608,10 @@ Route::prefix('v1')->group(function () {
         // The Bonus area: categories with their offers. Drives both the header
         // dropdown and the home page sections. 404s unless bonus_enabled.
         Route::get('bonus',                   [PublicBonusController::class, 'index']);
+        // One category with its offers paginated — the page behind each entry in
+        // the Bonus menu. Declared after the bare `bonus` route, which it cannot
+        // shadow (different depth), and both 404 unless bonus_enabled.
+        Route::get('bonus/{slug}',            [PublicBonusController::class, 'show']);
 
         Route::get('news',                    [PublicNewsController::class, 'index']);
         // BEFORE news/{slug}, or `featured` is swallowed as a slug and the home

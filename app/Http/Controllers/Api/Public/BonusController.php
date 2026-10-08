@@ -40,6 +40,17 @@ class BonusController extends Controller
      */
     private const int OFFERS_PER_CATEGORY = 8;
 
+    /**
+     * Offers per page on a single category's own page (`/bonus/{slug}`).
+     *
+     * A page size, not a cap: everything filed under the heading is reachable,
+     * eight rows at a time. Deliberately its own constant — it answers "how big
+     * is a page of this listing", while OFFERS_PER_CATEGORY answers "how much of
+     * a category does the home strip preview", and the two moving together would
+     * be a coincidence rather than a rule.
+     */
+    private const int OFFERS_PER_PAGE = 8;
+
     public function index(Request $request): JsonResponse
     {
         /** @var Site $site */
@@ -104,6 +115,73 @@ class BonusController extends Controller
                     ])
                     ->values()
                     ->all();
+            },
+        );
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * One category, with its offers paginated.
+     *
+     * The page behind each entry in the Bonus menu. Before this, those entries
+     * were anchors into the home page (`/#bonus-<slug>`), which meant a category
+     * had no address of its own: it could not be linked to, indexed, or read
+     * past the handful of cards the home strip previews.
+     *
+     * Selection is the SAME predicate as index() — active, claimable, filed
+     * under this category, owned by a casino attached to and active on this site
+     * — so a card that appears in the home strip appears here, and nothing
+     * appears here that the strip would have refused to show. Only the depth
+     * differs: the strip previews, this paginates through everything.
+     *
+     * An inactive category is a 404, not an empty page. It is not published, so
+     * it has no address, and an empty listing would read as "this exists and
+     * holds nothing".
+     */
+    public function show(string $site, string $slug): JsonResponse
+    {
+        /** @var Site $site */
+        $site = app('current_site');
+        $this->assertEnabled($site);
+
+        $page = max(1, request()->integer('page', 1));
+
+        $data = SiteCache::remember(
+            $site->id,
+            ['bonus', 'special-offers'],
+            'bonus:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page,
+            3600,
+            function () use ($site, $slug, $page) {
+                $category = BonusCategory::query()->active()->where('slug', $slug)->firstOrFail();
+
+                $paginator = $category->specialOffers()
+                    ->where('special_offers.active', true)
+                    ->claimable()
+                    ->whereHas('casino.sites', function ($q) use ($site): void {
+                        $q->where('sites.id', $site->id)->where('casino_site.active', true);
+                    })
+                    ->whereHas('casino', fn ($q) => $q->where('casinos.active', true))
+                    ->with(['casino', 'bonusCategory'])
+                    ->orderBy('special_offers.sort_order')
+                    ->paginate(self::OFFERS_PER_PAGE, ['*'], 'page', $page);
+
+                return [
+                    'category' => [
+                        'id'          => $category->id,
+                        'name'        => $category->name,
+                        'slug'        => $category->slug,
+                        'description' => $category->description,
+                        'position'    => $category->position,
+                    ],
+                    'offers' => SpecialOfferResource::collection($paginator->getCollection())->resolve(),
+                    'meta'   => [
+                        'current_page' => $paginator->currentPage(),
+                        'last_page'    => $paginator->lastPage(),
+                        'per_page'     => $paginator->perPage(),
+                        'total'        => $paginator->total(),
+                    ],
+                ];
             },
         );
 
