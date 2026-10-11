@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -21,7 +22,7 @@ class UpdateMailgunReceiverRequest extends FormRequest
             'name'           => ['nullable', 'string', 'max:255'],
             // Editable: an address filed under the wrong list should be moved,
             // not deleted and re-imported.
-            'source_label'   => ['nullable', 'string', 'max:120'],
+            'source_label'   => ['sometimes', 'required', Rule::enum(ReceiverSource::class)],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\MailgunReceiver;
+use App\Support\Mail\ReceiverSource;
 use App\Models\MailgunReceiverImport;
 use App\Support\Spreadsheet\EmailSpreadsheetReader;
 use App\Support\Spreadsheet\SpreadsheetScan;
@@ -48,16 +49,19 @@ final class MailgunReceiverImportService
         string $extension,
     ): array {
         /*
-         * One label for the whole file.
+         * One source for the whole file: ours or somebody else's.
          *
          * The reader yields addresses, not rows — it is shared with the
          * newsletter import and deliberately knows about one column — so a
          * per-row "Source" column would mean changing what every importer
-         * reads. A file IS the list, in practice: "this spreadsheet is the
-         * Facebook export", which is also what makes the choice at send time
-         * meaningful.
+         * reads. A file IS the list in practice, which is also what makes the
+         * choice meaningful at send time.
+         *
+         * Falls back to the column's own default, so an import that says
+         * nothing files its addresses the same way every pre-existing one is
+         * filed.
          */
-        $sourceLabel = trim((string) $import->source_label) ?: null;
+        $sourceLabel = ($import->source_label ?? ReceiverSource::OurClients)->value;
         $scan = new SpreadsheetScan();
         $now = Carbon::now();
 

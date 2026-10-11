@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\Mail\ReceiverSource;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -31,7 +33,9 @@ class MailgunReceiverImport extends Model
     protected function casts(): array
     {
         return [
-            'finished_at' => 'datetime',
+            'finished_at'  => 'datetime',
+            // Whose list the uploaded file is — stamped on every row it creates.
+            'source_label' => ReceiverSource::class,
             'total'       => 'integer',
             'imported'    => 'integer',
             'duplicates'  => 'integer',

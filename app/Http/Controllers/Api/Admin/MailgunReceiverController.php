@@ -12,6 +12,7 @@ use App\Http\Resources\MailgunReceiverResource;
 use App\Jobs\ImportMailgunReceiversJob;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunReceiverImport;
+use App\Support\Mail\ReceiverSource;
 use App\Services\MailgunReceiverSendStateResetter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -155,7 +156,7 @@ class MailgunReceiverController extends Controller
             // Stamped on every row the job writes. Stored here rather than
             // passed to the job because the upload and the processing are two
             // requests, and the choice belongs to the upload.
-            'source_label'   => $request->validated()['source_label'] ?? null,
+            'source_label'   => $request->validated()['source_label'] ?? ReceiverSource::DEFAULT,
             'path'           => $path,
             'status'         => MailgunReceiverImport::STATUS_QUEUED,
         ]);
@@ -166,41 +167,32 @@ class MailgunReceiverController extends Controller
     }
 
     /**
-     * Every source label in use, with how many addresses carry it.
+     * The two sources, each with how many addresses carry it.
      *
-     * Drives the pickers: the Receivers filter, and the "which sources may this
-     * credential mail" control in Email Config. Returned as data rather than
-     * hardcoded anywhere, because the labels are whatever the operator typed on
-     * an import.
-     *
-     * The unlabelled rows are reported under the {@see MailgunReceiver::SOURCE_LABEL_NONE}
-     * sentinel so a credential can target them explicitly. Without that, naming
-     * any source would quietly exclude every address imported before labelling
-     * existed — usually most of the list.
+     * Drives the pickers: the Receivers filter and the "Send to sources"
+     * control in Email Config. The VALUES come from the enum — a closed set —
+     * while the counts come from the table, so the control can say how much is
+     * behind each option before it is chosen.
      */
     public function sources(): JsonResponse
     {
-        $labels = MailgunReceiver::query()
+        $counts = MailgunReceiver::query()
             ->selectRaw('source_label, COUNT(*) as total')
-            ->whereNotNull('source_label')
             ->groupBy('source_label')
-            ->orderBy('source_label')
-            ->get()
-            ->map(static fn ($row): array => [
-                'label' => (string) $row->source_label,
-                'total' => (int) $row->total,
-            ])
-            ->all();
+            ->pluck('total', 'source_label');
 
-        $unlabelled = MailgunReceiver::query()->whereNull('source_label')->count();
-
-        return response()->json([
-            'data' => [
-                'sources'    => $labels,
-                'unlabelled' => $unlabelled,
-                'none_value' => MailgunReceiver::SOURCE_LABEL_NONE,
+        $sources = array_map(
+            static fn (ReceiverSource $source): array => [
+                'value' => $source->value,
+                'label' => $source->label(),
+                // Present even at zero: an option that disappears when its list
+                // empties is an option an operator cannot plan with.
+                'total' => (int) ($counts[$source->value] ?? 0),
             ],
-        ]);
+            ReceiverSource::cases(),
+        );
+
+        return response()->json(['data' => ['sources' => $sources]]);
     }
 
     /** Poll target for a queued import. */
@@ -224,15 +216,13 @@ class MailgunReceiverController extends Controller
             $query->where('source', $request->query('source'));
         }
 
-        // Which list an address came from. The sentinel selects the rows with
-        // no label — the only way to find addresses imported before labelling
-        // existed, which is most of an established list.
-        $sourceLabel = trim((string) $request->query('source_label', ''));
+        // Whose list an address came from. An unrecognised value is ignored
+        // rather than matched, so a stale link shows everything instead of
+        // nothing.
+        $source = ReceiverSource::parse($request->query('source_label'));
 
-        if ($sourceLabel !== '') {
-            $sourceLabel === MailgunReceiver::SOURCE_LABEL_NONE
-                ? $query->whereNull('source_label')
-                : $query->where('source_label', $sourceLabel);
+        if ($source !== null) {
+            $query->where('source_label', $source->value);
         }
 
         // Has this address been mailed at all?

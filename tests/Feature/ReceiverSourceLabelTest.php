@@ -8,6 +8,7 @@ use App\Models\MailgunKey;
 use App\Models\MailgunReceiver;
 use App\Models\SmtpCredential;
 use App\Services\MailgunReceiverSelector;
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use OpenSpout\Common\Entity\Row;
@@ -16,18 +17,17 @@ use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
 
 /**
- * Source labels: where an address came from, and which of those lists a
- * credential is allowed to mail.
+ * Receiver sources — ours or somebody else's — and which of them a credential
+ * is allowed to mail.
  *
  * The rule that matters most is the DEFAULT. Every credential that existed
- * before this feature has no sources chosen, and must keep mailing the whole
- * list — a targeting control that silently narrows an audience to nothing on
- * deploy would be discovered as "the campaign sent to nobody".
+ * before this feature has no sources chosen, and must keep mailing everyone — a
+ * targeting control that silently narrows an audience to nothing on deploy
+ * would be discovered as "the campaign sent to nobody".
  *
- * The second is the sentinel. Most of an established list carries no label at
- * all (it was imported before labelling existed), so naming any source has to
- * leave a way to say "and the unlabelled ones too", or those addresses become
- * unreachable.
+ * The second is the column default. {@see ReceiverSource} is a closed set on a
+ * NOT NULL column, so there is no third "unlabelled" state: every address that
+ * predates the field is `our_clients`, which is what the migration backfills.
  */
 class ReceiverSourceLabelTest extends TestCase
 {
@@ -46,13 +46,15 @@ class ReceiverSourceLabelTest extends TestCase
         parent::tearDown();
     }
 
-    private function receiver(string $email, ?string $label): MailgunReceiver
+    private function receiver(string $email, ?ReceiverSource $source = null): MailgunReceiver
     {
-        return MailgunReceiver::create([
+        return MailgunReceiver::create(array_filter([
             'email'        => $email,
             'source'       => MailgunReceiver::SOURCE_IMPORT,
-            'source_label' => $label,
-        ]);
+            // Omitted entirely when null, so the column default applies — the
+            // same path every pre-existing address takes.
+            'source_label' => $source,
+        ]));
     }
 
     /** @param  list<string>|null  $sources */
@@ -85,95 +87,98 @@ class ReceiverSourceLabelTest extends TestCase
         return $emails;
     }
 
-    private function seedThreeLists(): void
+    private function seedBothSources(): void
     {
-        $this->receiver('fb@example.com', 'Facebook ads');
-        $this->receiver('partner@example.com', 'Partner list 3');
-        $this->receiver('legacy@example.com', null);
+        $this->receiver('ours@example.com', ReceiverSource::OurClients);
+        $this->receiver('external@example.com', ReceiverSource::ExternalClients);
+        // No source given: the column default files it with ours.
+        $this->receiver('legacy@example.com');
     }
 
     // ── the default ──────────────────────────────────────────────────────────
 
     public function test_a_credential_with_no_sources_chosen_mails_everyone(): void
     {
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
         $this->assertSame(
-            ['fb@example.com', 'legacy@example.com', 'partner@example.com'],
+            ['external@example.com', 'legacy@example.com', 'ours@example.com'],
             $this->audience(null),
         );
-        $this->assertCount(3, $this->audience([]), 'an empty list means all, never none');
+        $this->assertCount(3, $this->audience([]), 'an empty list means both, never neither');
+    }
+
+    public function test_choosing_both_is_the_same_as_choosing_neither(): void
+    {
+        $this->seedBothSources();
+
+        $this->assertCount(3, $this->audience(ReceiverSource::values()));
     }
 
     // ── targeting ────────────────────────────────────────────────────────────
 
-    public function test_choosing_one_source_mails_only_that_list(): void
+    public function test_our_clients_excludes_the_external_list(): void
     {
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
-        $this->assertSame(['fb@example.com'], $this->audience(['Facebook ads']));
-    }
-
-    public function test_several_sources_can_be_chosen_at_once(): void
-    {
-        $this->seedThreeLists();
-
+        // Two: the one filed explicitly and the one that took the default.
         $this->assertSame(
-            ['fb@example.com', 'partner@example.com'],
-            $this->audience(['Facebook ads', 'Partner list 3']),
+            ['legacy@example.com', 'ours@example.com'],
+            $this->audience([ReceiverSource::OurClients->value]),
         );
     }
 
-    public function test_the_sentinel_targets_the_unlabelled_addresses(): void
+    public function test_external_clients_excludes_ours(): void
     {
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
-        $this->assertSame(['legacy@example.com'], $this->audience([MailgunReceiver::SOURCE_LABEL_NONE]));
-
-        // And it composes with a real label, which is how an operator mails a
-        // new list together with everything imported before labelling existed.
-        $this->assertSame(
-            ['fb@example.com', 'legacy@example.com'],
-            $this->audience(['Facebook ads', MailgunReceiver::SOURCE_LABEL_NONE]),
-        );
+        $this->assertSame(['external@example.com'], $this->audience([ReceiverSource::ExternalClients->value]));
     }
 
-    public function test_an_unknown_label_mails_nobody_rather_than_everybody(): void
+    public function test_everything_that_predates_the_field_counts_as_ours(): void
     {
-        // The dangerous failure would be treating "no matches" as "no filter".
-        $this->seedThreeLists();
+        /*
+         * The migration adds the column NOT NULL with `our_clients` as its
+         * default, so every address already on the list is backfilled by the
+         * ADD COLUMN itself. This pins the model half of that: a receiver
+         * created without a source is ours.
+         */
+        $receiver = $this->receiver('legacy@example.com');
 
-        $this->assertSame([], $this->audience(['A list that does not exist']));
+        $this->assertSame(ReceiverSource::OurClients, $receiver->fresh()->source_label);
     }
 
-    // ── normalisation ────────────────────────────────────────────────────────
+    // ── bad input ────────────────────────────────────────────────────────────
 
-    public function test_a_label_is_trimmed_and_an_empty_one_becomes_null(): void
+    public function test_an_unknown_value_is_dropped_rather_than_matched(): void
     {
-        $padded = $this->receiver('padded@example.com', '  Facebook ads  ');
-        $blank = $this->receiver('blank@example.com', '   ');
+        // A stale admin bundle posting a removed option must not mail nobody.
+        $this->seedBothSources();
 
-        $this->assertSame('Facebook ads', $padded->fresh()->source_label);
-        $this->assertNull($blank->fresh()->source_label, '"" and NULL must not be two kinds of "no source"');
-
-        // So a padded label is reachable by the clean one.
-        $this->assertContains('padded@example.com', $this->audience(['Facebook ads']));
-    }
-
-    public function test_blank_entries_in_the_credential_list_are_ignored(): void
-    {
-        $this->seedThreeLists();
-
-        // A control that posts [""] must not be read as "one source named
-        // nothing", which would match no row and mail nobody.
+        $this->assertCount(3, $this->audience(['facebook_ads']));
         $this->assertCount(3, $this->audience(['', '   ']));
+    }
+
+    public function test_a_column_value_outside_the_enum_cannot_be_saved(): void
+    {
+        // The database is the last line: `enum` rejects anything else outright,
+        // so no layer that forgets to validate can file an address under a
+        // source no credential will ever target.
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        MailgunReceiver::query()->insert([
+            'email'             => 'rogue@example.com',
+            'source'            => MailgunReceiver::SOURCE_MANUAL,
+            'source_label'      => 'facebook_ads',
+            'unsubscribe_token' => MailgunReceiver::newToken(),
+        ]);
     }
 
     // ── both channels ────────────────────────────────────────────────────────
 
     public function test_the_smtp_channel_targets_the_same_way(): void
     {
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
         $credential = SmtpCredential::create([
             'name'             => 'Own SMTP',
@@ -191,7 +196,7 @@ class ReceiverSourceLabelTest extends TestCase
             'selection_order'  => MailgunReceiver::ORDER_OLDEST,
             'only_active'      => false,
             'status'           => 'active',
-            'receiver_sources' => ['Partner list 3'],
+            'receiver_sources' => [ReceiverSource::ExternalClients->value],
         ]);
 
         $emails = app(MailgunReceiverSelector::class)
@@ -199,10 +204,10 @@ class ReceiverSourceLabelTest extends TestCase
             ->pluck('email')
             ->all();
 
-        $this->assertSame(['partner@example.com'], $emails);
+        $this->assertSame(['external@example.com'], $emails);
     }
 
-    // ── the import, which is where labels come from ──────────────────────────
+    // ── the import, which is where a source is chosen ────────────────────────
 
     /** @param  list<array<int, string>>  $rows */
     private function csv(array $rows): UploadedFile
@@ -222,21 +227,25 @@ class ReceiverSourceLabelTest extends TestCase
         return new UploadedFile($path, 'receivers.csv', null, null, true);
     }
 
-    public function test_an_import_stamps_its_label_on_every_address(): void
+    public function test_an_import_stamps_its_source_on_every_address(): void
     {
         $this->actingAsAdmin();
 
         $this->post('/api/v1/admin/mailgun-receivers/import', [
             'file'         => $this->csv([['Email'], ['a@example.com'], ['b@example.com']]),
-            'source_label' => '  Facebook ads  ',
+            'source_label' => ReceiverSource::ExternalClients->value,
         ], ['Accept' => 'application/json'])->assertAccepted();
 
         // The queue is sync under test, so the job has already run.
-        $this->assertSame('Facebook ads', MailgunReceiver::query()->where('email', 'a@example.com')->value('source_label'));
-        $this->assertSame('Facebook ads', MailgunReceiver::query()->where('email', 'b@example.com')->value('source_label'));
+        foreach (['a@example.com', 'b@example.com'] as $email) {
+            $this->assertSame(
+                ReceiverSource::ExternalClients,
+                MailgunReceiver::query()->where('email', $email)->value('source_label'),
+            );
+        }
     }
 
-    public function test_an_import_without_a_label_leaves_the_rows_unlabelled(): void
+    public function test_an_import_that_says_nothing_files_the_rows_as_ours(): void
     {
         $this->actingAsAdmin();
 
@@ -244,23 +253,38 @@ class ReceiverSourceLabelTest extends TestCase
             'file' => $this->csv([['Email'], ['c@example.com']]),
         ], ['Accept' => 'application/json'])->assertAccepted();
 
-        $this->assertNull(MailgunReceiver::query()->where('email', 'c@example.com')->value('source_label'));
+        $this->assertSame(
+            ReceiverSource::OurClients,
+            MailgunReceiver::query()->where('email', 'c@example.com')->value('source_label'),
+        );
     }
 
-    public function test_the_sources_endpoint_lists_the_labels_in_use_with_counts(): void
+    public function test_an_import_refuses_a_source_outside_the_enum(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->post('/api/v1/admin/mailgun-receivers/import', [
+            'file'         => $this->csv([['Email'], ['d@example.com']]),
+            'source_label' => 'facebook_ads',
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('source_label');
+    }
+
+    public function test_the_sources_endpoint_lists_both_with_counts(): void
     {
         // What both pickers are built from: the Receivers filter and the
         // credential's "Send to sources" control.
         $this->actingAsAdmin();
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
         $this->getJson('/api/v1/admin/mailgun-receivers/sources')
             ->assertOk()
-            ->assertJsonPath('data.sources.0.label', 'Facebook ads')
-            ->assertJsonPath('data.sources.0.total', 1)
-            ->assertJsonPath('data.sources.1.label', 'Partner list 3')
-            ->assertJsonPath('data.unlabelled', 1)
-            ->assertJsonPath('data.none_value', MailgunReceiver::SOURCE_LABEL_NONE);
+            ->assertJsonPath('data.sources.0.value', ReceiverSource::OurClients->value)
+            ->assertJsonPath('data.sources.0.label', 'Our clients')
+            ->assertJsonPath('data.sources.0.total', 2)
+            ->assertJsonPath('data.sources.1.value', ReceiverSource::ExternalClients->value)
+            ->assertJsonPath('data.sources.1.total', 1);
     }
 
     // ── the count the admin sees ─────────────────────────────────────────────
@@ -272,11 +296,11 @@ class ReceiverSourceLabelTest extends TestCase
          * send. If it did not, an operator would preview one audience and mail
          * another — the exact drift the selector exists to prevent.
          */
-        $this->seedThreeLists();
+        $this->seedBothSources();
 
         $selector = app(MailgunReceiverSelector::class);
 
         $this->assertSame(3, $selector->eligible($this->credential(null)));
-        $this->assertSame(1, $selector->eligible($this->credential(['Facebook ads'])));
+        $this->assertSame(1, $selector->eligible($this->credential([ReceiverSource::ExternalClients->value])));
     }
 }

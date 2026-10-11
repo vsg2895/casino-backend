@@ -6,6 +6,7 @@ namespace App\Http\Requests\Admin;
 
 use App\Models\MailgunReceiver;
 use App\Support\Mail\MailgunReceiverTemplate;
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -47,8 +48,8 @@ class UpdateMailgunReceiverSettingsRequest extends FormRequest
              * typed on an import; the sentinel `__none__` targets the addresses
              * that carry no label at all.
              */
-            'receiver_sources'   => ['nullable', 'array', 'max:50'],
-            'receiver_sources.*' => ['string', 'max:120'],
+            'receiver_sources'   => ['nullable', 'array', 'max:2'],
+            'receiver_sources.*' => [Rule::enum(ReceiverSource::class)],
             // `only_active` is gone: every receiver on the list is sendable, so
             // there is no audience left for it to narrow. The column stays in the
             // table untouched — see MailgunReceiver::scopeSendable().

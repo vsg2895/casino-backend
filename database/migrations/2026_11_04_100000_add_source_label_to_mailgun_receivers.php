@@ -2,54 +2,82 @@
 
 declare(strict_types=1);
 
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Where a receiver CAME FROM, as an editorial label — and which of those labels
- * a credential is allowed to mail.
+ * Whose list a receiver came from, and which of those lists a credential may
+ * mail.
  *
- * ── Why a second column and not the existing `source` ───────────────────────
+ * ── The column ──────────────────────────────────────────────────────────────
  *
- * `mailgun_receivers.source` already exists and means something else: "import"
- * or "manual", i.e. HOW the row was created. It is a two-value enum the app
- * writes itself, and overloading it with free text would break the admin filter
- * that reads it and lose the distinction between a hand-added address and an
- * imported one.
+ * `mailgun_receivers.source_label` takes the two values of
+ * {@see ReceiverSource}: `our_clients` and `external_clients`. A closed set,
+ * enforced by the database, because the field is a SEND-TIME FILTER — free text
+ * would split an audience on a typo, and the half nobody notices is the half
+ * that never gets mailed again.
  *
- * `source_label` is the operator's own word for a list: "Facebook ads",
- * "Partner list 3", "October webinar". Nullable, because every address already
- * on the list predates the field and belongs to no named source — and a NULL
- * there means "unlabelled", never "all".
+ * NOT NULL with a default, which is what makes the backfill free: MySQL writes
+ * `our_clients` into every existing row as part of ADD COLUMN, so the 2,951
+ * addresses already on the list are correctly described as ours without a
+ * separate data pass. An UPDATE runs afterwards anyway, for the one case ADD
+ * COLUMN cannot cover — a column left over as NULLable from an earlier run of
+ * this migration.
  *
- * Indexed because it is a SELECTION predicate: the send picks its audience by
- * it, and that query runs over the whole receiver table.
+ * `enum` rather than a string + a CHECK: it is the narrowest type for two fixed
+ * values, it is one byte on disk, and an invalid value is rejected by the
+ * server rather than by whichever layer remembered to validate.
+ *
+ * ── Why not the existing `source` column ───────────────────────────────────
+ *
+ * `mailgun_receivers.source` is `import` / `manual` and says HOW the row was
+ * created. This says WHOSE it is. Overloading one column with both would lose a
+ * distinction the admin filter already uses.
  *
  * ── The credential side ─────────────────────────────────────────────────────
  *
- * `receiver_sources` on both credential tables is the list of labels that
- * credential may mail, as JSON. NULL or an empty array means "every source,
- * including unlabelled" — the behaviour every existing credential had before
- * this column existed, so nothing changes for them on deploy.
+ * `receiver_sources` on both credential tables lists the sources that
+ * credential may mail, as JSON. NULL or `[]` means BOTH — the audience every
+ * credential had before this column existed, so nothing changes for them on
+ * deploy.
  */
 return new class extends Migration
 {
+    /** Matches ReceiverSource::DEFAULT; repeated here because a migration is a historical record. */
+    private const string DEFAULT_SOURCE = 'our_clients';
+
     public function up(): void
     {
         Schema::table('mailgun_receivers', function (Blueprint $table): void {
             if (! Schema::hasColumn('mailgun_receivers', 'source_label')) {
-                $table->string('source_label', 120)->nullable()->after('source');
+                // ADD COLUMN with a default IS the backfill: every existing row
+                // is written as `our_clients` by the same statement.
+                $table->enum('source_label', ReceiverSource::values())
+                    ->default(self::DEFAULT_SOURCE)
+                    ->after('source');
+
+                // Indexed because the send filters on it, over the whole table.
                 $table->index('source_label', 'mailgun_receivers_source_label_idx');
             }
         });
 
-        // Carried on the staged import row so the queued job knows which label
+        // Belt and braces, and idempotent: covers a column that already existed
+        // as NULLable from an earlier shape of this migration.
+        DB::table('mailgun_receivers')->whereNull('source_label')->update([
+            'source_label' => self::DEFAULT_SOURCE,
+        ]);
+
+        // Carried on the staged import row so the queued job knows which source
         // to stamp: the file is uploaded in one request and processed in
         // another, and the choice belongs to the upload.
         Schema::table('mailgun_receiver_imports', function (Blueprint $table): void {
             if (! Schema::hasColumn('mailgun_receiver_imports', 'source_label')) {
-                $table->string('source_label', 120)->nullable()->after('filename');
+                $table->enum('source_label', ReceiverSource::values())
+                    ->default(self::DEFAULT_SOURCE)
+                    ->after('filename');
             }
         });
 

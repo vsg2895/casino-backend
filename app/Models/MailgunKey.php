@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Contracts\ReceiverCampaignCredential;
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -167,26 +168,27 @@ class MailgunKey extends Model implements ReceiverCampaignCredential
     }
 
     /**
-     * Source labels this credential may mail — empty means every source.
+     * Sources this credential may mail — empty means both.
      *
-     * Stored as JSON so the choice is a set, not one value: an operator mailing
-     * "Facebook ads" and "October webinar" from one credential should not need
-     * two credentials to do it.
+     * Stored as JSON so the choice is a SET: one credential can be pointed at
+     * our clients, at external ones, or at both without needing two
+     * credentials. Anything that is not a {@see ReceiverSource} is dropped, so
+     * a stale value left in the column can never widen or empty an audience.
      *
      * @return list<string>
      */
     public function campaignSourceLabels(): array
     {
-        $labels = $this->receiver_sources;
+        $sources = $this->receiver_sources;
 
-        if (! is_array($labels)) {
+        if (! is_array($sources)) {
             return [];
         }
 
-        return array_values(array_filter(
-            array_map(static fn ($label): string => trim((string) $label), $labels),
-            static fn (string $label): bool => $label !== '',
-        ));
+        return array_values(array_unique(array_filter(array_map(
+            static fn ($source): ?string => ReceiverSource::parse(is_string($source) ? $source : null)?->value,
+            $sources,
+        ))));
     }
 
     public function campaignSubject(): string

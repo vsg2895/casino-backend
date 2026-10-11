@@ -25,10 +25,10 @@ class MailgunReceiverResource extends JsonResource
             'email'               => $this->email,
             'name'                => $this->name,
             'source'              => $this->source,
-            // The operator's name for the list this address came from. Null for
-            // everything added before labels existed, and for manual rows the
-            // operator chose not to file.
-            'source_label'        => $this->source_label,
+            // Whose list this address came from: `our_clients` or
+            // `external_clients`. Never null — the column is NOT NULL with a
+            // default, and every address that predates the field is ours.
+            'source_label'        => $this->source_label?->value,
             'consent_recorded_at' => $this->consent_recorded_at,
             'is_active'           => (bool) $this->is_active,
             'unsubscribed_at'     => $this->unsubscribed_at,

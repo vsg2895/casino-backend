@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 /**
  * Spreadsheet upload.
@@ -21,12 +23,12 @@ class ImportMailgunReceiversRequest extends FormRequest
         return [
             'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:20480'],
             /*
-             * One label for every address in this file — "Facebook ads",
-             * "Partner list 3". Optional: an unlabelled import is still a
-             * perfectly good import, and those rows stay reachable because a
-             * credential can target "no source" explicitly.
+             * Whose list this file is — ours or somebody else's. Optional only
+             * because the column has a database default: an import that says
+             * nothing is treated as `our_clients`, the same as every address
+             * that predates the field.
              */
-            'source_label' => ['nullable', 'string', 'max:120'],
+            'source_label' => ['sometimes', 'required', Rule::enum(ReceiverSource::class)],
         ];
     }
 
@@ -35,7 +37,7 @@ class ImportMailgunReceiversRequest extends FormRequest
     {
         return [
             'file.mimes'              => 'Upload an .xlsx or .csv file.',
-            'source_label.max'        => 'A source name may be at most 120 characters.',
+            'source_label.Illuminate\\Validation\\Rules\\Enum' => 'Choose either our clients or external clients.',
         ];
     }
 }

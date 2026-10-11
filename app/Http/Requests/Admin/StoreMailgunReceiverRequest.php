@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Support\Mail\ReceiverSource;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -30,7 +31,7 @@ class StoreMailgunReceiverRequest extends FormRequest
             // Where this address came from, in the operator's own words. The
             // same label an import stamps, so a hand-added address can join a
             // list rather than being invisible to every targeted send.
-            'source_label'   => ['nullable', 'string', 'max:120'],
+            'source_label'   => ['sometimes', 'required', Rule::enum(ReceiverSource::class)],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];

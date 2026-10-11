@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\Mail\ReceiverSource;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -34,15 +35,6 @@ class MailgunReceiver extends Model
     /** @var list<string> */
     public const array SOURCES = [self::SOURCE_IMPORT, self::SOURCE_MANUAL];
 
-    /**
-     * Stands for "no source label" in a credential's chosen list.
-     *
-     * A real label can never collide with it: labels are trimmed on write and
-     * this one is not a plausible list name, while NULL cannot be put in a JSON
-     * array of strings and mean anything useful.
-     */
-    public const string SOURCE_LABEL_NONE = '__none__';
-
     public const string ORDER_NEWEST = 'newest';
     public const string ORDER_OLDEST = 'oldest';
 
@@ -66,6 +58,8 @@ class MailgunReceiver extends Model
     {
         return [
             'is_active'           => 'boolean',
+            // Whose list this address came from. A closed set — see ReceiverSource.
+            'source_label'        => ReceiverSource::class,
             'consent_recorded_at' => 'datetime',
             'unsubscribed_at'     => 'datetime',
             'last_sent_at'        => 'datetime',
@@ -83,21 +77,6 @@ class MailgunReceiver extends Model
                 $receiver->unsubscribe_token = self::newToken();
             }
         });
-    }
-
-    /**
-     * Trimmed, and empty becomes NULL.
-     *
-     * "" and NULL would otherwise be two different "no source" values, and only
-     * one of them would ever match a filter.
-     */
-    protected function sourceLabel(): Attribute
-    {
-        return Attribute::make(
-            set: static fn (?string $value): ?string => trim((string) $value) === ''
-                ? null
-                : trim((string) $value),
-        );
     }
 
     /**
@@ -158,45 +137,37 @@ class MailgunReceiver extends Model
     }
 
     /**
-     * Narrow to chosen source labels.
+     * Narrow to chosen sources.
      *
-     * Null or an empty list means EVERY source, including unlabelled — the
-     * behaviour every credential had before source labels existed, so an
-     * untouched credential keeps mailing the whole list.
+     * An empty list means BOTH — the audience every credential had before this
+     * column existed, so an untouched credential keeps mailing everyone. An
+     * unrecognised value is DROPPED rather than matched: a stale admin bundle
+     * sending a removed option must not quietly mail nobody.
      *
-     * A label is matched exactly. The sentinel {@see self::SOURCE_LABEL_NONE}
-     * selects the rows with no label at all, which is the only way to say
-     * "everyone imported before we started labelling" in a list that also has
-     * labels — without it those addresses would be unreachable the moment a
-     * credential names any source.
+     * The column is NOT NULL with a database default, so there is no third
+     * "unlabelled" state to account for — every address is one of the two.
      *
-     * @param  list<string>|null  $labels
+     * @param  list<ReceiverSource|string>|null  $sources
      * @param  Builder<MailgunReceiver>  $query
      * @return Builder<MailgunReceiver>
      */
-    public function scopeFromSources(Builder $query, ?array $labels): Builder
+    public function scopeFromSources(Builder $query, ?array $sources): Builder
     {
-        $labels = array_values(array_filter(
-            array_map(static fn ($label): string => trim((string) $label), $labels ?? []),
-            static fn (string $label): bool => $label !== '',
-        ));
+        $values = collect($sources ?? [])
+            ->map(static fn (ReceiverSource|string|null $source): ?ReceiverSource => ReceiverSource::parse($source))
+            ->filter()
+            ->map(static fn (ReceiverSource $source): string => $source->value)
+            ->unique()
+            ->values()
+            ->all();
 
-        if ($labels === []) {
+        // Both chosen is the same audience as none chosen; skipping the clause
+        // keeps the plan on the cheaper index.
+        if ($values === [] || count($values) === count(ReceiverSource::cases())) {
             return $query;
         }
 
-        $wantsUnlabelled = in_array(self::SOURCE_LABEL_NONE, $labels, true);
-        $named = array_values(array_filter($labels, static fn (string $l): bool => $l !== self::SOURCE_LABEL_NONE));
-
-        return $query->where(static function (Builder $q) use ($named, $wantsUnlabelled): void {
-            if ($named !== []) {
-                $q->whereIn('source_label', $named);
-            }
-
-            if ($wantsUnlabelled) {
-                $named === [] ? $q->whereNull('source_label') : $q->orWhereNull('source_label');
-            }
-        });
+        return $query->whereIn('source_label', $values);
     }
 
     /**
