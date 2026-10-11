@@ -31,6 +31,17 @@ interface ReceiverCampaignCredential
     /** Days a receiver rests after a send; null or < 1 disables the filter. */
     public function campaignCooldownDays(): ?int;
 
+    /**
+     * Source labels this credential may mail, or an empty list for every one.
+     *
+     * Read by {@see \App\Services\MailgunReceiverSelector::selection()}, so the
+     * preview count, the batch preview and the send all narrow to the same
+     * audience — the whole reason the predicate lives in one place.
+     *
+     * @return list<string>
+     */
+    public function campaignSourceLabels(): array;
+
     public function campaignSubject(): string;
 
     public function campaignHtml(): string;

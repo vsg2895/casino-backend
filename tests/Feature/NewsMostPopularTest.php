@@ -100,20 +100,25 @@ class NewsMostPopularTest extends TestCase
         $this->assertSame(['Newest', 'Middle', 'Oldest'], $this->rail($site, $key));
     }
 
-    public function test_the_rail_holds_eight(): void
+    public function test_the_rail_holds_ten(): void
     {
+        /*
+         * Ten, raised from eight when the rail got a page of its own: it is a
+         * sidebar, so the cap stays a cap, and "See more" now leads to
+         * /news/popular, which holds every pick twenty at a time.
+         */
         [$site, $key] = $this->newsSite();
 
-        for ($i = 1; $i <= 12; $i++) {
+        for ($i = 1; $i <= 14; $i++) {
             $this->newsPost($site->id, "Story {$i}", '2026-09-' . str_pad((string) $i, 2, '0', STR_PAD_LEFT) . ' 10:00:00', ['popular' => true]);
         }
 
         $rail = $this->rail($site, $key);
 
-        $this->assertCount(8, $rail);
-        // The eight NEWEST of the twelve, not the first eight written.
-        $this->assertSame('Story 12', $rail[0]);
-        $this->assertSame('Story 5', $rail[7]);
+        $this->assertCount(10, $rail);
+        // The ten NEWEST of the fourteen, not the first ten written.
+        $this->assertSame('Story 14', $rail[0]);
+        $this->assertSame('Story 5', $rail[9]);
     }
 
     public function test_a_hidden_or_unpublished_pick_never_reaches_the_rail(): void

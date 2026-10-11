@@ -80,6 +80,23 @@ class ArticleController extends Controller
                 // rule the public API applies, so the banner cannot claim an
                 // entry is live that a visitor cannot reach.
                 'published_count' => $base()->visible()->count(),
+                /*
+                 * The two curated rails, counted the way a visitor would count
+                 * them: VISIBLE and flagged, not merely flagged.
+                 *
+                 * A draft with "most popular" ticked is on no rail, and a
+                 * number that included it would send an editor looking for a
+                 * post the site is not showing — the same trap `published_count`
+                 * exists to close. Composed from the model's own scopes rather
+                 * than from re-stated WHERE clauses, so the admin and the public
+                 * query cannot drift apart.
+                 *
+                 * Four indexed COUNTs on a screen an editor opens by hand; the
+                 * listing itself is the expensive query here, not these.
+                 */
+                'most_popular_count' => $base()->visible()->toBeMostPopular()->count(),
+                // `featured` IS the home-page strip — see Article::scopeFeatured().
+                'featured_count'     => $base()->visible()->featured()->count(),
             ],
         ]);
     }

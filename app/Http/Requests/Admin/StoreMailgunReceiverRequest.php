@@ -27,6 +27,10 @@ class StoreMailgunReceiverRequest extends FormRequest
                 Rule::unique('mailgun_receivers', 'email'),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
+            // Where this address came from, in the operator's own words. The
+            // same label an import stamps, so a hand-added address can join a
+            // list rather than being invisible to every targeted send.
+            'source_label'   => ['nullable', 'string', 'max:120'],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];

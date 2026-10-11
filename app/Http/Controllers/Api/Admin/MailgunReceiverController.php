@@ -152,6 +152,10 @@ class MailgunReceiverController extends Controller
         $import = MailgunReceiverImport::create([
             'user_id'        => $request->user()?->id,
             'filename'       => $file->getClientOriginalName(),
+            // Stamped on every row the job writes. Stored here rather than
+            // passed to the job because the upload and the processing are two
+            // requests, and the choice belongs to the upload.
+            'source_label'   => $request->validated()['source_label'] ?? null,
             'path'           => $path,
             'status'         => MailgunReceiverImport::STATUS_QUEUED,
         ]);
@@ -159,6 +163,44 @@ class MailgunReceiverController extends Controller
         ImportMailgunReceiversJob::dispatch($import->id);
 
         return response()->json(['data' => $import], Response::HTTP_ACCEPTED);
+    }
+
+    /**
+     * Every source label in use, with how many addresses carry it.
+     *
+     * Drives the pickers: the Receivers filter, and the "which sources may this
+     * credential mail" control in Email Config. Returned as data rather than
+     * hardcoded anywhere, because the labels are whatever the operator typed on
+     * an import.
+     *
+     * The unlabelled rows are reported under the {@see MailgunReceiver::SOURCE_LABEL_NONE}
+     * sentinel so a credential can target them explicitly. Without that, naming
+     * any source would quietly exclude every address imported before labelling
+     * existed — usually most of the list.
+     */
+    public function sources(): JsonResponse
+    {
+        $labels = MailgunReceiver::query()
+            ->selectRaw('source_label, COUNT(*) as total')
+            ->whereNotNull('source_label')
+            ->groupBy('source_label')
+            ->orderBy('source_label')
+            ->get()
+            ->map(static fn ($row): array => [
+                'label' => (string) $row->source_label,
+                'total' => (int) $row->total,
+            ])
+            ->all();
+
+        $unlabelled = MailgunReceiver::query()->whereNull('source_label')->count();
+
+        return response()->json([
+            'data' => [
+                'sources'    => $labels,
+                'unlabelled' => $unlabelled,
+                'none_value' => MailgunReceiver::SOURCE_LABEL_NONE,
+            ],
+        ]);
     }
 
     /** Poll target for a queued import. */
@@ -180,6 +222,17 @@ class MailgunReceiverController extends Controller
 
         if (in_array($request->query('source'), MailgunReceiver::SOURCES, true)) {
             $query->where('source', $request->query('source'));
+        }
+
+        // Which list an address came from. The sentinel selects the rows with
+        // no label — the only way to find addresses imported before labelling
+        // existed, which is most of an established list.
+        $sourceLabel = trim((string) $request->query('source_label', ''));
+
+        if ($sourceLabel !== '') {
+            $sourceLabel === MailgunReceiver::SOURCE_LABEL_NONE
+                ? $query->whereNull('source_label')
+                : $query->where('source_label', $sourceLabel);
         }
 
         // Has this address been mailed at all?

@@ -290,6 +290,8 @@ class MailgunKeyController extends Controller
             'batch_size'      => (int) $mailgunKey->batch_size,
             'selection_order' => (string) $mailgunKey->selection_order,
             'cooldown_days'   => $mailgunKey->cooldown_days === null ? null : (int) $mailgunKey->cooldown_days,
+            // Which source lists this credential may mail; [] means all of them.
+            'receiver_sources' => $mailgunKey->campaignSourceLabels(),
             'message_subject' => $mailgunKey->message_subject ?? $seed['subject'],
             // The authored fields. A credential that has never been configured
             // opens on the source site's promotion template rather than a blank

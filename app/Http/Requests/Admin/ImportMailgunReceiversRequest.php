@@ -20,6 +20,13 @@ class ImportMailgunReceiversRequest extends FormRequest
     {
         return [
             'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:20480'],
+            /*
+             * One label for every address in this file — "Facebook ads",
+             * "Partner list 3". Optional: an unlabelled import is still a
+             * perfectly good import, and those rows stay reachable because a
+             * credential can target "no source" explicitly.
+             */
+            'source_label' => ['nullable', 'string', 'max:120'],
         ];
     }
 
@@ -28,6 +35,7 @@ class ImportMailgunReceiversRequest extends FormRequest
     {
         return [
             'file.mimes'              => 'Upload an .xlsx or .csv file.',
+            'source_label.max'        => 'A source name may be at most 120 characters.',
         ];
     }
 }

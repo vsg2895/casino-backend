@@ -19,6 +19,9 @@ class UpdateMailgunReceiverRequest extends FormRequest
                 Rule::unique('mailgun_receivers', 'email')->ignore($this->route('mailgun_receiver')),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
+            // Editable: an address filed under the wrong list should be moved,
+            // not deleted and re-imported.
+            'source_label'   => ['nullable', 'string', 'max:120'],
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];

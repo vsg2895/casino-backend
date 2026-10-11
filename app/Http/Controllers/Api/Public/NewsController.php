@@ -35,7 +35,19 @@ class NewsController extends Controller
     private const int FEATURED_LIMIT = 8;
 
     /** How many entries the feed's "Most popular" rail holds. */
-    private const int POPULAR_LIMIT = 8;
+    private const int POPULAR_LIMIT = 10;
+
+    /**
+     * Posts per page in the feed's GRID, and on the Most Popular page.
+     *
+     * The grid is what paginates. The two lead cards above it are the newest
+     * two of the whole feed and sit outside the page arithmetic, so page 1
+     * shows 2 + 20 and every later page shows 20 — see index().
+     */
+    private const int PER_PAGE = 20;
+
+    /** The lead cards above the grid: the newest two, shown on page 1 only. */
+    private const int LEAD_COUNT = 2;
 
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
@@ -62,13 +74,28 @@ class NewsController extends Controller
          * gone, not silently get everything.
          */
         $categorySlug = $request->string('category')->trim()->value() ?: null;
+        $page = max(1, $request->integer('page', 1));
+
+        /*
+         * `?all=1` returns the WHOLE feed, unpaginated.
+         *
+         * Two callers need every row and no page: the sitemap, which must list
+         * every news URL, and the nav gate, which only asks "is there any news
+         * at all". Paginating those would have silently cut the sitemap to one
+         * page of entries — a regression that shows up as pages quietly never
+         * being discovered, months later. Same escape hatch as `?limit=0` on
+         * the Bonus endpoint, and part of the cache key, so the two shapes
+         * cache apart.
+         */
+        $all = $request->boolean('all');
 
         $data = SiteCache::remember(
             $site->id,
             ['news'],
-            'news:index:site:' . $site->id . ':cat:' . ($categorySlug ?? 'all'),
+            'news:index:site:' . $site->id . ':cat:' . ($categorySlug ?? 'all')
+                . ($all ? ':all' : ':page:' . $page),
             3600,
-            function () use ($site, $categorySlug) {
+            function () use ($site, $categorySlug, $page, $all) {
                 $base = fn () => Article::query()
                     ->where('site_id', $site->id)
                     ->ofType(Article::TYPE_NEWS)
@@ -80,7 +107,48 @@ class NewsController extends Controller
                     $feed->whereHas('newsCategory', fn ($q) => $q->where('slug', $categorySlug)->where('active', true));
                 }
 
-                $posts = $feed->inListingOrder()->get(self::LIST_COLUMNS);
+                $ordered = $feed->inListingOrder();
+
+                if ($all) {
+                    $posts = $ordered->get(self::LIST_COLUMNS);
+                    $meta  = null;
+                } else {
+                    /*
+                     * `posts` stays what it has always been: the feed, in order.
+                     * Pagination does not change its meaning, it only decides
+                     * how much of it comes back — anything else would quietly
+                     * break every caller that reads this key.
+                     *
+                     * PAGE 1 IS TWO ROWS LONGER THAN THE REST, on purpose. The
+                     * page renders its first two posts as big lead cards and the
+                     * remainder as a grid, so a plain 20 would leave eighteen
+                     * cards under the leads while every later page showed
+                     * twenty. 22 on page 1 keeps the GRID at twenty everywhere,
+                     * which is the number a reader actually sees.
+                     */
+                    $firstPageSize = self::LEAD_COUNT + self::PER_PAGE;
+                    $offset = $page === 1 ? 0 : $firstPageSize + ($page - 2) * self::PER_PAGE;
+                    $take = $page === 1 ? $firstPageSize : self::PER_PAGE;
+
+                    $total = (clone $ordered)->toBase()->getCountForPagination();
+
+                    $posts = (clone $ordered)->skip($offset)->take($take)->get(self::LIST_COLUMNS);
+
+                    $meta = [
+                        'current_page' => $page,
+                        // Page 1 swallows the leads plus a full grid; every page
+                        // after it is one grid.
+                        'last_page'    => $total <= $firstPageSize
+                            ? 1
+                            : 1 + (int) ceil(($total - $firstPageSize) / self::PER_PAGE),
+                        'per_page'     => self::PER_PAGE,
+                        'total'        => $total,
+                        // How many the FIRST page holds, so the client never has
+                        // to re-derive the lead offset from two constants it does
+                        // not own.
+                        'first_page_size' => $firstPageSize,
+                    ];
+                }
 
                 /*
                  * The sidebar list is NOT filtered by the chosen category.
@@ -121,6 +189,7 @@ class NewsController extends Controller
                     'posts'      => ArticleResource::collection($posts)->resolve(),
                     'popular'    => ArticleResource::collection($popular)->resolve(),
                     'categories' => NewsCategoryResource::collection($categories)->resolve(),
+                    'meta'       => $meta,
                 ];
             },
         );
@@ -160,6 +229,55 @@ class NewsController extends Controller
 
             return ArticleResource::collection($articles)->resolve();
         });
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * The Most Popular rail's own page: every pick, paginated.
+     *
+     * The rail on the feed holds ten, which is a sidebar's worth and not a
+     * listing — "See more" needs somewhere to go that holds all of them.
+     *
+     * Same selection and same order as the rail (`to_be_most_popular`, newest
+     * PICK first), so the page is the rail continued rather than a second
+     * opinion about what is popular. Declared before `news/{slug}` in the
+     * routes file, or "popular" is swallowed as a post slug.
+     */
+    public function popular(Request $request): JsonResponse
+    {
+        /** @var Site $site */
+        $site = app('current_site');
+        $this->assertEnabled($site);
+
+        $page = max(1, $request->integer('page', 1));
+
+        $data = SiteCache::remember(
+            $site->id,
+            ['news'],
+            'news:popular:site:' . $site->id . ':page:' . $page,
+            3600,
+            function () use ($site, $page) {
+                $paginator = Article::query()
+                    ->where('site_id', $site->id)
+                    ->ofType(Article::TYPE_NEWS)
+                    ->visible()
+                    ->toBeMostPopular()
+                    ->with('newsCategory')
+                    ->mostPopularFirst()
+                    ->paginate(self::PER_PAGE, self::LIST_COLUMNS, 'page', $page);
+
+                return [
+                    'posts' => ArticleResource::collection($paginator->getCollection())->resolve(),
+                    'meta'  => [
+                        'current_page' => $paginator->currentPage(),
+                        'last_page'    => $paginator->lastPage(),
+                        'per_page'     => $paginator->perPage(),
+                        'total'        => $paginator->total(),
+                    ],
+                ];
+            },
+        );
 
         return response()->json(['data' => $data]);
     }

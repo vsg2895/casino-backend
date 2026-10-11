@@ -47,6 +47,17 @@ final class MailgunReceiverImportService
         string $path,
         string $extension,
     ): array {
+        /*
+         * One label for the whole file.
+         *
+         * The reader yields addresses, not rows — it is shared with the
+         * newsletter import and deliberately knows about one column — so a
+         * per-row "Source" column would mean changing what every importer
+         * reads. A file IS the list, in practice: "this spreadsheet is the
+         * Facebook export", which is also what makes the choice at send time
+         * meaningful.
+         */
+        $sourceLabel = trim((string) $import->source_label) ?: null;
         $scan = new SpreadsheetScan();
         $now = Carbon::now();
 
@@ -106,6 +117,7 @@ final class MailgunReceiverImportService
                     'email'               => $email,
                     'name'                => null,
                     'source'              => MailgunReceiver::SOURCE_IMPORT,
+                    'source_label'        => $sourceLabel,
                     'consent_recorded_at' => $now,
                     'unsubscribe_token'   => MailgunReceiver::newToken(),
                     'is_active'           => true,

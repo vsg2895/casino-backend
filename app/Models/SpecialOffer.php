@@ -107,8 +107,15 @@ class SpecialOffer extends Model
         return $slug;
     }
 
-    /** Title → lowercase ascii with non-alphanumerics collapsed to "_" ("offer" if empty). */
-    private static function slugBase(string $title): string
+    /**
+     * Title → lowercase ascii with non-alphanumerics collapsed to "_" ("offer"
+     * if empty).
+     *
+     * Public because the admin's update request normalises a hand-typed slug
+     * through it: a slug an editor writes and a slug this class generates then
+     * have the same shape, decided in one place.
+     */
+    public static function slugBase(string $title): string
     {
         $base = trim((string) Str::of($title)->lower()->ascii()->replaceMatches('/[^a-z0-9]+/', '_'), '_');
 

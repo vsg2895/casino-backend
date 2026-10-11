@@ -34,6 +34,15 @@ class MailgunReceiver extends Model
     /** @var list<string> */
     public const array SOURCES = [self::SOURCE_IMPORT, self::SOURCE_MANUAL];
 
+    /**
+     * Stands for "no source label" in a credential's chosen list.
+     *
+     * A real label can never collide with it: labels are trimmed on write and
+     * this one is not a plausible list name, while NULL cannot be put in a JSON
+     * array of strings and mean anything useful.
+     */
+    public const string SOURCE_LABEL_NONE = '__none__';
+
     public const string ORDER_NEWEST = 'newest';
     public const string ORDER_OLDEST = 'oldest';
 
@@ -44,6 +53,11 @@ class MailgunReceiver extends Model
         'email',
         'name',
         'source',
+        // The operator's own name for the list this address came from —
+        // "Facebook ads", "Partner list 3". Distinct from `source` above, which
+        // is "import" or "manual" and says how the ROW was created, not where
+        // the person came from. A send can be narrowed to chosen labels.
+        'source_label',
         'consent_recorded_at',
         'is_active',
     ];
@@ -69,6 +83,21 @@ class MailgunReceiver extends Model
                 $receiver->unsubscribe_token = self::newToken();
             }
         });
+    }
+
+    /**
+     * Trimmed, and empty becomes NULL.
+     *
+     * "" and NULL would otherwise be two different "no source" values, and only
+     * one of them would ever match a filter.
+     */
+    protected function sourceLabel(): Attribute
+    {
+        return Attribute::make(
+            set: static fn (?string $value): ?string => trim((string) $value) === ''
+                ? null
+                : trim((string) $value),
+        );
     }
 
     /**
@@ -125,6 +154,48 @@ class MailgunReceiver extends Model
             $sub->selectRaw('1')
                 ->from('mailgun_suppressions')
                 ->whereColumn('mailgun_suppressions.email', 'mailgun_receivers.email');
+        });
+    }
+
+    /**
+     * Narrow to chosen source labels.
+     *
+     * Null or an empty list means EVERY source, including unlabelled — the
+     * behaviour every credential had before source labels existed, so an
+     * untouched credential keeps mailing the whole list.
+     *
+     * A label is matched exactly. The sentinel {@see self::SOURCE_LABEL_NONE}
+     * selects the rows with no label at all, which is the only way to say
+     * "everyone imported before we started labelling" in a list that also has
+     * labels — without it those addresses would be unreachable the moment a
+     * credential names any source.
+     *
+     * @param  list<string>|null  $labels
+     * @param  Builder<MailgunReceiver>  $query
+     * @return Builder<MailgunReceiver>
+     */
+    public function scopeFromSources(Builder $query, ?array $labels): Builder
+    {
+        $labels = array_values(array_filter(
+            array_map(static fn ($label): string => trim((string) $label), $labels ?? []),
+            static fn (string $label): bool => $label !== '',
+        ));
+
+        if ($labels === []) {
+            return $query;
+        }
+
+        $wantsUnlabelled = in_array(self::SOURCE_LABEL_NONE, $labels, true);
+        $named = array_values(array_filter($labels, static fn (string $l): bool => $l !== self::SOURCE_LABEL_NONE));
+
+        return $query->where(static function (Builder $q) use ($named, $wantsUnlabelled): void {
+            if ($named !== []) {
+                $q->whereIn('source_label', $named);
+            }
+
+            if ($wantsUnlabelled) {
+                $named === [] ? $q->whereNull('source_label') : $q->orWhereNull('source_label');
+            }
         });
     }
 

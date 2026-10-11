@@ -133,6 +133,82 @@ class AdminCatalogTest extends TestCase
         $this->assertMatchesRegularExpression('/^summer_bonus_[a-z]{6}$/', $offer->fresh()->slug);
     }
 
+    /**
+     * The scenario this field was added for, start to finish.
+     *
+     * Duplicate "2nd Deposit Bonus" → the copy's address is baked from the copy
+     * title, `2nd_deposit_bonus_copy_xxxxxx`. Rename it to "3rd Deposit Bonus"
+     * and the address is still the old one, because a slug is generated once and
+     * never regenerated — correct for a live offer, useless for a duplicate
+     * nobody has linked yet. Clearing the field is the way out.
+     */
+    public function test_a_duplicate_can_be_renamed_and_its_link_rebuilt(): void
+    {
+        $this->actingAsAdmin();
+        $casino = Casino::factory()->create();
+
+        $id = $this->postJson('/api/v1/admin/special-offers', [
+            'casino_id' => $casino->id,
+            'title'     => '2nd Deposit Bonus',
+            'rating'    => 5,
+        ])->assertCreated()->json('data.id');
+
+        $copyId = $this->postJson("/api/v1/admin/special-offers/{$id}/duplicate")
+            ->assertCreated()->json('data.id');
+
+        $this->assertMatchesRegularExpression(
+            '/^2nd_deposit_bonus_copy_[a-z]{6}$/',
+            SpecialOffer::find($copyId)->slug,
+        );
+
+        // A rename alone still leaves the address where it was.
+        $this->putJson("/api/v1/admin/special-offers/{$copyId}", ['title' => '3rd Deposit Bonus'])->assertOk();
+        $this->assertStringStartsWith('2nd_deposit_bonus_copy_', SpecialOffer::find($copyId)->slug);
+
+        // Clearing the field rebuilds it from the title that is there now.
+        $this->putJson("/api/v1/admin/special-offers/{$copyId}", ['slug' => ''])->assertOk();
+        $this->assertMatchesRegularExpression(
+            '/^3rd_deposit_bonus_[a-z]{6}$/',
+            SpecialOffer::find($copyId)->slug,
+        );
+    }
+
+    public function test_an_editor_can_set_the_slug_and_free_text_is_normalised(): void
+    {
+        $this->actingAsAdmin();
+        $casino = Casino::factory()->create();
+
+        $id = $this->postJson('/api/v1/admin/special-offers', [
+            'casino_id' => $casino->id,
+            'title'     => 'Welcome Offer',
+            'rating'    => 5,
+        ])->assertCreated()->json('data.id');
+
+        // Typed as words: the request normalises it exactly as the generator
+        // would, so a hand-written address and a generated one look alike.
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['slug' => '3rd Deposit Bonus!'])
+            ->assertOk()
+            ->assertJsonPath('data.slug', '3rd_deposit_bonus');
+
+        $this->assertSame('3rd_deposit_bonus', SpecialOffer::find($id)->slug);
+    }
+
+    public function test_an_address_another_offer_already_owns_is_refused(): void
+    {
+        $this->actingAsAdmin();
+        $casino = Casino::factory()->create();
+
+        $taken = SpecialOffer::create(['casino_id' => $casino->id, 'title' => 'Taken', 'rating' => 5]);
+        $mine  = SpecialOffer::create(['casino_id' => $casino->id, 'title' => 'Mine', 'rating' => 5]);
+
+        $this->putJson("/api/v1/admin/special-offers/{$mine->id}", ['slug' => $taken->slug])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('slug');
+
+        // And its own address is not a collision with itself.
+        $this->putJson("/api/v1/admin/special-offers/{$mine->id}", ['slug' => $mine->slug])->assertOk();
+    }
+
     public function test_special_offer_slug_is_name_based_with_a_unique_suffix(): void
     {
         $this->actingAsAdmin();

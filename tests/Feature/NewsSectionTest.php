@@ -68,6 +68,144 @@ class NewsSectionTest extends TestCase
         );
     }
 
+    // ── paging the feed ──────────────────────────────────────────────────────
+
+    /** @return array<string, mixed> the whole `data` payload for one feed page */
+    private function feedPage(int $page = 1): array
+    {
+        return $this->getJson(
+            $this->publicBase($this->site) . '/news?page=' . $page,
+            $this->siteHeaders($this->key),
+        )->assertOk()->json('data');
+    }
+
+    /** Creates $count news posts, newest first by title: "Story 1" is newest. */
+    private function manyNews(int $count): void
+    {
+        for ($i = 1; $i <= $count; $i++) {
+            $this->article(Article::TYPE_NEWS, "Story {$i}", Carbon::now()->subDays($i));
+        }
+    }
+
+    public function test_page_one_holds_the_two_leads_plus_a_full_grid(): void
+    {
+        /*
+         * The shape the page renders: two big cards, then a grid of twenty.
+         * Page 1 therefore carries 22 rows — a plain 20 would leave eighteen
+         * cards under the leads while every later page showed twenty, and the
+         * grid is the number a reader actually counts.
+         */
+        $this->manyNews(25);
+
+        $data = $this->feedPage(1);
+
+        $this->assertCount(22, $data['posts']);
+        $this->assertSame('Story 1', $data['posts'][0]['title']);
+        $this->assertSame('Story 22', $data['posts'][21]['title']);
+
+        $this->assertSame(25, $data['meta']['total']);
+        $this->assertSame(22, $data['meta']['first_page_size']);
+        $this->assertSame(20, $data['meta']['per_page']);
+        $this->assertSame(2, $data['meta']['last_page']);
+    }
+
+    public function test_page_two_continues_where_page_one_stopped(): void
+    {
+        $this->manyNews(25);
+
+        $data = $this->feedPage(2);
+
+        // Nothing repeated from page 1, nothing skipped between them.
+        $this->assertSame(['Story 23', 'Story 24', 'Story 25'], array_column($data['posts'], 'title'));
+        $this->assertSame(2, $data['meta']['current_page']);
+    }
+
+    public function test_a_short_feed_is_a_single_page(): void
+    {
+        $this->manyNews(5);
+
+        $meta = $this->feedPage(1)['meta'];
+
+        $this->assertSame(1, $meta['last_page'], 'five posts must not advertise a second page');
+        $this->assertSame(5, $meta['total']);
+    }
+
+    public function test_the_sitemap_can_still_ask_for_everything(): void
+    {
+        /*
+         * `?all=1`. The sitemap must list every news URL and the nav gate only
+         * asks whether any news exists; paginating those would have cut the
+         * sitemap to one page of entries, which fails silently — pages simply
+         * never get discovered.
+         */
+        $this->manyNews(25);
+
+        $data = $this->getJson(
+            $this->publicBase($this->site) . '/news?all=1',
+            $this->siteHeaders($this->key),
+        )->assertOk()->json('data');
+
+        $this->assertCount(25, $data['posts']);
+        $this->assertNull($data['meta']);
+    }
+
+    // ── the Most Popular rail and its page ───────────────────────────────────
+
+    public function test_the_rail_holds_ten_and_its_page_holds_all_of_them(): void
+    {
+        $this->manyNews(25);
+
+        // Everything picked, newest pick last so the order is unambiguous.
+        foreach (Article::query()->orderBy('id')->get() as $i => $post) {
+            Carbon::setTestNow(Carbon::now()->addSeconds($i));
+            $post->update(['to_be_most_popular' => true]);
+        }
+        Carbon::setTestNow();
+
+        $rail = $this->feedPage(1)['popular'];
+        $this->assertCount(10, $rail, 'the rail is a sidebar, not a listing');
+
+        $first = $this->getJson($this->publicBase($this->site) . '/news/popular', $this->siteHeaders($this->key))
+            ->assertOk()->json('data');
+
+        $this->assertCount(20, $first['posts']);
+        $this->assertSame(25, $first['meta']['total']);
+        $this->assertSame(2, $first['meta']['last_page']);
+
+        // The page continues the rail rather than restarting it: same order,
+        // so the first ten of page 1 ARE the rail.
+        $this->assertSame(
+            array_column($rail, 'title'),
+            array_slice(array_column($first['posts'], 'title'), 0, 10),
+        );
+
+        $second = $this->getJson($this->publicBase($this->site) . '/news/popular?page=2', $this->siteHeaders($this->key))
+            ->assertOk()->json('data');
+
+        $this->assertCount(5, $second['posts']);
+    }
+
+    public function test_the_most_popular_page_shows_only_published_picks(): void
+    {
+        $live = $this->article(Article::TYPE_NEWS, 'Picked and live');
+        $live->update(['to_be_most_popular' => true]);
+
+        $hidden = $this->article(Article::TYPE_NEWS, 'Picked but switched off');
+        $hidden->update(['to_be_most_popular' => true, 'active' => false]);
+
+        $draft = Article::create([
+            'site_id' => $this->site->id, 'type' => Article::TYPE_NEWS,
+            'title' => 'Picked but unpublished', 'body' => 'x', 'published_at' => null,
+            'to_be_most_popular' => true,
+        ]);
+        $this->assertNotNull($draft->id);
+
+        $data = $this->getJson($this->publicBase($this->site) . '/news/popular', $this->siteHeaders($this->key))
+            ->assertOk()->json('data');
+
+        $this->assertSame(['Picked and live'], array_column($data['posts'], 'title'));
+    }
+
     // ── the feed ─────────────────────────────────────────────────────────────
 
     public function test_the_news_feed_returns_published_news(): void

@@ -83,6 +83,8 @@ class SmtpCredential extends Model implements ReceiverCampaignCredential
         'selection_order',
         'cooldown_days',
         'only_active',
+        // Which source labels this credential may mail; [] or null = all.
+        'receiver_sources',
         'message_subject',
         'message_html',
         'message_template',
@@ -101,6 +103,8 @@ class SmtpCredential extends Model implements ReceiverCampaignCredential
             'cooldown_days'    => 'integer',
             'last_run_at'      => 'datetime',
             'message_template' => 'array',
+            // A list of source labels, or null for every source.
+            'receiver_sources' => 'array',
         ];
     }
 
@@ -183,6 +187,29 @@ class SmtpCredential extends Model implements ReceiverCampaignCredential
     public function campaignCooldownDays(): ?int
     {
         return $this->cooldown_days === null ? null : (int) $this->cooldown_days;
+    }
+
+    /**
+     * Source labels this credential may mail — empty means every source.
+     *
+     * Stored as JSON so the choice is a set, not one value: an operator mailing
+     * "Facebook ads" and "October webinar" from one credential should not need
+     * two credentials to do it.
+     *
+     * @return list<string>
+     */
+    public function campaignSourceLabels(): array
+    {
+        $labels = $this->receiver_sources;
+
+        if (! is_array($labels)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn ($label): string => trim((string) $label), $labels),
+            static fn (string $label): bool => $label !== '',
+        ));
     }
 
     public function campaignSubject(): string

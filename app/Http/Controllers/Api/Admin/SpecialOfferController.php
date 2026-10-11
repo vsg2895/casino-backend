@@ -53,11 +53,11 @@ class SpecialOfferController extends Controller
 
     public function update(UpdateSpecialOfferRequest $request, SpecialOffer $specialOffer): SpecialOfferResource
     {
-        // Captured BEFORE the write. The model's saving hook regenerates the slug
-        // whenever the title changes, and the casino may be reassigned — so after
-        // update() the old detail-page tag and the previous casino's sites are
-        // unreachable, and the pages they back would keep serving the stale offer
-        // for the rest of the ISR window.
+        // Captured BEFORE the write. The slug can move — an editor may set a new
+        // one, or clear the field to have it regenerated from the title — and the
+        // casino may be reassigned, so after update() the old detail-page tag and
+        // the previous casino's sites are unreachable, and the pages they back
+        // would keep serving the stale offer for the rest of the ISR window.
         $previousSiteIds = $this->siteIdsFor($specialOffer);
         $previousSlug = (string) $specialOffer->slug;
 

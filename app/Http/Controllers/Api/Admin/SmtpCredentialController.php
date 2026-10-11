@@ -167,6 +167,8 @@ class SmtpCredentialController extends Controller
             'cooldown_days'   => $smtpCredential->cooldown_days === null
                 ? null
                 : (int) $smtpCredential->cooldown_days,
+            // Which source lists this credential may mail; [] means all of them.
+            'receiver_sources' => $smtpCredential->campaignSourceLabels(),
             'message_subject' => $smtpCredential->message_subject ?? $seed['subject'],
             // A credential that has never been configured opens on the source
             // site's promotion template rather than a blank form; one that HAS

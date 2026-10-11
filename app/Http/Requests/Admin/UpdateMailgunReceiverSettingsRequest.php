@@ -35,6 +35,20 @@ class UpdateMailgunReceiverSettingsRequest extends FormRequest
             'selection_order' => ['required', 'string', Rule::in(MailgunReceiver::ORDERS)],
             // Null means "no cooldown" — the same convention as warmup.
             'cooldown_days'   => ['nullable', 'integer', 'min:0', 'max:365'],
+            /*
+             * Which source lists this credential may mail.
+             *
+             * An empty array (or the field absent) means EVERY source, which is
+             * what every credential meant before labels existed — so saving the
+             * modal without touching the control cannot silently narrow an
+             * existing audience to nothing.
+             *
+             * Values are free text, because the labels are whatever an operator
+             * typed on an import; the sentinel `__none__` targets the addresses
+             * that carry no label at all.
+             */
+            'receiver_sources'   => ['nullable', 'array', 'max:50'],
+            'receiver_sources.*' => ['string', 'max:120'],
             // `only_active` is gone: every receiver on the list is sendable, so
             // there is no audience left for it to narrow. The column stays in the
             // table untouched — see MailgunReceiver::scopeSendable().

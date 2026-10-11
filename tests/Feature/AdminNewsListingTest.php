@@ -53,6 +53,84 @@ class AdminNewsListingTest extends TestCase
         return array_column($res->json('data'), 'title');
     }
 
+    public function test_the_meta_counts_the_whole_section_not_the_page(): void
+    {
+        /*
+         * The four numbers the screen puts above the table. Each is counted
+         * server-side over the WHOLE section, because the admin only ever holds
+         * one page — counting the rows in hand would be wrong the moment there
+         * is a second one, which is the bug `published_count` was added to fix.
+         *
+         * The two rail counts are VISIBLE-and-flagged, not merely flagged: a
+         * draft with the box ticked is on no rail, and counting it would send an
+         * editor looking for a post the site is not showing.
+         */
+        [$site] = $this->siteWithKey(['news_enabled' => true]);
+        $this->actingAsAdmin();
+
+        // Live, on both rails.
+        $both = $this->newsFor($site->id, 'Live and on both rails', '2026-09-20 10:00:00');
+        $both->update(['to_be_most_popular' => true, 'featured' => true]);
+
+        // Live, home strip only.
+        $this->newsFor($site->id, 'Live and featured', '2026-09-19 10:00:00')->update(['featured' => true]);
+
+        // Live, neither rail.
+        $this->newsFor($site->id, 'Just live', '2026-09-18 10:00:00');
+
+        // Switched off, yet flagged for both rails — counted in the total and
+        // in nothing else.
+        $hidden = $this->newsFor($site->id, 'Hidden but ticked', '2026-09-17 10:00:00');
+        $hidden->update(['active' => false, 'to_be_most_popular' => true, 'featured' => true]);
+
+        // Scheduled for the future, and flagged — same treatment: it is not
+        // published, so it is on no rail.
+        $future = $this->newsFor($site->id, 'Scheduled', '2099-01-01 10:00:00');
+        $future->update(['to_be_most_popular' => true, 'featured' => true]);
+
+        // A sixth row, so the section does not fit on one page: 5 is the
+        // smallest page size the endpoint accepts.
+        $this->newsFor($site->id, 'A plain draft', '2026-09-16 10:00:00')->update(['active' => false]);
+
+        $res = $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news&per_page=5")->assertOk();
+
+        // Five rows in hand, six in the section — the counts below describe the
+        // section, which is the whole point of them coming from the server.
+        $this->assertCount(5, $res->json('data'));
+        $res->assertJsonPath('meta.total', 6)
+            ->assertJsonPath('meta.published_count', 3)
+            ->assertJsonPath('meta.most_popular_count', 1)
+            ->assertJsonPath('meta.featured_count', 2);
+    }
+
+    public function test_the_counts_do_not_leak_across_sites_or_sections(): void
+    {
+        [$site] = $this->siteWithKey(['news_enabled' => true, 'guides_enabled' => true]);
+        [$other] = $this->siteWithKey(['news_enabled' => true]);
+        $this->actingAsAdmin();
+
+        $this->newsFor($site->id, 'Ours', '2026-09-20 10:00:00')->update(['featured' => true]);
+        $this->newsFor($other->id, 'Another site', '2026-09-20 10:00:00')->update(['featured' => true]);
+
+        // A guide on the same site, flagged the same way: different section,
+        // and the News screen must not count it.
+        Article::create([
+            'site_id'      => $site->id,
+            'type'         => Article::TYPE_GUIDE,
+            'title'        => 'A guide',
+            'slug'         => 'a-guide',
+            'active'       => true,
+            'featured'     => true,
+            'published_at' => Carbon::parse('2026-09-20 10:00:00'),
+        ]);
+
+        $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('meta.published_count', 1)
+            ->assertJsonPath('meta.featured_count', 1);
+    }
+
     public function test_the_listing_is_newest_first(): void
     {
         // The admin list has to render in the order the public feed does, or

@@ -42,6 +42,9 @@ final class MailgunReceiverSelector
         return MailgunReceiver::query()
             ->sendable()
             ->notSuppressed()
+            // Whose list this credential is allowed to mail. Empty means every
+            // source, which is what every credential meant before labels existed.
+            ->fromSources($credential->campaignSourceLabels())
             ->notContactedWithin($credential->campaignCooldownDays())
             // Anyone already claimed today cannot be mailed again today, so
             // leaving them in only wasted batch slots — the run skipped them

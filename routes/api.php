@@ -429,6 +429,10 @@ Route::prefix('v1')->group(function () {
         // swallows "count", "import" and "bulk" as ids — the ordering rule the
         // existing resources in this file follow.
         Route::get('mailgun-receivers/count', [MailgunReceiverController::class, 'count']);
+        // Distinct source labels, for the Receivers filter and for the
+        // targeting control in Email Config. A literal segment, so it is
+        // declared BEFORE the apiResource that would swallow it as an id.
+        Route::get('mailgun-receivers/sources', [MailgunReceiverController::class, 'sources']);
         Route::post('mailgun-receivers/import', [MailgunReceiverController::class, 'import']);
         Route::get('mailgun-receivers/imports/{mailgun_receiver_import}', [MailgunReceiverController::class, 'importStatus']);
         Route::post('mailgun-receivers/bulk', [MailgunReceiverController::class, 'bulk']);
@@ -617,6 +621,8 @@ Route::prefix('v1')->group(function () {
         // BEFORE news/{slug}, or `featured` is swallowed as a slug and the home
         // page asks for a post that does not exist.
         Route::get('news/featured',           [PublicNewsController::class, 'featured']);
+        // Likewise BEFORE news/{slug}: the Most Popular listing, paginated.
+        Route::get('news/popular',            [PublicNewsController::class, 'popular']);
         Route::get('news/{slug}',             [PublicNewsController::class, 'show']);
 
         /*

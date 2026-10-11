@@ -22,6 +22,8 @@ class MailgunReceiverImport extends Model
 
     protected $fillable = [
         'user_id', 'filename', 'path', 'status',
+        // The source label every row in this file is stamped with.
+        'source_label',
         'total', 'imported', 'duplicates', 'suppressed', 'rejected',
         'rejected_rows', 'error', 'finished_at',
     ];
