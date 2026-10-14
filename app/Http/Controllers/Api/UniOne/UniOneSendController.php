@@ -152,7 +152,9 @@ class UniOneSendController extends Controller
             ->search($filters['search'] ?? null)
             ->with('key:id,name,key_type,region')
             ->orderByDesc('id')
-            ->paginate($filters['per_page'] ?? 25);
+            // Without the two LONGTEXT message bodies, which no response
+            // returns — see UniOneSend::LIST_COLUMNS.
+            ->paginate($filters['per_page'] ?? 25, UniOneSend::LIST_COLUMNS);
 
         return response()->json([
             'data' => UniOneSendResource::collection($sends->items())->resolve(),

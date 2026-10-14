@@ -198,6 +198,13 @@ Route::prefix('v1')->group(function () {
         Route::get('verification-promotion/overrides', [VerificationPromotionEmailController::class, 'overrides']);
         Route::put('verification-promotion/overrides/{site}', [VerificationPromotionEmailController::class, 'updateOverride']);
 
+        /*
+         * The stream's send history — the admin screen modelled on Warmup
+         * History. Literal segments, declared with the rest of this group so
+         * `verification-promotion/overrides/{site}` cannot swallow them.
+         */
+        Route::get('verification-promotion/history', [VerificationPromotionEmailController::class, 'history']);
+        Route::get('verification-promotion/history/count', [VerificationPromotionEmailController::class, 'historyCount']);
         Route::post('verification-promotion/preview', [VerificationPromotionEmailController::class, 'preview']);
         Route::post('verification-promotion/test', [VerificationPromotionEmailController::class, 'sendTest']);
 
@@ -762,6 +769,12 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('keys/{uniOneKey}', [UniOneKeyController::class, 'destroy']);
         Route::patch('keys/{uniOneKey}/toggle', [UniOneKeyController::class, 'toggle']);
         Route::post('keys/{uniOneKey}/verify', [UniOneKeyController::class, 'verify']);
+        /*
+         * Tell UniOne where to post delivery events. The step that was missing:
+         * the endpoint and its verification existed, but nothing ever called
+         * `webhook/set.json`, so bounces and complaints never reached the list.
+         */
+        Route::post('keys/{uniOneKey}/webhook', [UniOneKeyController::class, 'registerWebhook']);
         Route::patch('keys/{uniOneKey}/default', [UniOneKeyController::class, 'makeDefault']);
 
         // Helper tabs, read-through to UniOne with the selected key.

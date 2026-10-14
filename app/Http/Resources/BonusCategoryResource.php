@@ -18,6 +18,9 @@ class BonusCategoryResource extends JsonResource
             'name'        => $this->name,
             'slug'        => $this->slug,
             'description' => $this->description,
+            // Path on the public disk, resolved against /storage by both the
+            // admin and the sites — the same contract as `categories.logo_path`.
+            'icon_path'   => $this->icon_path,
             'position'    => (int) $this->position,
             'active'      => (bool) $this->active,
             // How many offers are filed here, so the admin list can warn before

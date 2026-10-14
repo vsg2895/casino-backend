@@ -94,6 +94,11 @@ class UniOneApiKey extends Model
             'track_read'       => 'boolean',
             'timeout_seconds'  => 'integer',
             'last_verified_at' => 'datetime',
+            // Webhook state. See the 2026_11_07 migration: registration is a
+            // separate step from sending, and these three say whether it has
+            // happened and whether events actually arrive.
+            'webhook_registered_at'  => 'datetime',
+            'last_webhook_event_at'  => 'datetime',
         ];
     }
 

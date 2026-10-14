@@ -79,14 +79,92 @@ class AdminCatalogTest extends TestCase
     }
 
     /**
-     * Renaming an offer must NOT move its public URL.
+     * Renaming an offer MOVES its public URL — and leaves a 301 behind.
      *
-     * This asserted the opposite until a rename was found to silently relocate
-     * a live page with no redirect behind it — the offer kept working, and
-     * every link and indexed result pointing at the old address started
-     * 404ing with nothing to show for it.
+     * This asserted the opposite for a while, because a rename used to relocate
+     * a live page with nothing to catch the old address: every link and indexed
+     * result started 404ing silently. The answer to that was never "freeze the
+     * URL" — an editor who renames "2nd Deposit Bonus (Copy)" to "3rd Deposit
+     * Bonus" reasonably expects the link to say so — it was to write the
+     * redirect. See OfferSlugRedirectService.
      */
-    public function test_special_offer_slug_survives_a_rename(): void
+    public function test_renaming_an_offer_moves_its_url_and_leaves_a_redirect(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $casino = Casino::factory()->create();
+        $casino->sites()->attach($site->id, ['active' => true, 'affiliate_url' => 'https://example.com/go']);
+
+        $id = $this->postJson('/api/v1/admin/special-offers', [
+            'casino_id' => $casino->id,
+            'title'     => '2nd Deposit Bonus (Copy)',
+            'rating'    => 5,
+        ])->assertCreated()->json('data.id');
+
+        $original = SpecialOffer::find($id)->slug;
+        $this->assertMatchesRegularExpression('/^2nd_deposit_bonus_copy_[a-z]{6}$/', $original);
+
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => '3rd Deposit Bonus'])
+            ->assertOk()
+            ->assertJsonPath('data.title', '3rd Deposit Bonus');
+
+        $moved = SpecialOffer::find($id)->slug;
+        $this->assertMatchesRegularExpression('/^3rd_deposit_bonus_[a-z]{6}$/', $moved, 'the link must carry the new title');
+
+        // And the address it used to answer to still goes somewhere.
+        $this->assertDatabaseHas('redirects', [
+            'site_id'          => $site->id,
+            'source_path'      => "/special-offers/{$original}",
+            'destination_path' => "/special-offers/{$moved}",
+            'status_code'      => 301,
+            'active'           => true,
+        ]);
+    }
+
+    public function test_a_second_rename_repoints_the_first_redirect(): void
+    {
+        /*
+         * A → B, then B → C. Without re-pointing, the oldest links still
+         * redirect to B, which no longer exists: one hop to a 404, and the
+         * failure only appears the second time an offer is renamed.
+         */
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $casino = Casino::factory()->create();
+        $casino->sites()->attach($site->id, ['active' => true, 'affiliate_url' => 'https://example.com/go']);
+
+        $id = $this->postJson('/api/v1/admin/special-offers', [
+            'casino_id' => $casino->id,
+            'title'     => 'First Name',
+            'rating'    => 5,
+        ])->assertCreated()->json('data.id');
+
+        $first = SpecialOffer::find($id)->slug;
+
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Second Name'])->assertOk();
+        $second = SpecialOffer::find($id)->slug;
+
+        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Third Name'])->assertOk();
+        $third = SpecialOffer::find($id)->slug;
+
+        $this->assertDatabaseHas('redirects', [
+            'site_id'          => $site->id,
+            'source_path'      => "/special-offers/{$first}",
+            'destination_path' => "/special-offers/{$third}",
+        ]);
+        $this->assertDatabaseHas('redirects', [
+            'site_id'          => $site->id,
+            'source_path'      => "/special-offers/{$second}",
+            'destination_path' => "/special-offers/{$third}",
+        ]);
+        // Nothing redirects away from the address the offer now occupies.
+        $this->assertDatabaseMissing('redirects', [
+            'site_id'     => $site->id,
+            'source_path' => "/special-offers/{$third}",
+        ]);
+    }
+
+    public function test_an_edit_that_does_not_touch_the_title_leaves_the_url_alone(): void
     {
         $this->actingAsAdmin();
         $casino = Casino::factory()->create();
@@ -98,16 +176,32 @@ class AdminCatalogTest extends TestCase
         ])->assertCreated()->json('data.id');
 
         $original = SpecialOffer::find($id)->slug;
-        $this->assertMatchesRegularExpression('/^welcome_offer_[a-z]{6}$/', $original);
 
-        // Rename → the title changes, the address does not.
-        $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => 'Summer Bonus'])
-            ->assertOk()->assertJsonPath('data.title', 'Summer Bonus');
-        $this->assertSame($original, SpecialOffer::find($id)->slug, 'a rename must never move the URL');
-
-        // Any other update leaves it alone too.
         $this->putJson("/api/v1/admin/special-offers/{$id}", ['rating' => 4])->assertOk();
+
         $this->assertSame($original, SpecialOffer::find($id)->slug);
+        $this->assertSame(0, \App\Models\Redirect::query()->count(), 'no rename, no redirect');
+    }
+
+    public function test_a_hand_written_slug_survives_a_rename_in_the_same_save(): void
+    {
+        // The admin's Link field wins over the title: an address chosen by hand
+        // is a decision, not something derived.
+        $this->actingAsAdmin();
+        $casino = Casino::factory()->create();
+
+        $id = $this->postJson('/api/v1/admin/special-offers', [
+            'casino_id' => $casino->id,
+            'title'     => 'Welcome Offer',
+            'rating'    => 5,
+        ])->assertCreated()->json('data.id');
+
+        $this->putJson("/api/v1/admin/special-offers/{$id}", [
+            'title' => 'Renamed Entirely',
+            'slug'  => 'my_chosen_address',
+        ])->assertOk()->assertJsonPath('data.slug', 'my_chosen_address');
+
+        $this->assertSame('my_chosen_address', SpecialOffer::find($id)->slug);
     }
 
     /**
@@ -134,18 +228,20 @@ class AdminCatalogTest extends TestCase
     }
 
     /**
-     * The scenario this field was added for, start to finish.
+     * The scenario this behaviour exists for, start to finish.
      *
      * Duplicate "2nd Deposit Bonus" → the copy's address is baked from the copy
      * title, `2nd_deposit_bonus_copy_xxxxxx`. Rename it to "3rd Deposit Bonus"
-     * and the address is still the old one, because a slug is generated once and
-     * never regenerated — correct for a live offer, useless for a duplicate
-     * nobody has linked yet. Clearing the field is the way out.
+     * and the address follows, with a 301 left behind on every site it appears
+     * on. No second step, no clearing a field: the link says what the bonus is
+     * called.
      */
-    public function test_a_duplicate_can_be_renamed_and_its_link_rebuilt(): void
+    public function test_a_renamed_duplicate_gets_a_link_that_matches_its_title(): void
     {
         $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
         $casino = Casino::factory()->create();
+        $casino->sites()->attach($site->id, ['active' => true, 'affiliate_url' => 'https://example.com/go']);
 
         $id = $this->postJson('/api/v1/admin/special-offers', [
             'casino_id' => $casino->id,
@@ -156,21 +252,21 @@ class AdminCatalogTest extends TestCase
         $copyId = $this->postJson("/api/v1/admin/special-offers/{$id}/duplicate")
             ->assertCreated()->json('data.id');
 
-        $this->assertMatchesRegularExpression(
-            '/^2nd_deposit_bonus_copy_[a-z]{6}$/',
-            SpecialOffer::find($copyId)->slug,
-        );
+        $copySlug = SpecialOffer::find($copyId)->slug;
+        $this->assertMatchesRegularExpression('/^2nd_deposit_bonus_copy_[a-z]{6}$/', $copySlug);
 
-        // A rename alone still leaves the address where it was.
         $this->putJson("/api/v1/admin/special-offers/{$copyId}", ['title' => '3rd Deposit Bonus'])->assertOk();
-        $this->assertStringStartsWith('2nd_deposit_bonus_copy_', SpecialOffer::find($copyId)->slug);
 
-        // Clearing the field rebuilds it from the title that is there now.
-        $this->putJson("/api/v1/admin/special-offers/{$copyId}", ['slug' => ''])->assertOk();
         $this->assertMatchesRegularExpression(
             '/^3rd_deposit_bonus_[a-z]{6}$/',
             SpecialOffer::find($copyId)->slug,
+            'the copy wording must not survive in the URL',
         );
+
+        $this->assertDatabaseHas('redirects', [
+            'site_id'     => $site->id,
+            'source_path' => "/special-offers/{$copySlug}",
+        ]);
     }
 
     public function test_an_editor_can_set_the_slug_and_free_text_is_normalised(): void

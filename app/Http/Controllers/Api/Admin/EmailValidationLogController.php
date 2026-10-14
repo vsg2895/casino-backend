@@ -189,8 +189,26 @@ class EmailValidationLogController extends Controller
             ->when($request->filled('verdict'), fn (Builder $q) => $q->where('verdict', $request->string('verdict')))
             ->when($request->filled('outcome'), fn (Builder $q) => $q->where('outcome', $request->string('outcome')))
             ->when($request->filled('reason_code'), fn (Builder $q) => $q->where('reason_code', $request->string('reason_code')))
-            ->when($request->filled('from'), fn (Builder $q) => $q->whereDate('created_at', '>=', $request->date('from')))
-            ->when($request->filled('to'), fn (Builder $q) => $q->whereDate('created_at', '<=', $request->date('to')))
+            /*
+             * Day bounds as DATETIME comparisons, NOT whereDate().
+             *
+             * `DATE(created_at) >= '2026-10-01'` is exactly
+             * `created_at >= '2026-10-01 00:00:00'`, and `DATE(created_at) <= d`
+             * is `created_at <= d 23:59:59` — identical result sets — but
+             * wrapping the column in DATE() makes it a function call on every
+             * row, so MySQL cannot use `evl_created_at_idx` (nor the site/
+             * verdict/outcome composites that lead with it) and a date-filtered
+             * page becomes a full scan of the whole validation log. Same
+             * reasoning, and same comment, as MailgunReceiverController.
+             */
+            ->when(
+                $request->filled('from'),
+                fn (Builder $q) => $q->where('created_at', '>=', $request->date('from')->startOfDay()),
+            )
+            ->when(
+                $request->filled('to'),
+                fn (Builder $q) => $q->where('created_at', '<=', $request->date('to')->endOfDay()),
+            )
             ->when($request->filled('min_score'), fn (Builder $q) => $q->where('score', '>=', (float) $request->input('min_score')))
             ->when($request->filled('max_score'), fn (Builder $q) => $q->where('score', '<=', (float) $request->input('max_score')))
             ->when($request->filled('cached'), fn (Builder $q) => $q->where('was_cached', $request->boolean('cached')));

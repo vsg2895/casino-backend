@@ -61,6 +61,16 @@ class UniOneWebhookController extends Controller
         $ingested = 0;
         $duplicates = 0;
 
+        /*
+         * Proof of life, stamped on the key before anything is parsed.
+         *
+         * A registration can succeed and still deliver nothing — a wrong URL, a
+         * firewall, a provider-side mistake — and until now there was no way to
+         * tell that apart from "nothing has bounced". This column is what the
+         * admin reads to say when events last arrived.
+         */
+        $key->forceFill(['last_webhook_event_at' => now()])->save();
+
         foreach ((array) ($payload['events_by_user'] ?? []) as $userBlock) {
             foreach ((array) ($userBlock['events'] ?? []) as $event) {
                 $result = $this->ingest($key, (array) $event);

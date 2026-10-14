@@ -46,6 +46,13 @@ class UniOneApiKeyResource extends JsonResource
             'is_verified'        => $this->isVerified(),
             'notes'              => $this->notes,
             'webhook_url'        => url("/api/v1/unione/webhook/{$this->webhook_secret}"),
+            // Whether UniOne has been TOLD about that URL, what it answered, and
+            // whether anything has arrived since. The last one is the only proof
+            // registration took effect — a registration can succeed and still
+            // deliver nothing.
+            'webhook_registered_at'  => $this->webhook_registered_at?->toISOString(),
+            'webhook_status'         => $this->webhook_status,
+            'last_webhook_event_at'  => $this->last_webhook_event_at?->toISOString(),
             'created_at'         => $this->created_at?->toISOString(),
             'updated_at'         => $this->updated_at?->toISOString(),
         ];

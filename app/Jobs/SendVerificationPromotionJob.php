@@ -7,6 +7,7 @@ namespace App\Jobs;
 use App\Exceptions\PromotionMailerException;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
+use App\Models\VerificationPromotionSend;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
@@ -285,6 +286,29 @@ class SendVerificationPromotionJob implements ShouldQueue
                 [$newsletter->email => $status],
                 $error === null ? [] : [$newsletter->email => $error],
             );
+
+            /*
+             * And this stream's OWN log, which is what the admin's history
+             * screen reads.
+             *
+             * Both writes, not one. The shared table above is load-bearing —
+             * the 24-hour dedup reads it, so a campaign and this stream cannot
+             * both reach an address on the same day — but it has no stream
+             * column and its unique key merges two streams that land on one
+             * address on one day. It therefore cannot answer "what did the
+             * post-verification stream send", which is the question this row
+             * exists for.
+             */
+            VerificationPromotionSend::create([
+                'site_id'       => $newsletter->site_id,
+                'newsletter_id' => $newsletter->id,
+                'email'         => $newsletter->email,
+                'status'        => $status === PromotionEmailHistory::STATUS_SUCCESS
+                    ? VerificationPromotionSend::STATUS_SUCCESS
+                    : VerificationPromotionSend::STATUS_FAILED,
+                'error'         => $error === null ? null : mb_strimwidth($error, 0, 500, '…'),
+                'sent_at'       => Carbon::now(),
+            ]);
         } catch (Throwable $e) {
             Log::warning('Post-verification promotion history write failed', [
                 'newsletter_id' => $newsletter->id,

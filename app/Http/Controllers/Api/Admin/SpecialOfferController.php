@@ -10,17 +10,48 @@ use App\Http\Requests\Admin\UpdateSpecialOfferRequest;
 use App\Http\Resources\SpecialOfferResource;
 use App\Jobs\InvalidateCasinoCache;
 use App\Models\SpecialOffer;
+use App\Services\OfferSlugRedirectService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class SpecialOfferController extends Controller
 {
+    /**
+     * The casino's attached sites, restricted to the columns the resource reads.
+     *
+     * `CasinoResource` renders exactly five site fields — id, name, slug,
+     * domain, and `revalidation_url` (through `adminLinkBaseUrl()`, which
+     * prefers the configured revalidation host over the public domain) — plus
+     * the pivot, which Eloquent appends on its own.
+     *
+     * Naming them matters here because this listing is UNPAGINATED and the
+     * relation is per casino: a `SELECT *` fetched `settings` (JSON),
+     * `author_bio` and `last_revalidation_error` (TEXT) for every
+     * casino-to-site row behind every offer on the screen, none of which any
+     * response returns. Qualified with the table name because the relation is
+     * read over a join.
+     *
+     * AdminListingPerformanceTest asserts the rendered site block is identical
+     * to the one a `SELECT *` produced, pivot values included.
+     */
+    private const string SITE_COLUMNS =
+        'casino.sites:sites.id,sites.name,sites.slug,sites.domain,sites.revalidation_url';
+
     public function index(): AnonymousResourceCollection
     {
-        // Eager-load the casino's attached sites so the admin can build each
-        // offer's public single-page link (https://{site domain}/special-offers/{slug}).
+        /*
+         * Both relations are eager-loaded because the resource renders both for
+         * every row:
+         *
+         *  - `casino.sites` so the admin can build each offer's public
+         *    single-page link (https://{site domain}/special-offers/{slug});
+         *  - `bonusCategory` because `bonus_category_slug` is rendered
+         *    unconditionally, NOT behind whenLoaded — without it this listing
+         *    issues one SELECT against bonus_categories per offer, which is the
+         *    whole screen's cost once the catalogue is a few hundred offers.
+         */
         return SpecialOfferResource::collection(
-            SpecialOffer::with('casino.sites')->latest()->get()
+            SpecialOffer::with([self::SITE_COLUMNS, 'bonusCategory'])->latest()->get()
         );
     }
 
@@ -43,16 +74,19 @@ class SpecialOfferController extends Controller
 
         $this->revalidate($offer);
 
-        return new SpecialOfferResource($offer->load('casino.sites'));
+        return new SpecialOfferResource($offer->load(['casino.sites', 'bonusCategory']));
     }
 
     public function show(SpecialOffer $specialOffer): SpecialOfferResource
     {
-        return new SpecialOfferResource($specialOffer->load('casino.sites'));
+        return new SpecialOfferResource($specialOffer->load(['casino.sites', 'bonusCategory']));
     }
 
-    public function update(UpdateSpecialOfferRequest $request, SpecialOffer $specialOffer): SpecialOfferResource
-    {
+    public function update(
+        UpdateSpecialOfferRequest $request,
+        SpecialOffer $specialOffer,
+        OfferSlugRedirectService $redirects,
+    ): SpecialOfferResource {
         // Captured BEFORE the write. The slug can move — an editor may set a new
         // one, or clear the field to have it regenerated from the title — and the
         // casino may be reassigned, so after update() the old detail-page tag and
@@ -63,9 +97,25 @@ class SpecialOfferController extends Controller
 
         $specialOffer->update($request->validated());
 
+        /*
+         * The address may have moved — the slug follows the title, and the
+         * admin can also set one by hand. Either way the OLD path has to keep
+         * working: links live in inboxes, chats and search results, and a
+         * rename must not turn them into 404s.
+         *
+         * Both sets of sites are passed: a save can re-attach the offer's
+         * casino, and the rule belongs on the sites that could have served the
+         * old URL as well as the ones that will serve the new one.
+         */
+        $redirects->record(
+            $specialOffer,
+            $previousSlug,
+            [...$previousSiteIds, ...$this->siteIdsFor($specialOffer)],
+        );
+
         $this->revalidate($specialOffer, $previousSiteIds, [$previousSlug]);
 
-        return new SpecialOfferResource($specialOffer->fresh('casino.sites'));
+        return new SpecialOfferResource($specialOffer->fresh(['casino.sites', 'bonusCategory']));
     }
 
     public function destroy(SpecialOffer $specialOffer): JsonResponse
@@ -92,7 +142,7 @@ class SpecialOfferController extends Controller
 
         $this->revalidate($copy);
 
-        return new SpecialOfferResource($copy->load('casino.sites'));
+        return new SpecialOfferResource($copy->load(['casino.sites', 'bonusCategory']));
     }
 
     /**

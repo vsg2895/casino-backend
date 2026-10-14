@@ -59,6 +59,35 @@ class SmtpCredential extends Model implements ReceiverCampaignCredential
     /** @var list<string> */
     public const array TYPES = [self::TYPE_OWN_SMTP, self::TYPE_MAILGUN_SMTP];
 
+    /**
+     * The columns the listing resource actually renders.
+     *
+     * Same reasoning as {@see MailgunKey::LIST_COLUMNS}: `message_html`
+     * (LONGTEXT), `message_template` and `receiver_sources` never reach
+     * {@see \App\Http\Resources\SmtpCredentialResource}, and this listing is
+     * unpaginated.
+     *
+     * `password` IS needed here: maskedPassword() and canAuthenticate() read it.
+     *
+     * @var list<string>
+     */
+    public const array LIST_COLUMNS = [
+        'id',
+        'name',
+        'type',
+        'host',
+        'port',
+        'username',
+        'password',
+        'encryption',
+        'from_address',
+        'from_name',
+        'status',
+        'last_run_at',
+        'created_at',
+        'updated_at',
+    ];
+
     public const string ENCRYPTION_SSL = 'ssl';
     public const string ENCRYPTION_TLS = 'tls';
     public const string ENCRYPTION_NONE = 'none';

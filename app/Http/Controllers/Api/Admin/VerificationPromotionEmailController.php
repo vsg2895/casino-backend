@@ -9,14 +9,19 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateVerificationPromotionEmailRequest;
 use App\Http\Resources\VerificationPromotionEmailResource;
+use App\Http\Resources\VerificationPromotionSendResource;
 use App\Http\Requests\Admin\UpdateVerificationPromotionOverrideRequest;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Models\VerificationPromotionOverride;
+use App\Models\VerificationPromotionSend;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -50,6 +55,75 @@ class VerificationPromotionEmailController extends Controller
         private readonly PostVerificationPromotionEmailService $promotions,
         private readonly PromotionMailerFactory $mailers,
     ) {}
+
+    /** Rows per page in the history listing. */
+    private const int HISTORY_PER_PAGE = 25;
+
+    /** Ceiling on a caller-supplied page size. */
+    private const int HISTORY_MAX_PER_PAGE = 200;
+
+    /**
+     * Every post-verification promotion this platform has sent, newest first.
+     *
+     * The same shape as the Warmup History screen, because it answers the same
+     * question: one row per attempt — address, site, outcome, when — filtered by
+     * site, status, address prefix and date range.
+     *
+     * It reads {@see VerificationPromotionSend}, this stream's own log, rather
+     * than `promotion_email_histories`. That shared table is where the 24-hour
+     * dedup looks and must keep receiving these sends, but it carries no stream
+     * column and merges a campaign send and a post-verification send that reach
+     * one address on one day — so it cannot answer "what did THIS stream send".
+     */
+    public function history(Request $request): AnonymousResourceCollection
+    {
+        $perPage = min(
+            max($request->integer('per_page') ?: self::HISTORY_PER_PAGE, 1),
+            self::HISTORY_MAX_PER_PAGE,
+        );
+
+        return VerificationPromotionSendResource::collection(
+            $this->filteredHistory($request)
+                ->with('site:id,name,domain')
+                ->newest()
+                ->paginate($perPage),
+        );
+    }
+
+    /**
+     * Totals for the current filters, as a dedicated COUNT.
+     *
+     * Separate from the listing for the same reason every other section does it:
+     * the screen only ever holds one page, so counting the rows in hand would be
+     * wrong the moment there is a second one. `failed` rides along because the
+     * banner above the table reports how many attempts did not arrive, and that
+     * number must describe the filtered set rather than the page.
+     */
+    public function historyCount(Request $request): JsonResponse
+    {
+        $base = $this->filteredHistory($request);
+
+        return response()->json([
+            'total'  => (clone $base)->count(),
+            'failed' => (clone $base)->where('status', VerificationPromotionSend::STATUS_FAILED)->count(),
+        ]);
+    }
+
+    /**
+     * The history filter conditions, and nothing else. Shared by the listing and
+     * the count so the two can never disagree about what is being described.
+     *
+     * @return Builder<VerificationPromotionSend>
+     */
+    private function filteredHistory(Request $request): Builder
+    {
+        return VerificationPromotionSend::query()
+            ->search($request->query('search'))
+            ->forSite($request->query('site_id'))
+            ->withStatus($request->query('status'))
+            ->sentFrom($request->query('sent_from'))
+            ->sentUntil($request->query('sent_to'));
+    }
 
     /** The global template + settings, created with defaults the first time. */
     public function show(): JsonResponse

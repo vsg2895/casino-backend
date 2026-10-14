@@ -157,6 +157,63 @@ class BonusCategoryTest extends TestCase
         $this->assertCount(8, $this->area()['Special Offers']);
     }
 
+    // ── the chip row at the top of the home page ─────────────────────────────
+
+    public function test_each_category_reports_how_many_offers_it_really_holds(): void
+    {
+        /*
+         * THE BUG THIS GUARDS. The chips above the sections show a count, and
+         * the obvious implementation — `offers.length` on the client — reports
+         * the CAP rather than the truth: a heading holding eleven offers would
+         * advertise "8", and the number would change with a layout decision
+         * made on a different page. The count is taken server-side from the
+         * unlimited set.
+         */
+        $category = $this->category('Special Offers');
+        foreach (range(1, 11) as $i) {
+            $this->offer($category, "Offer {$i}");
+        }
+
+        $data = $this->getJson($this->publicBase($this->site) . '/bonus', $this->siteHeaders($this->key))
+            ->assertOk()->json('data');
+
+        $this->assertSame(11, $data[0]['offers_count'], 'the chip must report every offer behind the heading');
+        $this->assertCount(8, $data[0]['offers'], 'the listing itself is still capped');
+    }
+
+    public function test_the_count_obeys_the_same_visibility_rule_as_the_cards(): void
+    {
+        // A chip reading one number above a section showing a different set is
+        // the failure this pins: both answer the same question.
+        $category = $this->category('Special Offers');
+        $this->offer($category, 'Visible');
+        $this->offer($category, 'Hidden', active: false);
+
+        $data = $this->getJson($this->publicBase($this->site) . '/bonus', $this->siteHeaders($this->key))
+            ->assertOk()->json('data');
+
+        $this->assertSame(1, $data[0]['offers_count']);
+        $this->assertSame(['Visible'], array_column($data[0]['offers'], 'title'));
+    }
+
+    public function test_the_category_carries_its_icon_to_both_surfaces(): void
+    {
+        // The chip artwork. Null is a legitimate answer — a type with no icon
+        // renders a label-only chip — so what is asserted is that the FIELD
+        // travels, on the listing and on the category's own page alike.
+        $category = $this->category('Special Offers');
+        $category->update(['icon_path' => 'uploads/bonus-category-icons/special-offers.svg']);
+        $this->offer($category, 'Welcome package');
+
+        $this->getJson($this->publicBase($this->site) . '/bonus', $this->siteHeaders($this->key))
+            ->assertOk()
+            ->assertJsonPath('data.0.icon_path', 'uploads/bonus-category-icons/special-offers.svg');
+
+        $this->getJson($this->publicBase($this->site) . '/bonus/' . $category->slug, $this->siteHeaders($this->key))
+            ->assertOk()
+            ->assertJsonPath('data.category.icon_path', 'uploads/bonus-category-icons/special-offers.svg');
+    }
+
     /**
      * The FULL listing drops empty categories too.
      *

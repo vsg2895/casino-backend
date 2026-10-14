@@ -75,12 +75,12 @@ class CasinoController extends Controller
         // call is what adds or removes the whole category from a site.
         $this->indexer->syncCasino($casino);
 
-        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers']));
+        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers.bonusCategory']));
     }
 
     public function show(Casino $casino): CasinoResource
     {
-        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers']));
+        return new CasinoResource($casino->load(['categories', 'countries', 'sites', 'specialOffers.bonusCategory']));
     }
 
     public function update(UpdateCasinoRequest $request, Casino $casino): CasinoResource
@@ -107,7 +107,7 @@ class CasinoController extends Controller
         // call is what adds or removes the whole category from a site.
         $this->indexer->syncCasino($casino);
 
-        return new CasinoResource($casino->fresh(['categories', 'countries', 'sites', 'specialOffers']));
+        return new CasinoResource($casino->fresh(['categories', 'countries', 'sites', 'specialOffers.bonusCategory']));
     }
 
     public function destroy(Casino $casino): JsonResponse

@@ -29,6 +29,9 @@ class BonusCategory extends Model
     protected $fillable = [
         'name',
         'description',
+        // Path on the public disk to the type's SVG icon — the chip artwork.
+        // Same column shape and same resolver as `categories.logo_path`.
+        'icon_path',
         'position',
         'active',
     ];

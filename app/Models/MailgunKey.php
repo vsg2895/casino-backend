@@ -41,6 +41,39 @@ class MailgunKey extends Model implements ReceiverCampaignCredential
     /** @var list<string> */
     public const array REGIONS = [self::REGION_US, self::REGION_EU];
 
+    /**
+     * The columns the listing resource actually renders.
+     *
+     * `message_html` is LONGTEXT (the receiver-campaign template) and
+     * `message_template` / `receiver_sources` are JSON; none of the three
+     * reaches {@see \App\Http\Resources\MailgunKeyResource}, and the editor
+     * loads the template through the dedicated receiver-template-source
+     * endpoint. This listing is unpaginated, so a `SELECT *` pulled one full
+     * campaign body per credential every time the screen opened — and threw
+     * every byte away.
+     *
+     * `api_key` IS needed here: maskedKey() and canAuthenticate() both read it.
+     *
+     * An explicit list, not a schema diff, so the cost of a column is visible
+     * where the column is declared. ReceiverCredentialColumnTrimTest asserts
+     * this renders JSON identical to `SELECT *`, so a field added to the
+     * resource cannot silently come back null.
+     *
+     * @var list<string>
+     */
+    public const array LIST_COLUMNS = [
+        'id',
+        'name',
+        'domain',
+        'api_key',
+        'region',
+        'from_address',
+        'from_name',
+        'status',
+        'created_at',
+        'updated_at',
+    ];
+
     protected $fillable = [
         'name',
         'domain',

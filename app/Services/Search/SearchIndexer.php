@@ -53,17 +53,50 @@ class SearchIndexer
             'image_url' => $casino->image_path,
         ], $siteIds));
 
-        // CASCADE. Hiding a casino must also drop its offers and its reviews —
-        // a review is only publicly reachable through a casino that is on the
-        // site, so an orphaned review row would be a leak, not a stale row.
+        /*
+         * CASCADE. Hiding a casino must also drop its offers and its reviews —
+         * a review is only publicly reachable through a casino that is on the
+         * site, so an orphaned review row would be a leak, not a stale row.
+         *
+         * The casino and its site list are handed DOWN into each child sync.
+         * Both children resolve them for themselves when called on their own
+         * (from their own observer, for one row), and this method already holds
+         * the answers: re-resolving them meant a `casinos` lookup plus a
+         * `casino_site` lookup per offer AND per review, so saving one casino
+         * with a dozen offers and a hundred reviews cost hundreds of queries
+         * for two values that cannot change inside the loop. The end state in
+         * `search_index` is identical either way — this only stops asking the
+         * same two questions over and over.
+         */
         $casino->loadMissing(['specialOffers', 'categories']);
 
+        $siteIdsForChildren = $siteIds;
+
+        /*
+         * Bonus types are collected and synced ONCE, after the loop, instead of
+         * once per offer. Their visibility is derived from a four-table join
+         * over `special_offers`, and offers of one casino share very few types,
+         * so the per-offer cascade recomputed the same join for every offer.
+         * Nothing in the loop writes to `special_offers`, so one sync per
+         * distinct type at the end produces exactly the rows the per-offer
+         * cascade produced.
+         */
+        $bonusCategoryIds = [];
+
         foreach (SpecialOffer::withTrashed()->where('casino_id', $casino->id)->get() as $offer) {
-            $this->syncSpecialOffer($offer);
+            $this->syncSpecialOffer($offer, $casino, $siteIdsForChildren, cascadeBonusCategory: false);
+
+            if ($offer->bonus_category_id !== null) {
+                $bonusCategoryIds[(int) $offer->bonus_category_id] = true;
+            }
+        }
+
+        foreach (BonusCategory::query()->whereKey(array_keys($bonusCategoryIds))->get() as $bonusCategory) {
+            $this->syncBonusCategory($bonusCategory);
         }
 
         foreach (CasinoReview::where('casino_id', $casino->id)->cursor() as $review) {
-            $this->syncReview($review);
+            $this->syncReview($review, $casino, $siteIdsForChildren);
         }
 
         // A category's visibility is derived from its casinos, so attaching or
@@ -73,15 +106,29 @@ class SearchIndexer
         }
     }
 
-    public function syncSpecialOffer(SpecialOffer $offer): void
-    {
-        $casino = $offer->casino()->withTrashed()->first();
+    /**
+     * @param  Casino|null  $parent  The offer's casino, when the caller already
+     *                               holds it — a trashed one included, which is
+     *                               why the fallback lookup uses withTrashed().
+     * @param  list<int>|null  $parentSiteIds  `casinoSiteIds($parent)`, likewise.
+     * @param  bool  $cascadeBonusCategory  False only for {@see syncCasino()},
+     *                                      which syncs the types once at the end.
+     */
+    public function syncSpecialOffer(
+        SpecialOffer $offer,
+        ?Casino $parent = null,
+        ?array $parentSiteIds = null,
+        bool $cascadeBonusCategory = true,
+    ): void {
+        $casino = $parent ?? $offer->casino()->withTrashed()->first();
 
         $visible = $casino !== null
             && $offer->active
             && ! $offer->trashed();
 
-        $siteIds = $visible ? $this->casinoSiteIds($casino) : [];
+        $siteIds = $visible
+            ? ($parentSiteIds ?? $this->casinoSiteIds($casino))
+            : [];
 
         $this->write(SpecialOffer::class, (int) $offer->id, array_map(fn (int $siteId): array => [
             'site_id'   => $siteId,
@@ -112,7 +159,7 @@ class SearchIndexer
         // claimable offer there, so publishing or hiding THIS offer can add or
         // remove the whole heading. Guarded on the column being loaded so an
         // offer with no type costs no extra query.
-        if ($offer->bonus_category_id !== null) {
+        if ($cascadeBonusCategory && $offer->bonus_category_id !== null) {
             $bonusCategory = BonusCategory::find($offer->bonus_category_id);
 
             if ($bonusCategory !== null) {
@@ -173,13 +220,21 @@ class SearchIndexer
      * casino's anchor. The title falls back to a generated label because the
      * headline field is optional and a blank suggestion row is worse than none.
      */
-    public function syncReview(CasinoReview $review): void
+    /**
+     * @param  Casino|null  $parent  The review's casino, when the caller holds it.
+     * @param  list<int>|null  $parentSiteIds  `casinoSiteIds($parent)`, likewise.
+     */
+    public function syncReview(CasinoReview $review, ?Casino $parent = null, ?array $parentSiteIds = null): void
     {
-        $casino = $review->casino()->withTrashed()->first();
+        $casino = $parent ?? $review->casino()->withTrashed()->first();
 
         $visible = $casino !== null
             && $review->status === CasinoReview::STATUS_PUBLISHED
-            && in_array((int) $review->site_id, $this->casinoSiteIds($casino), true);
+            && in_array(
+                (int) $review->site_id,
+                $parentSiteIds ?? $this->casinoSiteIds($casino),
+                true,
+            );
 
         $title = trim((string) $review->title) !== ''
             ? (string) $review->title

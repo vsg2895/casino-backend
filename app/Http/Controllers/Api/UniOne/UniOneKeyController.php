@@ -9,6 +9,7 @@ use App\Http\Resources\UniOne\UniOneApiKeyResource;
 use App\Models\UniOne\UniOneApiKey;
 use App\Services\UniOne\UniOneClient;
 use App\Services\UniOne\UniOneKeyService;
+use App\Services\UniOne\UniOneWebhookRegistrar;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -118,6 +119,39 @@ class UniOneKeyController extends Controller
                 // Account details from /system/info.json — never the key.
                 'info'   => $result['info'],
                 'key'    => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
+            ],
+        ], $result['ok'] ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    /**
+     * Tell UniOne where to post this key's delivery events.
+     *
+     * The step that was missing. Everything on the receiving side existed — the
+     * endpoint, its token gate, the MD5 check, the de-duplication and the status
+     * mapping — but nothing ever called `webhook/set.json`, so UniOne had no URL
+     * to post to. Failures were counted in their dashboard and the receiver list
+     * never heard about them.
+     *
+     * An explicit action rather than something a key save does silently: it
+     * reaches out to a third party, and an operator pressing a button knows to
+     * read the answer that comes back.
+     *
+     * Sending is untouched — a different endpoint, a different payload, and
+     * nothing in the send path reads what this stores.
+     */
+    public function registerWebhook(UniOneApiKey $uniOneKey, UniOneWebhookRegistrar $registrar): JsonResponse
+    {
+        // The same URL the admin displays, built in one place so the address
+        // registered can never differ from the one an operator is looking at.
+        $url = url("/api/v1/unione/webhook/{$uniOneKey->webhook_secret}");
+
+        $result = $registrar->register($uniOneKey, $url);
+
+        return response()->json([
+            'data' => [
+                'ok'      => $result['ok'],
+                'message' => $result['message'],
+                'key'     => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
             ],
         ], $result['ok'] ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }

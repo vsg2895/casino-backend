@@ -68,7 +68,7 @@ class MailgunKeyController extends Controller
             $query->where('status', $request->query('status'));
         }
 
-        return MailgunKeyResource::collection($query->get());
+        return MailgunKeyResource::collection($query->get(MailgunKey::LIST_COLUMNS));
     }
 
     public function store(StoreMailgunKeyRequest $request): JsonResponse

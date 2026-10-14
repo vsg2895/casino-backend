@@ -44,7 +44,7 @@ class SmtpCredentialController extends Controller
             $query->where('status', $request->query('status'));
         }
 
-        return SmtpCredentialResource::collection($query->get());
+        return SmtpCredentialResource::collection($query->get(SmtpCredential::LIST_COLUMNS));
     }
 
     public function store(StoreSmtpCredentialRequest $request): JsonResponse

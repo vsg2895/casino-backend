@@ -54,34 +54,53 @@ class SpecialOffer extends Model
     }
 
     /**
-     * Slug lifecycle: generated ONCE, when there is no slug — on create, and on
-     * a duplicate, which replicates without one. Never regenerated afterwards.
+     * Slug lifecycle: the address FOLLOWS THE TITLE, and the old address keeps
+     * working.
      *
      * Format is title-based and user-friendly: the title as lowercase words
      * joined by "_", then a final "_" and a short letters-only unique token,
      * e.g. "welcome_bonus_kmxopt".
      *
-     * ── Why renaming no longer moves the URL ────────────────────────────────
+     * Three cases, in the order they are decided:
      *
-     * It used to regenerate whenever the title changed, which meant editing an
-     * offer's wording silently moved its public address. Nothing wrote a
-     * redirect, so whatever had been indexed or linked at the old URL simply
-     * started 404ing, and the only visible symptom was traffic that quietly
+     *  1. NO SLUG — on create, and on a duplicate, which replicates without
+     *     one. Generated from the title.
+     *  2. The admin typed a slug in this save. Theirs wins, untouched: an
+     *     address chosen by hand is a decision, not a derivative.
+     *  3. The TITLE changed and the slug did not. The slug is rebuilt from the
+     *     new title.
+     *
+     * ── Why case 3 is safe, when it was once forbidden ──────────────────────
+     *
+     * It used to regenerate on every rename, and that was reverted because
+     * nothing wrote a redirect: whatever had been indexed or linked at the old
+     * URL simply began 404ing, and the only symptom was traffic that quietly
      * stopped arriving.
      *
-     * A slug is an address, not a label. Casino and Article both already
-     * generate once and leave it alone — see Casino::getSlugOptions(), which
-     * calls doNotGenerateSlugsOnUpdate() for the same reason — and this brings
-     * offers in line with them.
+     * What changed is that the rename now leaves a trail.
+     * {@see \App\Services\OfferSlugRedirectService} writes a 301 from the old
+     * path to the new one on every site the offer appears on, re-points any
+     * redirect that already led to the old path, and removes one that would
+     * shadow the new one. So the address tracks the title — which is what an
+     * editor expects after renaming "2nd Deposit Bonus" to "3rd Deposit
+     * Bonus" — and every link ever shared still arrives.
      *
-     * Deliberately renaming an offer's URL is therefore a two-step operation by
-     * design: clear the slug so this regenerates it, and add a redirect from
-     * the old path. The Redirects screen exists for exactly that.
+     * The service is called by the controller, not from here: a model hook
+     * cannot see which sites the offer was on BEFORE the save, and a redirect
+     * written for the wrong set of sites is worse than none.
      */
     protected static function booted(): void
     {
         static::saving(function (self $offer): void {
             if (blank($offer->slug)) {
+                $offer->slug = static::generateUniqueSlug((string) $offer->title, $offer->getKey());
+
+                return;
+            }
+
+            // An explicit slug in this same save is the admin's choice and is
+            // never overwritten by the title.
+            if ($offer->exists && $offer->isDirty('title') && ! $offer->isDirty('slug')) {
                 $offer->slug = static::generateUniqueSlug((string) $offer->title, $offer->getKey());
             }
         });

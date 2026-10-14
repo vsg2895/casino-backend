@@ -24,6 +24,42 @@ class UniOneSend extends Model
     /** UniOne's hard cap: 500 recipients per request. */
     public const int CHUNK_SIZE = 500;
 
+    /**
+     * Every column EXCEPT the two message bodies.
+     *
+     * `html_body` and `plaintext_body` are LONGTEXT holding the full rendered
+     * campaign — tens to hundreds of kilobytes each — and no API response ever
+     * returns them: {@see \App\Http\Resources\UniOne\UniOneSendResource} has
+     * no field for either, and only the send path reads them. A `SELECT *`
+     * listing therefore dragged ~25 copies of two large blobs out of MySQL,
+     * over the wire and into PHP memory on every page of the send log, to throw
+     * all of it away.
+     *
+     * Kept as an explicit list rather than a schema diff so the cost of a
+     * column is visible where the column is added; SendColumnTrimTest fails if
+     * this drifts from the table, so a new column cannot go missing silently.
+     */
+    public const array LIST_COLUMNS = [
+        'id',
+        'unione_api_key_id',
+        'user_id',
+        'subject',
+        'from_email',
+        'from_name',
+        'reply_to',
+        'requested_count',
+        'cooldown_days',
+        'eligible_count',
+        'accepted_count',
+        'failed_count',
+        'chunk_count',
+        'status',
+        'error',
+        'completed_at',
+        'created_at',
+        'updated_at',
+    ];
+
     protected $guarded = [];
 
     protected function casts(): array
