@@ -25,6 +25,9 @@ class VerificationPromotionSendResource extends JsonResource
 
             'status' => $this->status,
             'error'  => $this->error,
+            // A "Send test" from this section rather than a real subscriber's
+            // send. Both belong in the log; only one is evidence of a mailing.
+            'is_test' => (bool) $this->is_test,
 
             // Only present when eager-loaded; this stream renders one site's
             // template, so which site it was is part of the record.

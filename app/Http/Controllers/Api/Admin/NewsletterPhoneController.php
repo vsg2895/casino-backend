@@ -454,6 +454,18 @@ class NewsletterPhoneController extends Controller
     }
 
     /** Total history rows matching the current filters, as a dedicated COUNT. */
+    /**
+     * Delete one row of the SMS history.
+     *
+     * The log line only — the number stays on the list it was sent from.
+     */
+    public function destroyHistory(PhoneSmsHistory $history): JsonResponse
+    {
+        $history->delete();
+
+        return response()->json(null, 204);
+    }
+
     public function historyCount(Request $request): JsonResponse
     {
         return response()->json(['total' => $this->filteredHistory($request)->count()]);

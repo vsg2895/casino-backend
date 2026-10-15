@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\Admin\EmailValidationCheckController;
 use App\Http\Controllers\Api\Admin\EmailValidationLogController;
 use App\Http\Controllers\Api\Admin\EmailValidationStatsController;
 use App\Http\Controllers\Api\Admin\UnsubscribeController;
+use App\Http\Controllers\Api\Admin\VerifyEmailSendController;
 use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
@@ -205,6 +206,20 @@ Route::prefix('v1')->group(function () {
          */
         Route::get('verification-promotion/history', [VerificationPromotionEmailController::class, 'history']);
         Route::get('verification-promotion/history/count', [VerificationPromotionEmailController::class, 'historyCount']);
+        // One row at a time. Bulk removal is `histories:prune` (retention) and
+        // `histories:clear` (deliberate), both of which say how much they take.
+        Route::delete('verification-promotion/history/{send}', [VerificationPromotionEmailController::class, 'destroyHistory']);
+
+        /*
+         * The verify-email send log — the double opt-in confirmations.
+         *
+         * Literal `count` BEFORE nothing else here, but the delete takes a
+         * model, so the two cannot collide. Same shape as the history above:
+         * listing, count, delete one.
+         */
+        Route::get('verify-email-sends', [VerifyEmailSendController::class, 'index']);
+        Route::get('verify-email-sends/count', [VerifyEmailSendController::class, 'count']);
+        Route::delete('verify-email-sends/{verifyEmailSend}', [VerifyEmailSendController::class, 'destroy']);
         Route::post('verification-promotion/preview', [VerificationPromotionEmailController::class, 'preview']);
         Route::post('verification-promotion/test', [VerificationPromotionEmailController::class, 'sendTest']);
 
@@ -369,6 +384,7 @@ Route::prefix('v1')->group(function () {
         // Per-recipient outcome of past runs.
         Route::get('newsletter-phones/history', [NewsletterPhoneController::class, 'history']);
         Route::get('newsletter-phones/history/count', [NewsletterPhoneController::class, 'historyCount']);
+        Route::delete('newsletter-phones/history/{history}', [NewsletterPhoneController::class, 'destroyHistory']);
         Route::apiResource('newsletter-phones', NewsletterPhoneController::class)
             ->except(['show']);
 
@@ -409,6 +425,7 @@ Route::prefix('v1')->group(function () {
         // Also what makes the cooldown auditable after the fact.
         Route::get('warmup-emails/history', [WarmupEmailController::class, 'history']);
         Route::get('warmup-emails/history/count', [WarmupEmailController::class, 'historyCount']);
+        Route::delete('warmup-emails/history/{recipient}', [WarmupEmailController::class, 'destroyHistory']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
         // Stop a wedged or unwanted run: cancels queued batches and frees the run
         // lock, so a new run can start immediately.
@@ -492,6 +509,10 @@ Route::prefix('v1')->group(function () {
         // Promotion delivery history (read-only; partitioned + prefix search)
         Route::get('promotion-history', [PromotionEmailHistoryController::class, 'index']);
         Route::get('promotion-history/count', [PromotionEmailHistoryController::class, 'count']);
+        // `{history}` is an INT, not a model: the table is partitioned and the
+        // controller deletes by (id, sent_date) so MySQL can prune to one month.
+        Route::delete('promotion-history/{history}', [PromotionEmailHistoryController::class, 'destroy'])
+            ->whereNumber('history');
 
         // Unsubscribes (per-stream opt-out log)
         // Email address validation (SendGrid). READ-ONLY: stats and the audit
@@ -801,13 +822,20 @@ Route::prefix('v1')->group(function (): void {
         Route::get('sends', [UniOneSendController::class, 'index']);
         Route::post('sends', [UniOneSendController::class, 'store']);
         Route::get('sends/{uniOneSend}', [UniOneSendController::class, 'show']);
+        // One run, with its chunks and recipient rows (both cascade).
+        Route::delete('sends/{uniOneSend}', [UniOneSendController::class, 'destroy']);
     });
 
     /*
-     * Public by necessity. Throttled because it is an unauthenticated POST:
+     * Public by necessity. Throttled because it is an unauthenticated request:
      * the token and the hash both reject impostors, but a flood of rejections
      * is still work we should not do unboundedly.
+     *
+     * GET as well as POST: `webhook/set.json` CHECKS the URL before saving it,
+     * and a probe that meets 405 is the same dead end as one that meets 401 —
+     * the webhook can never be registered. Both methods answer the probe; only
+     * a signed POST carrying events can change anything.
      */
-    Route::post('unione/webhook/{token}', UniOneWebhookController::class)
+    Route::match(['GET', 'POST'], 'unione/webhook/{token}', UniOneWebhookController::class)
         ->middleware('throttle:300,1');
 });

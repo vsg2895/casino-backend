@@ -285,6 +285,10 @@ class SendVerificationPromotionJob implements ShouldQueue
                 $newsletter->site_id,
                 [$newsletter->email => $status],
                 $error === null ? [] : [$newsletter->email => $error],
+                // Labelled, so the shared dedup still sees this send while the
+                // admin's Promotion tab does not: this stream has its own tab,
+                // fed by the row written below.
+                PromotionEmailHistory::STREAM_POST_VERIFICATION,
             );
 
             /*

@@ -55,6 +55,7 @@ class UniOneSend extends Model
         'chunk_count',
         'status',
         'error',
+        'is_test',
         'completed_at',
         'created_at',
         'updated_at',
@@ -64,7 +65,7 @@ class UniOneSend extends Model
 
     protected function casts(): array
     {
-        return ['completed_at' => 'datetime'];
+        return ['completed_at' => 'datetime', 'is_test' => 'boolean'];
     }
 
     public function key(): BelongsTo

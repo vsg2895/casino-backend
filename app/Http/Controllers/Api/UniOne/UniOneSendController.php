@@ -14,6 +14,7 @@ use App\Services\UniOne\UniOneKeyService;
 use App\Services\UniOne\UniOneSendService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -98,6 +99,19 @@ class UniOneSendController extends Controller
             'track_read'  => $key->track_read ? 1 : 0,
             'skip_unsubscribe' => 0,
         ], static fn ($v): bool => $v !== null && $v !== '' && $v !== []));
+
+        /*
+         * Recorded as a one-recipient run, flagged `is_test`.
+         *
+         * The test goes through the same client, the same body and the same
+         * substitutions a real run uses, so it belongs in the same log — and a
+         * test that left no trace was exactly the gap an operator hit when
+         * asking "did my test actually reach UniOne, and what did it say?".
+         *
+         * Flagged because it is not a campaign: one row with requested=1 next
+         * to runs of thousands would otherwise read as a failed run.
+         */
+        $this->recordTest($key, $data, $response);
 
         return response()->json([
             'ok'      => $response->ok,
@@ -230,6 +244,60 @@ class UniOneSendController extends Controller
      * track_links/track_read to 0 needs UniOne's support to enable the option,
      * and the raw API message does not say so.
      */
+    /**
+     * Delete one run from the history.
+     *
+     * Its chunks and per-recipient rows go with it — both are
+     * `ON DELETE CASCADE`, which is what keeps a deleted run from leaving
+     * detail rows pointing at nothing.
+     */
+    public function destroy(UniOneSend $uniOneSend): JsonResponse
+    {
+        $uniOneSend->delete();
+
+        return response()->json(null, 204);
+    }
+
+    /**
+     * Log one "Send test" as a run of one.
+     *
+     * Best-effort: the message has already left, so a history write that fails
+     * is logged and never changes what the operator is told about the send.
+     *
+     * @param  array<string, mixed>  $data  the validated test payload
+     */
+    private function recordTest(UniOneApiKey $key, array $data, mixed $response): void
+    {
+        try {
+            UniOneSend::create([
+                'unione_api_key_id' => $key->id,
+                'user_id'           => auth()->id(),
+                'subject'           => (string) (($data['subject'] ?? null) ?: app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor()),
+                'from_email'        => (string) $data['from_email'],
+                'from_name'         => $data['from_name'] ?? null,
+                'reply_to'          => $data['reply_to'] ?? null,
+                // The bodies are NOT copied: a test re-renders the shared
+                // template every time, so storing a snapshot of it here would
+                // be two LONGTEXT columns of something nothing reads back.
+                'html_body'         => '',
+                'requested_count'   => 1,
+                'eligible_count'    => 1,
+                'accepted_count'    => $response->ok ? 1 : 0,
+                'failed_count'      => $response->ok ? 0 : 1,
+                'chunk_count'       => 0,
+                'status'            => $response->ok ? UniOneSend::STATUS_COMPLETED : UniOneSend::STATUS_FAILED,
+                'error'            => $response->ok ? null : mb_strimwidth((string) $this->explain($response), 0, 500, '…'),
+                'is_test'           => true,
+                'completed_at'      => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('UniOne test send history write failed', [
+                'key_id' => $key->id,
+                'error'  => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function explain(\App\Support\UniOne\UniOneResponse $response): ?string
     {
         return $response->ok

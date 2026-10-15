@@ -217,10 +217,15 @@ class UniOneWebhookDeliveryTest extends TestCase
         $this->assertNotNull($key->refresh()->last_webhook_event_at);
     }
 
-    public function test_an_unsigned_payload_is_rejected(): void
+    public function test_an_unsigned_payload_that_carries_events_is_rejected(): void
     {
+        /*
+         * The property that matters: nobody can mark an address bounced or
+         * complained without the key. An unsigned batch WITH an event in it is
+         * exactly that attempt, and it is refused.
+         */
         $key = $this->key();
-        $this->receiver('someone@example.com');
+        $receiver = $this->receiver('someone@example.com');
 
         $this->call(
             'POST',
@@ -229,10 +234,68 @@ class UniOneWebhookDeliveryTest extends TestCase
             [],
             [],
             ['CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json'],
-            json_encode(['events_by_user' => []], JSON_THROW_ON_ERROR),
+            json_encode([
+                'auth'           => str_repeat('0', 32),
+                'events_by_user' => [[
+                    'user_id' => 1,
+                    'events'  => [[
+                        'event_name' => 'transactional_email_status',
+                        'event_data' => [
+                            'job_id' => 'forged', 'email' => 'someone@example.com',
+                            'status' => 'hard_bounced', 'event_time' => '2026-10-13 10:00:00',
+                        ],
+                    ]],
+                ]],
+            ], JSON_THROW_ON_ERROR),
         )->assertUnauthorized();
 
         $this->assertNull($key->refresh()->last_webhook_event_at, 'a rejected payload is not proof of life');
+        $this->assertNotSame(
+            UniOneReceiver::STATUS_BOUNCED,
+            $receiver->refresh()->status,
+            'a forged event must not change a receiver',
+        );
+    }
+
+    // ── 3. the URL-verification probe ────────────────────────────────────────
+
+    public function test_a_probe_without_events_is_answered_so_the_url_can_be_registered(): void
+    {
+        /*
+         * THE BUG THIS GUARDS. `webhook/set.json` checks the URL before it
+         * saves it, and that check carries no events — so it cannot be signed
+         * the way a real batch is. Answering it 401 made the Register button
+         * fail with "Could not register the webhook" while the endpoint was
+         * working perfectly for real events.
+         *
+         * Nothing is trusted here: no events, nothing written, and the
+         * proof-of-life stamp stays null because an unverified probe is not
+         * evidence that events are arriving.
+         */
+        $key = $this->key();
+
+        foreach ([null, '{}', '{"events_by_user":[]}'] as $body) {
+            $this->call(
+                'POST',
+                '/api/v1/unione/webhook/' . $key->webhook_secret,
+                [],
+                [],
+                [],
+                ['CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json'],
+                $body,
+            )->assertOk();
+        }
+
+        $this->getJson('/api/v1/unione/webhook/' . $key->webhook_secret)->assertOk();
+
+        $this->assertNull($key->refresh()->last_webhook_event_at, 'a probe is not proof of life');
+    }
+
+    public function test_a_probe_on_an_unknown_token_is_still_refused(): void
+    {
+        // The token gate comes first and is unchanged: the probe is answered
+        // for a URL we issued, never for one somebody guessed.
+        $this->getJson('/api/v1/unione/webhook/not-a-real-token')->assertUnauthorized();
     }
 
     public function test_the_same_event_twice_changes_nothing_the_second_time(): void

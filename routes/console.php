@@ -102,6 +102,30 @@ Schedule::call(function (): void {
 Schedule::command('email-validation:prune')->monthlyOn(1, '03:20');
 
 /*
+ * Retire every message log past its retention window — two months.
+ *
+ * One command for all five streams the admin's Email History section shows
+ * (promotion, after-verification, warmup, SMS, UniOne runs) plus the UniOne
+ * webhook event log behind the last of them. They answer "did this person get
+ * this message, and what did the provider say", which nobody asks about last
+ * spring, and the rows carry recipients' addresses — so this is a privacy
+ * obligation as much as housekeeping.
+ *
+ * DAILY at 03:00, not monthly: a daily sweep deletes one day's tail at a time,
+ * which is a few thousand rows. A monthly one would delete a month's worth in a
+ * single run — the same work, except concentrated into the one night it is most
+ * likely to collide with something. 03:00 also sits clear of the other
+ * scheduled work (validation prune 03:20, search reindex 04:10).
+ *
+ * `withoutOverlapping` because the first run after a long gap can be long, and a
+ * second copy starting on top of it would fight the first for the same rows.
+ */
+Schedule::command('histories:prune')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->name('prune-message-histories');
+
+/*
  * Rebuild the search index nightly.
  *
  * The index is derived data: observers keep it current as content is saved, but

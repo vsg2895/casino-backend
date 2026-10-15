@@ -22,11 +22,29 @@ use Symfony\Component\HttpFoundation\Response;
  *   1. the URL path token — an unauthenticated prober never reaches the body
  *   2. the MD5 auth hash  — the cryptographic check UniOne actually documents
  *
- * Unverified payloads get 401 and are logged, per the brief.
+ * A payload that carries events and fails the hash gets 401 and is logged.
  *
  * Returns 200 for anything it has accepted OR already seen. UniOne re-delivers
  * until it gets a 200, so answering anything else to a duplicate would make it
  * retry forever.
+ *
+ * ── The verification probe, and why it is not a hole ────────────────────────
+ *
+ * `webhook/set.json` CHECKS THE URL before it saves it: UniOne calls the
+ * address and refuses to register anything that does not answer 200. That probe
+ * carries no events — there are none yet — so it cannot be signed the way a
+ * real batch is, and answering it 401 made registration impossible. The button
+ * failed with "Could not register the webhook" while the endpoint itself was
+ * working perfectly for real events.
+ *
+ * So a request with NO events is answered 200 and nothing else happens: nothing
+ * is read from it, nothing is written, and `last_webhook_event_at` is NOT
+ * stamped — an unverified probe is not proof that events are arriving. The hash
+ * still gates every event that could mark an address bounced or complained,
+ * which is the only thing it was ever protecting.
+ *
+ * GET is accepted for the same reason and answers the same way; some providers
+ * probe with it, and a 405 would be the same dead end as the 401.
  */
 class UniOneWebhookController extends Controller
 {
@@ -45,6 +63,17 @@ class UniOneWebhookController extends Controller
         }
 
         $raw = $request->getContent();
+        $payload = json_decode($raw, true);
+        $events = $this->eventsIn($payload);
+
+        /*
+         * A VERIFICATION PROBE: no events to apply, so there is nothing to
+         * authenticate and nothing to do but say yes. This is what lets
+         * `webhook/set.json` accept the URL at all — see the class note.
+         */
+        if ($events === []) {
+            return response()->json(['status' => 'success', 'ingested' => 0, 'duplicates' => 0]);
+        }
 
         // Gate 2: the documented MD5-with-api-key check, over the RAW bytes.
         if (! UniOneWebhookVerifier::verify($raw, (string) $key->api_key)) {
@@ -57,7 +86,6 @@ class UniOneWebhookController extends Controller
             return response()->json(['status' => 'error'], Response::HTTP_UNAUTHORIZED);
         }
 
-        $payload = json_decode($raw, true);
         $ingested = 0;
         $duplicates = 0;
 
@@ -71,14 +99,40 @@ class UniOneWebhookController extends Controller
          */
         $key->forceFill(['last_webhook_event_at' => now()])->save();
 
-        foreach ((array) ($payload['events_by_user'] ?? []) as $userBlock) {
-            foreach ((array) ($userBlock['events'] ?? []) as $event) {
-                $result = $this->ingest($key, (array) $event);
-                $result === 'duplicate' ? $duplicates++ : $ingested++;
-            }
+        foreach ($events as $event) {
+            $result = $this->ingest($key, $event);
+            $result === 'duplicate' ? $duplicates++ : $ingested++;
         }
 
         return response()->json(['status' => 'success', 'ingested' => $ingested, 'duplicates' => $duplicates]);
+    }
+
+    /**
+     * Every event in the payload, flattened out of its per-user blocks.
+     *
+     * Returns an EMPTY array for anything that is not a batch of events — a
+     * probe, an empty body, malformed JSON — which is exactly the case the
+     * caller treats as "nothing to authenticate, nothing to do".
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function eventsIn(mixed $payload): array
+    {
+        if (! is_array($payload)) {
+            return [];
+        }
+
+        $events = [];
+
+        foreach ((array) ($payload['events_by_user'] ?? []) as $userBlock) {
+            foreach ((array) (($userBlock['events'] ?? null) ?: []) as $event) {
+                if (is_array($event)) {
+                    $events[] = $event;
+                }
+            }
+        }
+
+        return $events;
     }
 
     /**

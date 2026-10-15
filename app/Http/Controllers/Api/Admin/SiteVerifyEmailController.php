@@ -13,6 +13,7 @@ use App\Http\Resources\SiteVerifyEmailResource;
 use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\SiteVerifyEmail;
+use App\Models\VerifyEmailSend;
 use App\Services\VerifyEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
@@ -79,6 +80,29 @@ class SiteVerifyEmailController extends Controller
 
         // Identical send path to the subscription + promotion tests — only the
         // template built into the mailable differs (that was the whole bug).
-        return $this->sendAdminTestEmail($this->emails->mailForSubscriber($site, $newsletter), $to);
+        return $this->sendAdminTestEmail(
+            $this->emails->mailForSubscriber($site, $newsletter),
+            $to,
+            /*
+             * Recorded in the verify-email history, flagged as a test.
+             *
+             * The operator pressing this button is usually checking something
+             * they already doubt, so the send leaving no trace was the worst
+             * possible behaviour — and a failure leaves one too, which is the
+             * case that matters most.
+             *
+             * `newsletter_id` stays null: the row the test borrows may be a
+             * real subscriber, and recording them here would read as "we sent
+             * this person a verification" when nobody asked for one.
+             */
+            fn (bool $ok, ?string $error): VerifyEmailSend => VerifyEmailSend::create([
+                'site_id' => $site->id,
+                'email'   => $to,
+                'status'  => $ok ? VerifyEmailSend::STATUS_SUCCESS : VerifyEmailSend::STATUS_FAILED,
+                'error'   => $error === null ? null : mb_strimwidth($error, 0, 500, '…'),
+                'is_test' => true,
+                'sent_at' => now(),
+            ]),
+        );
     }
 }

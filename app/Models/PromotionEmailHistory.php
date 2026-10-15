@@ -30,6 +30,22 @@ class PromotionEmailHistory extends Model
     /** @var list<string> */
     public const array STATUSES = [self::STATUS_SUCCESS, self::STATUS_FAILED, self::STATUS_SKIPPED];
 
+    /*
+     * Which feature wrote the row.
+     *
+     * Both streams write here because the 24-hour dedup below is shared — it is
+     * what stops a campaign and the after-verification promotion both reaching
+     * one address on one day, so it has to see every send. The ADMIN, though,
+     * shows one tab per stream, and the after-verification tab has its own log
+     * (`verification_promotion_sends`). Without this column the same send
+     * appeared under both tabs.
+     *
+     * So: the dedup reads every row, the Promotion listing reads only
+     * `campaign` ones. {@see scopeCampaign()}.
+     */
+    public const string STREAM_CAMPAIGN = 'campaign';
+    public const string STREAM_POST_VERIFICATION = 'post_verification';
+
     /**
      * Default tolerance subtracted from the 24h dedup window.
      *
@@ -165,6 +181,20 @@ class PromotionEmailHistory extends Model
     }
 
     /**
+     * Only the scheduled campaigns — what the admin's Promotion tab lists.
+     *
+     * Deliberately NOT applied to the dedup queries: those must keep seeing
+     * every stream, or the two could reach one address on one day.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeCampaign(Builder $query): Builder
+    {
+        return $query->where('stream', self::STREAM_CAMPAIGN);
+    }
+
+    /**
      * Bulk-insert one history row per processed address in a SINGLE INSERT —
      * not one query per recipient. Called once per campaign batch with every
      * attempted address and its outcome (success / failed / skipped), plus the
@@ -180,9 +210,16 @@ class PromotionEmailHistory extends Model
      *
      * @param  array<string, string>       $statusByEmail  email => STATUS_* value
      * @param  array<string, string|null>  $errorByEmail   email => failure message
+     * @param  string                      $stream         which feature is writing;
+     *                                                     campaigns by default, so every
+     *                                                     existing caller keeps its meaning
      */
-    public static function recordAttempts(int $siteId, array $statusByEmail, array $errorByEmail = []): void
-    {
+    public static function recordAttempts(
+        int $siteId,
+        array $statusByEmail,
+        array $errorByEmail = [],
+        string $stream = self::STREAM_CAMPAIGN,
+    ): void {
         if ($statusByEmail === []) {
             return;
         }
@@ -202,10 +239,18 @@ class PromotionEmailHistory extends Model
                 'error'      => $status === self::STATUS_FAILED
                     ? self::truncateError($errorByEmail[$email] ?? null)
                     : null,
+                'stream'     => $stream,
                 'created_at' => $now,
             ];
         }
 
+        /*
+         * `stream` is NOT in the update list, on purpose. The unique key is
+         * (site_id, email, sent_date, status), so a conflict means this address
+         * already has that outcome recorded for today — and the row belongs to
+         * whichever stream got there first. Overwriting the label would move a
+         * send between tabs after the fact.
+         */
         static::query()->upsert(
             $rows,
             ['site_id', 'email', 'sent_date', 'status'],

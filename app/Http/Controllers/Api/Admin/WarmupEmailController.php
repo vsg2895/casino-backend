@@ -514,6 +514,20 @@ class WarmupEmailController extends Controller
     private const int PREVIEW_READ_CHUNK = 200;
 
     /** Total matching the current history filters, as a dedicated COUNT. */
+    /**
+     * Delete one row of the delivery history.
+     *
+     * The row, not the address: `warmup_emails` is the list, this is the log of
+     * what was sent to it, and removing a log line must not take an address off
+     * the list.
+     */
+    public function destroyHistory(WarmupSendRecipient $recipient): JsonResponse
+    {
+        $recipient->delete();
+
+        return response()->json(null, 204);
+    }
+
     public function historyCount(Request $request): JsonResponse
     {
         return response()->json(['total' => $this->filteredHistory($request)->count()]);

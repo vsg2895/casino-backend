@@ -40,6 +40,10 @@ class VerificationPromotionSend extends Model
         'email',
         'status',
         'error',
+        // Set by this section's "Send test" button — see the migration that
+        // added the column for why a test is logged and flagged rather than
+        // either hidden or indistinguishable.
+        'is_test',
         'sent_at',
     ];
 
@@ -48,6 +52,7 @@ class VerificationPromotionSend extends Model
         return [
             'site_id'       => 'integer',
             'newsletter_id' => 'integer',
+            'is_test'       => 'boolean',
             'sent_at'       => 'datetime',
             'created_at'    => 'datetime',
         ];

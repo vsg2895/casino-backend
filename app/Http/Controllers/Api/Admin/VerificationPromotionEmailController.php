@@ -22,6 +22,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -107,6 +108,46 @@ class VerificationPromotionEmailController extends Controller
             'total'  => (clone $base)->count(),
             'failed' => (clone $base)->where('status', VerificationPromotionSend::STATUS_FAILED)->count(),
         ]);
+    }
+
+    /** Delete one row of this stream's history. */
+    public function destroyHistory(VerificationPromotionSend $send): JsonResponse
+    {
+        $send->delete();
+
+        return response()->json(null, 204);
+    }
+
+    /**
+     * Record a "Send test" in this stream's own history.
+     *
+     * A test used to leave an email and no evidence — the one case where
+     * evidence is wanted most, because the operator is testing precisely
+     * because something is in doubt. Failures are recorded too.
+     *
+     * Flagged `is_test`, and deliberately NOT written to the shared promotion
+     * history: that table drives the 24-hour dedup, and a test must never make
+     * a real subscriber's send get skipped.
+     */
+    private function recordTest(Site $site, string $to, string $status, ?string $error = null): void
+    {
+        try {
+            VerificationPromotionSend::create([
+                'site_id' => $site->id,
+                'email'   => $to,
+                'status'  => $status,
+                'error'   => $error === null ? null : mb_strimwidth($error, 0, 500, '…'),
+                'is_test' => true,
+                'sent_at' => Carbon::now(),
+            ]);
+        } catch (Throwable $e) {
+            // The mail has already gone; a history write must not turn a
+            // successful test into an error response.
+            Log::warning('Post-verification test history write failed', [
+                'to'    => $to,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -337,6 +378,8 @@ class VerificationPromotionEmailController extends Controller
                 ...$credential,
             ]);
 
+            $this->recordTest($site, $to, VerificationPromotionSend::STATUS_FAILED, $e->getMessage());
+
             return response()->json([
                 'ok'      => false,
                 'message' => 'Could not send test email via ' . $credential['source']
@@ -352,6 +395,8 @@ class VerificationPromotionEmailController extends Controller
         // SendGrid's own id for the message — the handle for looking up its
         // real fate in the Activity Feed when it does not appear in an inbox.
         $messageId = $sent?->getSymfonySentMessage()?->getMessageId();
+
+        $this->recordTest($site, $to, VerificationPromotionSend::STATUS_SUCCESS);
 
         Log::info('Post-verification promotion test email sent', [
             'to'         => $to,

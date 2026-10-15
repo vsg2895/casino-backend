@@ -40,9 +40,25 @@ class UniOneReceiverController extends Controller
     }
 
     /** Headline numbers for the screen, including how many could be mailed now. */
-    public function stats(): JsonResponse
+    /**
+     * The summary above the table — counted over THE SAME filtered set the
+     * table is showing.
+     *
+     * It used to count the whole list, so applying a filter narrowed the rows
+     * while the header kept reporting the unfiltered totals. That is worse than
+     * no header: the number looks like it describes what you are looking at.
+     *
+     * One exception, and it is deliberate: `last_statuses` is read from the
+     * WHOLE table. It is the option list for the "Last sent" filter, and
+     * narrowing it by the current filter would remove the very options an
+     * operator is trying to switch between — pick one status and the rest
+     * vanish from the dropdown, leaving no way back.
+     */
+    public function stats(Request $request): JsonResponse
     {
-        $byStatus = UniOneReceiver::query()
+        $filters = $this->filters($request);
+
+        $byStatus = $this->filtered($filters)
             ->selectRaw('status, COUNT(*) AS total')
             ->groupBy('status')
             ->pluck('total', 'status');
@@ -64,7 +80,9 @@ class UniOneReceiverController extends Controller
             'data' => [
                 'total'     => (int) array_sum($byStatus->all()),
                 'by_status' => $byStatus->map(static fn ($v): int => (int) $v),
-                'never_sent' => UniOneReceiver::query()->whereNull('last_sent_at')->count(),
+                // Also within the filtered set, so "never sent" agrees with the
+                // rows the table is showing rather than with the whole list.
+                'never_sent' => $this->filtered($filters)->whereNull('last_sent_at')->count(),
                 'last_statuses' => $lastStatuses,
             ],
         ]);

@@ -7,6 +7,7 @@ namespace App\Jobs;
 use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
+use App\Models\VerifyEmailSend;
 use App\Services\VerifyEmailService;
 use App\Support\Mail\SiteSender;
 use Illuminate\Bus\Queueable;
@@ -14,7 +15,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Throwable;
 
 /**
  * Sends the "verify your email" (double opt-in) email for a single
@@ -83,8 +86,55 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
         $mailable = $emails->mailForSubscriber($site, $newsletter)
             ->usingFromAddress(SiteSender::verificationAddress($site));
 
-        Mail::mailer(config('mail.public_mailer'))
-            ->to($this->email)
-            ->send($mailable);
+        /*
+         * Recorded either way.
+         *
+         * This is the first email a subscriber ever gets and the one that
+         * decides whether they are verified at all, so "was it sent, and did
+         * the transport take it" has to be answerable afterwards — it used to
+         * live only in the application log.
+         *
+         * The throw is RE-THROWN after the row is written: a failed send must
+         * still fail the job so the queue retries it. Writing the history is
+         * not allowed to swallow that.
+         */
+        try {
+            Mail::mailer(config('mail.public_mailer'))
+                ->to($this->email)
+                ->send($mailable);
+        } catch (Throwable $e) {
+            $this->record($newsletter, VerifyEmailSend::STATUS_FAILED, $e->getMessage());
+
+            throw $e;
+        }
+
+        $this->record($newsletter, VerifyEmailSend::STATUS_SUCCESS);
+    }
+
+    /**
+     * Append the outcome to the verify-email history.
+     *
+     * Best-effort: the mail has already gone out (or definitively failed), so a
+     * history write that itself fails is logged and never changes the job's
+     * outcome — re-sending a verification because its LOG row would not insert
+     * is the wrong trade.
+     */
+    private function record(Newsletter $newsletter, string $status, ?string $error = null): void
+    {
+        try {
+            VerifyEmailSend::create([
+                'site_id'       => $newsletter->site_id,
+                'newsletter_id' => $newsletter->id,
+                'email'         => $newsletter->email,
+                'status'        => $status,
+                'error'         => $error === null ? null : mb_strimwidth($error, 0, 500, '…'),
+                'sent_at'       => now(),
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('Verify-email history write failed', [
+                'newsletter_id' => $newsletter->id,
+                'error'         => $e->getMessage(),
+            ]);
+        }
     }
 }

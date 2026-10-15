@@ -38,8 +38,18 @@ use Throwable;
 trait SendsAdminTestEmail
 {
 
-    protected function sendAdminTestEmail(Mailable&SenderOverridable $mailable, string $to): JsonResponse
-    {
+    /**
+     * @param  (callable(bool $ok, string|null $error): void)|null  $record
+     *        Called with the outcome before the response is built, for the
+     *        streams that keep a send history. Optional, because most test
+     *        buttons have nothing to write to — and it runs for FAILURES as
+     *        well, which is the case a history is most wanted for.
+     */
+    protected function sendAdminTestEmail(
+        Mailable&SenderOverridable $mailable,
+        string $to,
+        ?callable $record = null,
+    ): JsonResponse {
         $mailer = (string) config('mail.admin_test_mailer', 'smtp');
         $from = config('mail.from.address') ?: null;
         // Recorded so "which credentials did that test use?" is answerable from
@@ -64,6 +74,10 @@ trait SendsAdminTestEmail
                 ...$credential,
             ]);
 
+            if ($record !== null) {
+                $record(false, $e->getMessage());
+            }
+
             return response()->json([
                 'ok'      => false,
                 'message' => 'Could not send test email: ' . $e->getMessage(),
@@ -83,6 +97,10 @@ trait SendsAdminTestEmail
             'message_id' => $messageId,
             ...$credential,
         ]);
+
+        if ($record !== null) {
+            $record(true, null);
+        }
 
         return response()->json([
             'ok'      => true,

@@ -27,6 +27,9 @@ class UniOneSendResource extends JsonResource
             'chunk_count'     => (int) $this->chunk_count,
             'cooldown_days'   => (int) $this->cooldown_days,
             'error'           => $this->error,
+            // A "Send test", not a campaign — the admin tags the row so one
+            // run of one is not read as a failed run of thousands.
+            'is_test'         => (bool) $this->is_test,
             'completed_at'    => $this->completed_at?->toISOString(),
             'created_at'      => $this->created_at?->toISOString(),
             'key'             => $this->whenLoaded('key', fn (): array => [
