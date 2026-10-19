@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Jobs\SendVerificationPromotionJob;
+use App\Jobs\SendRegistrationPromotionJob;
 use App\Models\Newsletter;
+use App\Models\ForumUser;
 use App\Models\VerificationPromotionEmail;
 use App\Support\ClockFacts;
 use Carbon\CarbonInterface;
@@ -108,7 +110,94 @@ class DispatchVerificationPromotions extends Command
 
         $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
 
+        $this->dispatchMembers($cutoff, $limit);
+
         return self::SUCCESS;
+    }
+
+    /**
+     * The SECOND audience: members who verified their account registration.
+     *
+     * Same template, same settings, same cut-off — the delay is computed once,
+     * above, and both sweeps read it, so "two minutes after verification" cannot
+     * come to mean two different things depending on how somebody signed up.
+     *
+     * In the same command rather than a second one for exactly that reason. A
+     * sibling command would need its own copy of the config read, the cut-off
+     * and the disabled check, and the first time somebody changed the delay
+     * semantics they would change one of them.
+     *
+     * The member sweep runs AFTER the subscriber sweep deliberately. Someone who
+     * both subscribed and registered with one address should be attributed to
+     * the subscription, which is the explicit opt-in; the job's cross-audience
+     * gate then sees the subscriber's send record and skips the member.
+     */
+    private function dispatchMembers(CarbonInterface $cutoff, int $limit): void
+    {
+        $members = $this->eligibleMembers($cutoff)
+            ->orderBy('id')
+            ->limit($limit)
+            ->get(['id', 'email']);
+
+        if ($members->isEmpty()) {
+            $this->info('No registered members are eligible right now.');
+
+            return;
+        }
+
+        foreach ($members as $member) {
+            SendRegistrationPromotionJob::dispatch((int) $member->id);
+        }
+
+        $emails = $members->pluck('email')->implode(', ');
+
+        $this->info("Queued {$members->count()} registration promotion(s): {$emails}");
+    }
+
+    /**
+     * Members who should receive the promotion right now.
+     *
+     * The mirror of {@see self::eligible()}, against `forum_users`:
+     *
+     *     email_verified_at + delay_minutes <= now
+     *
+     * `email_verified_at` is stamped by ForumAuthController::verify() when the
+     * member clicks the link in their registration email — so the clock starts
+     * at the click, exactly as the subscriber's does. A member who registered
+     * but never verified is never eligible, and neither is one already claimed.
+     *
+     * Banned accounts are excluded. Sending marketing to somebody who has been
+     * thrown off the site is the kind of thing nobody notices until it is
+     * screenshotted.
+     *
+     * @return EloquentBuilder<ForumUser>
+     */
+    private function eligibleMembers(CarbonInterface $cutoff): EloquentBuilder
+    {
+        return ForumUser::query()
+            ->whereNull('verification_promotion_sent_at')   // never claimed
+            ->whereNotNull('email_verified_at')             // actually verified
+            ->where('email_verified_at', '<=', $cutoff)     // delay since the click has elapsed
+            /*
+             * CONSENT. Registering an account is not agreeing to be marketed
+             * to, so the member has to have ticked the box on the registration
+             * form. NULL — the default, and the state of every member who
+             * registered before the box existed — is never eligible.
+             *
+             * This is the one condition here with no counterpart in the
+             * subscriber sweep, and it does not need one: subscribing to a
+             * newsletter IS the consent.
+             */
+            ->whereNotNull('marketing_consent_at')
+            ->where('status', '!=', ForumUser::STATUS_BANNED)
+            // Honour a global opt-out, the same way the subscriber sweep does —
+            // any stream's opt-out excludes the address, and the send job
+            // re-checks with Unsubscribe::hasAny.
+            ->whereNotExists(function (Builder $query): void {
+                $query->from('unsubscribes')
+                    ->whereColumn('unsubscribes.email', 'forum_users.email')
+                    ->whereColumn('unsubscribes.site_id', 'forum_users.site_id');
+            });
     }
 
     /**

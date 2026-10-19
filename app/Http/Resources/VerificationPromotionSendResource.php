@@ -22,6 +22,15 @@ class VerificationPromotionSendResource extends JsonResource
             // denormalised copy that keeps the row readable when they are —
             // which is the whole reason the FK nulls rather than cascades.
             'newsletter_id' => $this->newsletter_id,
+            /*
+             * Which audience this went to: a newsletter subscriber who verified
+             * their address, or a member who verified their account
+             * registration. Both receive the same template, so without this the
+             * history cannot answer "why did this person get marketing from us"
+             * — and that is the question the screen exists for.
+             */
+            'source'        => $this->source ?? 'newsletter',
+            'forum_user_id' => $this->forum_user_id,
 
             'status' => $this->status,
             'error'  => $this->error,

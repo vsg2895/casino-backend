@@ -34,6 +34,18 @@ class SpecialOfferResource extends JsonResource
              * with no type simply returns null.
              */
             'bonus_category_slug' => $this->bonusCategory?->slug,
+
+            /*
+             * The type's NAME, for the label a reader actually sees.
+             *
+             * The slug above is a machine value — the front end matches on it to
+             * decide which bonuses carry a Claim button — and deriving a label
+             * from it ("no-deposit-offers" → "No Deposit Offers") would be a
+             * guess that goes wrong the moment an editor renames the type.
+             * Resolved through the same already-loaded relation, so it costs
+             * nothing beyond the slug.
+             */
+            'bonus_category_name' => $this->bonusCategory?->name,
             'casino'             => new CasinoResource($this->whenLoaded('casino')),
             'title'              => $this->title,
             'slug'               => $this->slug,
@@ -67,6 +79,13 @@ class SpecialOfferResource extends JsonResource
                 'expired'              => $this->hasExpired(),
             ],
             'seo'        => $this->seoBlock(),
+            /*
+             * Whether this offer's page is worth indexing — prose of at least
+             * SpecialOffer::MIN_INDEXABLE_WORDS, or filled bonus terms, and no
+             * explicit admin noindex. Computed server-side so the robots tag
+             * and the sitemap cannot disagree about it.
+             */
+            'is_indexable' => $this->resource->isIndexable(),
         ];
     }
 
@@ -89,6 +108,8 @@ class SpecialOfferResource extends JsonResource
                 'description'   => null,
                 'canonical_url' => $this->canonical_url,
                 'noindex'       => (bool) $this->noindex,
+                // Same key in both branches, so the shape never varies by caller.
+                'description_from_record' => trim((string) $this->meta_description) !== '',
             ];
         }
 
@@ -107,6 +128,20 @@ class SpecialOfferResource extends JsonResource
             ...$resolved,
             'canonical_url' => $this->canonical_url,
             'noindex'       => (bool) $this->noindex,
+            /*
+             * WHERE the resolved description came from.
+             *
+             * `SeoResolver` returns a finished string whether it came from this
+             * record's own `meta_description` or from the site's pattern, and
+             * the front end needs to tell them apart: a pattern is one sentence
+             * with the title substituted in, so it reads the same on every
+             * offer, while an override was typed for this offer alone.
+             *
+             * Derived here rather than added to SeoResolver's return shape, so
+             * the casino resource — which spreads the same array and has no use
+             * for it — is untouched.
+             */
+            'description_from_record' => trim((string) $this->meta_description) !== '',
         ];
     }
 }

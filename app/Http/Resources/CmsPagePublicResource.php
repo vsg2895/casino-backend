@@ -22,6 +22,17 @@ class CmsPagePublicResource extends JsonResource
             'content'          => $this->content,
             'meta_title'       => $this->meta_title ?? $this->title,
             'meta_description' => $this->meta_description,
+            /*
+             * Whether this page asks to stay out of the index.
+             *
+             * The site used to decide this from a hardcoded list of the eleven
+             * standard slugs, so /about and the other four trust pages were
+             * suppressed alongside the six legal ones, and changing it needed a
+             * deploy. Now it is per page, per site, editable in the admin — and
+             * a page becomes indexable the moment someone rewrites it for this
+             * site rather than leaving it as the shared template.
+             */
+            'noindex'          => (bool) $this->noindex,
             // ISO-8601 STRING, not the Carbon instance. These responses are cached
             // via SiteCache, and a serialized Carbon returns as
             // __PHP_Incomplete_Class — so the cached copy shipped a broken object

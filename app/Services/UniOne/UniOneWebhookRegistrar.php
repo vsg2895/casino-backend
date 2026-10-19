@@ -78,10 +78,25 @@ class UniOneWebhookRegistrar
             'url'    => $url,
             'events' => ['email_status' => self::EVENTS],
             'status' => 'active',
-            // One delivery at a time, and batched rather than one request per
-            // event: this endpoint writes a row and may update a receiver per
-            // event, and UniOne retries until it gets a 200.
-            'max_parallel' => 1,
+            /*
+             * 5, because UniOne REFUSES anything lower:
+             *
+             *   Error in 'max_parallel' field. This value should be between 5
+             *   and 100.
+             *
+             * It was 1, meaning "one delivery at a time", and that number is
+             * what made every registration fail — the URL was never the
+             * problem. 5 is their floor, and the lowest concurrency they will
+             * accept is what this endpoint wants: it writes a row and may
+             * update a receiver per event.
+             *
+             * Concurrency is safe here regardless. Ingestion is idempotent on a
+             * UNIQUE `event_hash`, so two deliveries of one event race to the
+             * same row and the loser is reported as a duplicate, not an error.
+             */
+            'max_parallel' => 5,
+            // Batched rather than one request per event — UniOne retries until
+            // it gets a 200, and a batch means one retry instead of many.
             'single_event' => false,
         ];
 

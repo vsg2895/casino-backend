@@ -82,6 +82,8 @@ class ForumUser extends Authenticatable
     {
         return [
             'email_verified_at'    => 'datetime',
+            'marketing_consent_at' => 'datetime',
+            'verification_promotion_sent_at' => 'datetime',
             'banned_until'         => 'datetime',
             'last_seen_at'         => 'datetime',
             'password'             => 'hashed',
@@ -91,11 +93,58 @@ class ForumUser extends Authenticatable
         ];
     }
 
+    /**
+     * This member's one-click opt-out token for the post-verification promotion.
+     *
+     * Minted on creation, like the newsletter tokens it mirrors, and never
+     * regenerated: the link lives in a delivered email forever, and rotating it
+     * would break the opt-out in every message already sent.
+     *
+     * A member has exactly ONE token because they can receive exactly one kind
+     * of marketing email. A newsletter subscriber carries four, one per
+     * template, which is what lets an unsubscribe record say which email it came
+     * from — there is nothing to disambiguate here.
+     */
+    public function unsubscribeTokenFor(string $type = Unsubscribe::TYPE_PROMOTION_AFTER_VERIFICATION): string
+    {
+        return (string) $this->verification_promotion_unsubscribe_token;
+    }
+
+    /**
+     * Resolve a member from an opt-out token, or null.
+     *
+     * The public unsubscribe endpoint tries the newsletter table first and falls
+     * back to this. Without it the unsubscribe link in a member's promotion
+     * email would resolve to nothing — a marketing email with a dead opt-out.
+     */
+    public static function findByUnsubscribeToken(string $token, ?int $siteId = null): ?self
+    {
+        if ($token === '') {
+            return null;
+        }
+
+        return static::query()
+            ->when($siteId !== null, fn ($q) => $q->where('site_id', $siteId))
+            ->where('verification_promotion_unsubscribe_token', $token)
+            ->first();
+    }
+
     protected static function booted(): void
     {
         static::creating(function (self $user): void {
             if (trim((string) $user->slug) === '') {
                 $user->slug = self::uniqueSlug((int) $user->site_id, (string) $user->display_name);
+            }
+
+            /*
+             * The opt-out token, minted here so EVERY member has one before any
+             * email can reference it. Generated at creation rather than at send
+             * time because the link has to stay valid in a delivered message
+             * forever — a token created per send would invalidate the previous
+             * one, breaking the opt-out in every email already out there.
+             */
+            if (trim((string) $user->verification_promotion_unsubscribe_token) === '') {
+                $user->verification_promotion_unsubscribe_token = Str::random(64);
             }
         });
     }

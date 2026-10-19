@@ -56,6 +56,16 @@ class NewsController extends Controller
         // Credited on the detail page. Carried on listing rows too so a card
         // can show its provenance without a second request.
         'source_name', 'source_url',
+        /*
+         * Needed by the SITEMAP, not by a card.
+         *
+         * Omitted, `ArticleResource` emitted `false` for every listing row —
+         * `(bool) null` on an attribute that was never selected — so a scraped
+         * article carrying noindex looked indexable to anything reading the
+         * feed. Each site's app/sitemap.ts filters on it, and silently
+         * filtered nothing until this column was here.
+         */
+        'noindex',
     ];
 
     public function index(Request $request): JsonResponse

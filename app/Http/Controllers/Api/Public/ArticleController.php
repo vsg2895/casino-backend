@@ -36,7 +36,13 @@ class ArticleController extends Controller
                 ->ofType(Article::TYPE_GUIDE)
                 ->visible()
                 ->inListingOrder()
-                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'active', 'featured', 'updated_at']);
+                /*
+                 * `noindex` is in this list for the SITEMAP's sake. Without it
+                 * the resource emitted `(bool) null` — false — for every guide,
+                 * so a guide flagged noindex still looked indexable to anything
+                 * reading this feed, and the sitemap's filter matched nothing.
+                 */
+                ->get(['id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path', 'published_at', 'active', 'featured', 'updated_at', 'noindex']);
 
             return ArticleResource::collection($articles)->resolve();
         });

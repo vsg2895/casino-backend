@@ -140,6 +140,41 @@ class UniOneWebhookDeliveryTest extends TestCase
         $this->assertNotNull($key->webhook_registered_at, 'a successful registration must be recorded');
     }
 
+    public function test_the_registration_payload_stays_inside_unione_s_limits(): void
+    {
+        /*
+         * THE BUG THIS GUARDS. Registration failed for days with
+         *
+         *   Error in 'max_parallel' field. This value should be between 5 and 100.
+         *
+         * because we asked for 1 — a number that reads as reasonable and that
+         * the provider simply does not accept. The URL was never the problem,
+         * and no amount of looking at the endpoint would have found it.
+         *
+         * Pinned as a RANGE rather than the literal 5, so tuning the
+         * concurrency later is free and going outside their bounds is not.
+         */
+        Http::fake(['*' => Http::response(['status' => 'success'], 200)]);
+
+        $key = $this->key();
+        $this->actingAsAdmin();
+
+        $this->postJson("/api/v1/admin/unione/keys/{$key->id}/webhook")->assertOk();
+
+        Http::assertSent(function ($request): bool {
+            if (! str_contains($request->url(), 'webhook/set.json')) {
+                return false;
+            }
+
+            $parallel = (int) $request->data()['max_parallel'];
+
+            $this->assertGreaterThanOrEqual(5, $parallel, "UniOne refuses max_parallel below 5");
+            $this->assertLessThanOrEqual(100, $parallel, 'UniOne refuses max_parallel above 100');
+
+            return true;
+        });
+    }
+
     public function test_a_refused_registration_keeps_the_providers_own_message(): void
     {
         // The worst outcome is a silent failure, so the operator gets the

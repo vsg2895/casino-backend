@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Public\SubscribeNewsletterRequest;
 use App\Http\Requests\Public\UnsubscribeNewsletterRequest;
 use App\Jobs\ProcessNewsletterSubscription;
+use App\Models\ForumUser;
 use App\Models\Newsletter;
 use App\Models\Site;
 use App\Models\Unsubscribe;
@@ -133,6 +134,30 @@ class NewsletterController extends Controller
             $type = $newsletter->unsubscribeTypeForToken($token) ?? Unsubscribe::TYPE_SUBSCRIPTION;
 
             Unsubscribe::record($site->id, $newsletter->email, $type);
+
+            return response()->json(['ok' => true]);
+        }
+
+        /*
+         * A REGISTERED MEMBER's token, which lives on `forum_users`.
+         *
+         * Members receive the post-verification promotion without ever having a
+         * newsletter row, so this page — the one their unsubscribe link lands
+         * on — has to resolve their token too. Missing it meant the page
+         * answered `ok: true` and recorded nothing.
+         *
+         * Site-scoped like the lookup above, because this endpoint runs inside
+         * `verify.site` and a token must not opt an address out on a domain it
+         * did not come from.
+         */
+        $member = ForumUser::findByUnsubscribeToken($token, $site->id);
+
+        if ($member !== null) {
+            Unsubscribe::record(
+                $site->id,
+                (string) $member->email,
+                Unsubscribe::TYPE_PROMOTION_AFTER_VERIFICATION,
+            );
         }
 
         return response()->json(['ok' => true]);

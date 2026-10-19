@@ -50,7 +50,12 @@ class UpdateSpecialOfferRequest extends FormRequest
                 'nullable',
                 'string',
                 'max:255',
-                'regex:/^[a-z0-9]+(?:_[a-z0-9]+)*$/',
+                // HYPHENS, not underscores. Google treats a hyphen as a word
+                // separator and an underscore as a joiner, so
+                // `2nd_deposit_bonus` was one token to it. The generator
+                // produces this shape too — a rule that rejected what
+                // SpecialOffer::slugBase() emits would fail its own output.
+                'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',
                 // `special_offer` — the parameter name apiResource derives from
                 // the `special-offers` URI, NOT the camelCase one the duplicate
                 // route spells out. Getting it wrong returns null, ignore(null)

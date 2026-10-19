@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Models\ForumUser;
 use App\Models\Newsletter;
 use App\Models\Unsubscribe;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +38,32 @@ class UnsubscribeController extends Controller
                 $type = $newsletter->unsubscribeTypeForToken($token) ?? Unsubscribe::TYPE_SUBSCRIPTION;
 
                 Unsubscribe::record($newsletter->site_id, $newsletter->email, $type);
+
+                return response()->json(['ok' => true]);
+            }
+
+            /*
+             * SECOND HOLDER OF TOKENS: a registered member.
+             *
+             * A member who verified their account receives the
+             * post-verification promotion without ever having a newsletter row,
+             * so their opt-out token lives on `forum_users`. Without this branch
+             * the unsubscribe link in that email resolved to nothing and the
+             * endpoint still answered `ok: true` — an opt-out that silently did
+             * nothing, which is worse than one that errors.
+             *
+             * The type is fixed rather than looked up: a member carries exactly
+             * one token because they can receive exactly one kind of marketing
+             * email, so there is nothing to disambiguate.
+             */
+            $member = ForumUser::findByUnsubscribeToken($token);
+
+            if ($member !== null) {
+                Unsubscribe::record(
+                    (int) $member->site_id,
+                    (string) $member->email,
+                    Unsubscribe::TYPE_PROMOTION_AFTER_VERIFICATION,
+                );
             }
         }
 

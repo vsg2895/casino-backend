@@ -32,11 +32,29 @@ class VerificationPromotionSend extends Model
     /** @var list<string> */
     public const array STATUSES = [self::STATUS_SUCCESS, self::STATUS_FAILED];
 
+    /**
+     * Which audience the recipient came from.
+     *
+     * A newsletter subscriber who verified their address, or a member who
+     * verified their account registration. Both receive the same template; the
+     * label is what lets the history answer a complaint without guessing, and
+     * it is a column rather than an inference from `newsletter_id IS NULL`
+     * because that null already means "subscriber since deleted".
+     */
+    public const string SOURCE_NEWSLETTER = 'newsletter';
+
+    public const string SOURCE_REGISTRATION = 'registration';
+
+    /** @var list<string> */
+    public const array SOURCES = [self::SOURCE_NEWSLETTER, self::SOURCE_REGISTRATION];
+
     public const ?string UPDATED_AT = null;
 
     protected $fillable = [
         'site_id',
         'newsletter_id',
+        'source',
+        'forum_user_id',
         'email',
         'status',
         'error',
@@ -52,6 +70,7 @@ class VerificationPromotionSend extends Model
         return [
             'site_id'       => 'integer',
             'newsletter_id' => 'integer',
+            'forum_user_id' => 'integer',
             'is_test'       => 'boolean',
             'sent_at'       => 'datetime',
             'created_at'    => 'datetime',

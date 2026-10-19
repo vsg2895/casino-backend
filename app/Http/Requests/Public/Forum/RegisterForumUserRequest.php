@@ -23,6 +23,19 @@ class RegisterForumUserRequest extends FormRequest
 
         return [
             'display_name' => ['required', 'string', 'min:2', 'max:60'],
+            /*
+             * Marketing consent — OPTIONAL, and deliberately so.
+             *
+             * `sometimes` plus `boolean`: a registration must never fail because
+             * somebody left the box alone, and an absent key means exactly what
+             * an unticked box means. `accepted` would be wrong — that rule
+             * demands a true value and would refuse the common case.
+             *
+             * The controller turns true into a timestamp; anything else leaves
+             * the column NULL, which is the no-consent state the promotion sweep
+             * requires.
+             */
+            'marketing_consent' => ['sometimes', 'boolean'],
             'email'        => [
                 'required',
                 /*

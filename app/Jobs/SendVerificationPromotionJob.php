@@ -306,6 +306,10 @@ class SendVerificationPromotionJob implements ShouldQueue
             VerificationPromotionSend::create([
                 'site_id'       => $newsletter->site_id,
                 'newsletter_id' => $newsletter->id,
+                // Explicit, even though it is the column default: the sibling
+                // job for registered members writes the other value, and a
+                // reader of either should not have to know which default applies.
+                'source'        => VerificationPromotionSend::SOURCE_NEWSLETTER,
                 'email'         => $newsletter->email,
                 'status'        => $status === PromotionEmailHistory::STATUS_SUCCESS
                     ? VerificationPromotionSend::STATUS_SUCCESS

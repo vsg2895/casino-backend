@@ -55,6 +55,21 @@ class ForumAuthController extends Controller
         ]);
 
         $member->registration_ip = $this->packedIp($request);
+
+        /*
+         * Consent, stamped at the moment it was given.
+         *
+         * Written here rather than through `create()` above because it is not
+         * fillable: a registration POST must not be able to set an arbitrary
+         * timestamp, and `true` is the only thing a client gets to say. NULL
+         * stays NULL when the box was left alone, and NULL is what the
+         * post-verification promotion sweep reads as "do not market to this
+         * person".
+         */
+        if ($request->boolean('marketing_consent')) {
+            $member->marketing_consent_at = now();
+        }
+
         $member->save();
 
         $link = $this->verificationLink($member, $site);

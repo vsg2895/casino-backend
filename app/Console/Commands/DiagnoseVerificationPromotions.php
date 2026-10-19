@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Exceptions\PromotionMailerException;
+use App\Models\ForumUser;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
 use App\Models\Unsubscribe;
@@ -149,6 +150,47 @@ class DiagnoseVerificationPromotions extends Command
             $this->row($label, (string) $query->count(), null);
         }
 
+        /*
+         * THE SECOND AUDIENCE, with its own funnel.
+         *
+         * Members who verified their account registration receive the same
+         * template after the same delay, and "nothing is going to registrants"
+         * needs the same answerability the subscriber funnel provides: each row
+         * is the previous one plus ONE condition, so the row where the number
+         * collapses to zero names the reason.
+         *
+         * The last row is deliberately NOT the full eligibility test. The
+         * cross-audience gate — "this address already received it as a
+         * subscriber" — lives in the job rather than the sweep, because it is a
+         * per-address lookup rather than a filter. So a member can appear here,
+         * be queued, and still be skipped; the send history is where that
+         * outcome is visible.
+         */
+        $this->line('');
+        $this->info('── 4b. Registered-member funnel (all sites) ──');
+        $members = ForumUser::query();
+        $memberSteps = [
+            'Members total'                   => (clone $members),
+            '… with a verified registration'  => (clone $members)->whereNotNull('email_verified_at'),
+            '… whose delay has elapsed'       => (clone $members)->whereNotNull('email_verified_at')->where('email_verified_at', '<=', $cutoff),
+            '… who consented to marketing'    => (clone $members)->whereNotNull('email_verified_at')->where('email_verified_at', '<=', $cutoff)->whereNotNull('marketing_consent_at'),
+            '… not banned'                    => (clone $members)->whereNotNull('email_verified_at')->where('email_verified_at', '<=', $cutoff)->whereNotNull('marketing_consent_at')->where('status', '!=', ForumUser::STATUS_BANNED),
+            '… not already sent/claimed'      => (clone $members)->whereNotNull('email_verified_at')->where('email_verified_at', '<=', $cutoff)->whereNotNull('marketing_consent_at')->where('status', '!=', ForumUser::STATUS_BANNED)->whereNull('verification_promotion_sent_at'),
+        ];
+        foreach ($memberSteps as $label => $query) {
+            $this->row($label, (string) $query->count(), null);
+        }
+
+        $claimedAtMigration = ForumUser::whereNotNull('verification_promotion_sent_at')->count();
+        if ($claimedAtMigration > 0) {
+            $this->line('');
+            $this->warn("   {$claimedAtMigration} member(s) are marked as already sent/claimed.");
+            $this->warn('   Members who verified BEFORE this feature shipped were marked that way by');
+            $this->warn('   migration, deliberately: otherwise the first sweep would mail every member');
+            $this->warn('   who ever verified, in one burst. Only verifications from then on qualify.');
+        }
+
+        $this->line('');
         $verifiedNoStamp = Newsletter::where('verified', true)->whereNull('verified_at')->count();
         if ($verifiedNoStamp > 0) {
             $this->line('');
