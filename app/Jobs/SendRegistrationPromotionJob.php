@@ -18,6 +18,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -36,11 +37,17 @@ use Throwable;
  * email itself comes from the one shared service, so the two cannot send
  * different messages.
  *
- * THE EXTRA GATE this one has: a cross-audience check. Someone can register an
- * account AND subscribe with the same address, and they must not receive the
- * same promotion twice. `verification_promotion_sends` is consulted by email
- * before sending, which covers both directions regardless of which flow ran
- * first.
+ * THE CROSS-AUDIENCE GUARANTEE. Someone can register an account AND subscribe
+ * with the same address, and they must not receive the same promotion twice.
+ * Two guards, both shared with the sibling job so the two sides cannot
+ * disagree about what "already received it" means:
+ *
+ *   - {@see VerificationPromotionSend::alreadySentTo()} — has this ADDRESS
+ *     already been mailed this template, by either flow, at this site. It
+ *     covers both orderings, whichever flow ran first;
+ *   - a lock on the address, held across that check, the send and the history
+ *     write, so two jobs that start at the same instant cannot both pass a
+ *     check that only becomes true once one of them finishes.
  */
 class SendRegistrationPromotionJob implements ShouldQueue
 {
@@ -129,6 +136,44 @@ class SendRegistrationPromotionJob implements ShouldQueue
         }
 
         /*
+         * ── ONE ADDRESS, ONE SENDER AT A TIME ───────────────────────────────
+         *
+         * The mirror of the lock in {@see SendVerificationPromotionJob}, taking
+         * the same key, because the whole point is that the two jobs contend
+         * for it: the member row and the subscriber row are in different tables
+         * and their claims cannot see one another, while the record the gate
+         * below reads is only written after the mail goes out.
+         *
+         * Not acquiring is NOT an error and NOT a claim — the other job holds
+         * this address right now, so the member is left for the next sweep, by
+         * which time the winner's send record exists and the gate settles it.
+         */
+        $delivered = Cache::lock(
+            VerificationPromotionSend::lockKeyFor((int) $member->site_id, (string) $member->email),
+            VerificationPromotionSend::SEND_LOCK_SECONDS,
+        )->get(fn (): bool => $this->deliver($member, $config, $promotions, $mailers));
+
+        if ($delivered === false) {
+            $this->skipped('another promotion job is working on this address right now', $member->email);
+        }
+    }
+
+    /**
+     * The critical section: decide, send, record — holding the address lock.
+     *
+     * Split out of {@see self::handle()} only so the lock can wrap it as one
+     * closure; the order of the checks and the send is unchanged.
+     *
+     * Always returns true, so the caller can tell "the lock was not acquired"
+     * (Laravel's `Lock::get()` returns false) from "this ran".
+     */
+    private function deliver(
+        ForumUser $member,
+        VerificationPromotionEmail $config,
+        PostVerificationPromotionEmailService $promotions,
+        PromotionMailerFactory $mailers,
+    ): bool {
+        /*
          * THE CROSS-AUDIENCE GATE.
          *
          * One person, one promotion. A member who also subscribed with the same
@@ -138,20 +183,20 @@ class SendRegistrationPromotionJob implements ShouldQueue
          *
          * Checked by email within the site, which is the only identity the two
          * audiences share.
+         *
+         * The query itself now lives on the model as
+         * {@see VerificationPromotionSend::alreadySentTo()} — unchanged in what
+         * it asks, but shared with the newsletter job so the two sides cannot
+         * drift into disagreeing about what "already received it" means.
          */
-        if (VerificationPromotionSend::query()
-            ->where('site_id', $member->site_id)
-            ->where('email', $member->email)
-            ->where('status', VerificationPromotionSend::STATUS_SUCCESS)
-            ->exists()
-        ) {
+        if (VerificationPromotionSend::alreadySentTo((int) $member->site_id, (string) $member->email)) {
             $this->skipped('this address already received the promotion through the newsletter flow', $member->email);
 
             // Claimed anyway, so the sweep stops reconsidering them every
             // minute for a decision that will never change.
             $this->claim($member);
 
-            return;
+            return true;
         }
 
         // Resolve the transport BEFORE claiming. A missing or disabled
@@ -166,12 +211,12 @@ class SendRegistrationPromotionJob implements ShouldQueue
                 'error'     => $e->getMessage(),
             ]);
 
-            return;
+            return true;
         }
 
         // ── The claim. Exactly one caller wins. ──────────────────────────────
         if (! $this->claim($member)) {
-            return;
+            return true;
         }
 
         try {
@@ -210,6 +255,7 @@ class SendRegistrationPromotionJob implements ShouldQueue
         }
 
         $this->record($member, PromotionEmailHistory::STATUS_SUCCESS);
+        return true;
     }
 
     /** Has the configured delay since verification elapsed? */

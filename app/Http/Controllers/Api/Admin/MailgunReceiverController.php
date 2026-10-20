@@ -14,13 +14,12 @@ use App\Models\MailgunReceiver;
 use App\Models\MailgunReceiverImport;
 use App\Support\Mail\ReceiverSource;
 use App\Services\MailgunReceiverSendStateResetter;
+use App\Support\DayWindow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Throwable;
 
 /**
  * Admin CRUD for the Mailgun receiver list.
@@ -245,12 +244,23 @@ class MailgunReceiverController extends Controller
         // whereDate(): wrapping the column in DATE() would make
         // `mailgun_receivers_last_sent_at_index` unusable and turn every filtered
         // page into a full scan of the list.
-        if ($from = $this->parseDate($request->query('last_sent_from'))) {
-            $query->where('last_sent_at', '>=', $from->startOfDay());
+        /*
+         * Resolved in the OPERATOR'S zone, then compared against the UTC
+         * column. Without the zone a calendar day was read as UTC midnight, so
+         * an operator east of Greenwich lost the first hours of their own day
+         * out of every window while the table — which renders `last_sent_at` in
+         * local time — still showed those rows. Absent `tz` falls back to UTC,
+         * exactly as before. See App\Support\DayWindow.
+         */
+        $tz = $request->query('tz');
+        $tz = (is_string($tz) && DayWindow::isValidTimezone($tz)) ? $tz : null;
+
+        if ($from = DayWindow::startUtc($this->dayString($request->query('last_sent_from')), $tz)) {
+            $query->where('last_sent_at', '>=', $from);
         }
 
-        if ($to = $this->parseDate($request->query('last_sent_to'))) {
-            $query->where('last_sent_at', '<=', $to->endOfDay());
+        if ($to = DayWindow::endUtc($this->dayString($request->query('last_sent_to')), $tz)) {
+            $query->where('last_sent_at', '<=', $to);
         }
 
         return $query;
@@ -263,18 +273,10 @@ class MailgunReceiverController extends Controller
      * a query string filters nothing rather than 422-ing a listing. The admin
      * sends ISO dates from its own picker, so a bad one means a hand-edited URL.
      */
-    private function parseDate(mixed $value): ?Carbon
+    private function dayString(mixed $value): ?string
     {
         $value = trim((string) $value);
 
-        if ($value === '') {
-            return null;
-        }
-
-        try {
-            return Carbon::parse($value);
-        } catch (Throwable) {
-            return null;
-        }
+        return $value === '' ? null : $value;
     }
 }

@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 
 /**
  * One attempt to send the double opt-in verification email to one address.
@@ -117,20 +117,32 @@ class VerifyEmailSend extends Model
         return $query->where('status', $status);
     }
 
-    /** Inclusive from 00:00:00 of the given day. */
-    public function scopeSentFrom(Builder $query, mixed $date): Builder
+    /**
+     * Inclusive from 00:00:00 of the given day, IN THE OPERATOR'S ZONE.
+     *
+     * `$timezone` is the caller's IANA zone. Absent — an old client, a script,
+     * a curl by hand — falls back to UTC, which is exactly what this scope did
+     * before, so nothing that already worked changes. See App\Support\DayWindow
+     * for why a calendar day cannot be compared against a UTC column without it.
+     */
+    public function scopeSentFrom(Builder $query, mixed $date, ?string $timezone = null): Builder
     {
-        $day = self::day($date);
+        $at = DayWindow::startUtc(self::dayString($date), $timezone);
 
-        return $day === null ? $query : $query->where('sent_at', '>=', $day->startOfDay());
+        return $at === null ? $query : $query->where('sent_at', '>=', $at);
     }
 
-    /** Inclusive to 23:59:59 of the given day. */
-    public function scopeSentUntil(Builder $query, mixed $date): Builder
+    /**
+     * Inclusive to 23:59:59 of the given day, IN THE OPERATOR'S ZONE.
+     *
+     * Same contract as {@see self::scopeSentFrom()}: absent `$timezone` means
+     * UTC, i.e. the previous behaviour.
+     */
+    public function scopeSentUntil(Builder $query, mixed $date, ?string $timezone = null): Builder
     {
-        $day = self::day($date);
+        $at = DayWindow::endUtc(self::dayString($date), $timezone);
 
-        return $day === null ? $query : $query->where('sent_at', '<=', $day->endOfDay());
+        return $at === null ? $query : $query->where('sent_at', '<=', $at);
     }
 
     /**
@@ -140,16 +152,12 @@ class VerifyEmailSend extends Model
      * listing, and a stale bookmark should show the unfiltered history instead
      * of a 500.
      */
-    private static function day(mixed $value): ?Carbon
+    private static function dayString(mixed $value): ?string
     {
         if (! is_scalar($value) || trim((string) $value) === '') {
             return null;
         }
 
-        try {
-            return Carbon::createFromFormat('!Y-m-d', trim((string) $value));
-        } catch (\Throwable) {
-            return null;
-        }
+        return trim((string) $value);
     }
 }

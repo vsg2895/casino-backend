@@ -21,6 +21,7 @@ use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\WarmupMailResolver;
 use App\Services\WarmupImportService;
 use App\Services\WarmupRecipientService;
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -541,13 +542,28 @@ class WarmupEmailController extends Controller
      */
     private function filteredHistory(Request $request): Builder
     {
+        /*
+         * The operator's own IANA timezone, sent by the browser.
+         *
+         * `sent_from`/`sent_to` are CALENDAR DAYS picked from a local calendar
+         * and `sent_at` is stored in UTC, so the zone is what decides where the
+         * operator's day starts. Absent falls back to UTC — exactly what this
+         * filter did before. See App\Support\DayWindow.
+         *
+         * Read straight off the query string rather than validated: this is a
+         * read-only history listing whose other filters are deliberately
+         * forgiving of a stale bookmark, and DayWindow ignores a zone it does
+         * not recognise rather than throwing.
+         */
+        $tz = $this->filterTimezone($request);
+
         return WarmupSendRecipient::query()
             ->search($request->query('search'))
             ->forSite($request->query('site_id'))
             ->forTemplate($request->query('template'))
             ->withStatus($request->query('status'))
-            ->sentFrom($request->query('sent_from'))
-            ->sentUntil($request->query('sent_to'));
+            ->sentFrom($request->query('sent_from'), $tz)
+            ->sentUntil($request->query('sent_to'), $tz);
     }
 
     /**
@@ -645,5 +661,18 @@ class WarmupEmailController extends Controller
     private function filtered(Request $request): Builder
     {
         return WarmupEmail::query()->search($request->query('search'));
+    }
+
+    /**
+     * The caller's IANA timezone, or null.
+     *
+     * Null for anything unrecognised, which DayWindow then reads as UTC — the
+     * behaviour every one of these filters had before it learned about zones.
+     */
+    private function filterTimezone(Request $request): ?string
+    {
+        $tz = $request->query('tz');
+
+        return (is_string($tz) && DayWindow::isValidTimezone($tz)) ? $tz : null;
     }
 }

@@ -27,6 +27,23 @@ namespace App\Support;
 final class LegalPageContent
 {
     /**
+     * The three facts a lawyer has to supply, as they appear in the seeded copy.
+     *
+     * PUBLIC CONSTANTS rather than literals inside the builder, because a
+     * second caller now needs to find them: `sites:fill-legal-identity` scans
+     * for exactly these strings when it fills them in. If the two ever held
+     * their own copies, editing the wording here would silently turn that
+     * command into a no-op — it would search for text that no page contains any
+     * more, report "nothing to fill", and the pages would ship with visible
+     * brackets.
+     */
+    public const string PLACEHOLDER_ENTITY = '[Legal Entity Name]';
+
+    public const string PLACEHOLDER_ADDRESS = '[Registered business address]';
+
+    public const string PLACEHOLDER_JURISDICTION = '[governing-law jurisdiction]';
+
+    /**
      * Build every standard page for a brand.
      *
      * @return array<int, array{slug:string,title:string,meta_title:string,meta_description:string,status:string,content:string}>
@@ -40,9 +57,9 @@ final class LegalPageContent
         $legal    = 'legal@' . $domain;
         $compliance = 'compliance@' . $domain;
         $partners = 'partners@' . $domain;
-        $company  = '[Legal Entity Name]';
-        $address  = '[Registered business address]';
-        $jurisdiction = '[governing-law jurisdiction]';
+        $company  = self::PLACEHOLDER_ENTITY;
+        $address  = self::PLACEHOLDER_ADDRESS;
+        $jurisdiction = self::PLACEHOLDER_JURISDICTION;
 
         $pages = [];
 

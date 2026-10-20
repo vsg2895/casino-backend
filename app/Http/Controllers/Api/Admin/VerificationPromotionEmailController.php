@@ -18,6 +18,7 @@ use App\Models\VerificationPromotionSend;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
 use App\Support\Mail\MailCredential;
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -158,12 +159,27 @@ class VerificationPromotionEmailController extends Controller
      */
     private function filteredHistory(Request $request): Builder
     {
+        /*
+         * The operator's own IANA timezone, sent by the browser.
+         *
+         * `sent_from`/`sent_to` are CALENDAR DAYS picked from a local calendar
+         * and `sent_at` is stored in UTC, so the zone is what decides where the
+         * operator's day starts. Absent falls back to UTC — exactly what this
+         * filter did before. See App\Support\DayWindow.
+         *
+         * Read straight off the query string rather than validated: this is a
+         * read-only history listing whose other filters are deliberately
+         * forgiving of a stale bookmark, and DayWindow ignores a zone it does
+         * not recognise rather than throwing.
+         */
+        $tz = $this->filterTimezone($request);
+
         return VerificationPromotionSend::query()
             ->search($request->query('search'))
             ->forSite($request->query('site_id'))
             ->withStatus($request->query('status'))
-            ->sentFrom($request->query('sent_from'))
-            ->sentUntil($request->query('sent_to'));
+            ->sentFrom($request->query('sent_from'), $tz)
+            ->sentUntil($request->query('sent_to'), $tz);
     }
 
     /** The global template + settings, created with defaults the first time. */
@@ -428,5 +444,18 @@ class VerificationPromotionEmailController extends Controller
     {
         return Site::query()->where('active', true)->orderBy('id')->first()
             ?? Site::query()->orderBy('id')->first();
+    }
+
+    /**
+     * The caller's IANA timezone, or null.
+     *
+     * Null for anything unrecognised, which DayWindow then reads as UTC — the
+     * behaviour every one of these filters had before it learned about zones.
+     */
+    private function filterTimezone(Request $request): ?string
+    {
+        $tz = $request->query('tz');
+
+        return (is_string($tz) && DayWindow::isValidTimezone($tz)) ? $tz : null;
     }
 }

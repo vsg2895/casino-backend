@@ -32,5 +32,7 @@ return [
         'crogambline'     => env('SITE_URL_CROGAMBLINE', 'https://crogambline.com'),
         'partnerplaypro'  => env('SITE_URL_PARTNERPLAYPRO', 'https://partnerplaypro.com'),
         'luckysevenhub'   => env('SITE_URL_LUCKYSEVENHUB', 'https://luckysevenhub.com'),
+        'betpulsehq'      => env('SITE_URL_BETPULSEHQ', 'https://betpulsehq.com'),
+        'sevenstarslots'  => env('SITE_URL_SEVENSTARSLOTS', 'https://sevenstarslots.com'),
     ],
 ];

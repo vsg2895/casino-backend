@@ -13,6 +13,7 @@ use App\Models\ForumArticle;
 use App\Models\ForumModerationLog;
 use App\Models\ForumPost;
 use App\Models\Site;
+use App\Support\DayWindow;
 use App\Support\Forum\ForumContent;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
@@ -50,15 +51,40 @@ class ForumArticleController extends Controller
             'to'          => ['nullable', 'date', 'after_or_equal:from'],
             'search'      => ['nullable', 'string', 'max:120'],
             'per_page'    => ['nullable', 'integer', 'min:5', 'max:100'],
+
+            /*
+             * The operator's OWN timezone, sent by the browser.
+             *
+             * `from`/`to` are CALENDAR DAYS picked from a local calendar, and
+             * `created_at` is stored in UTC — so without a zone the server read
+             * "2026-10-20" as UTC midnight and an operator east of Greenwich
+             * lost the first hours of their own day out of every window, while
+             * the table (which renders in local time) still showed those rows.
+             *
+             * Optional, and absent falls back to UTC — exactly what this filter
+             * did before — so an old client or a curl by hand is unchanged.
+             * Same contract as the UniOne receivers screen; see
+             * App\Support\DayWindow.
+             */
+            'tz' => ['nullable', 'string', 'max:64', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (is_string($value) && $value !== '' && ! DayWindow::isValidTimezone($value)) {
+                    $fail('The selected timezone is not recognised.');
+                }
+            }],
         ]);
+
+        // Resolved in the operator's zone, then compared against the UTC column.
+        $tz = $filters['tz'] ?? null;
+        $createdFrom = DayWindow::startUtc($filters['from'] ?? null, $tz);
+        $createdTo = DayWindow::endUtc($filters['to'] ?? null, $tz);
 
         $articles = ForumArticle::query()
             ->where('site_id', $site->id)
             ->when($filters['category_id'] ?? null, fn ($q, $id) => $q->where('forum_category_id', $id))
             ->when($filters['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
             ->when(isset($filters['pinned']), fn ($q) => $q->where('pinned', (bool) $filters['pinned']))
-            ->when($filters['from'] ?? null, fn ($q, $d) => $q->where('created_at', '>=', $d))
-            ->when($filters['to'] ?? null, fn ($q, $d) => $q->where('created_at', '<=', $d . ' 23:59:59'))
+            ->when($createdFrom, fn ($q, $d) => $q->where('created_at', '>=', $d))
+            ->when($createdTo, fn ($q, $d) => $q->where('created_at', '<=', $d))
             // Title only, not body: the admin is looking for a thread they
             // named, and a LIKE over MEDIUMTEXT would scan every row.
             ->when($filters['search'] ?? null, fn ($q, $t) => $q->where('title', 'like', '%' . $t . '%'))

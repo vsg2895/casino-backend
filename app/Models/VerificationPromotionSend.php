@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 
 /**
  * One attempt to send the post-verification promotion to one subscriber.
@@ -77,6 +77,96 @@ class VerificationPromotionSend extends Model
         ];
     }
 
+    /**
+     * Has this address ALREADY been sent the post-verification promotion?
+     *
+     * THE one definition of "this person already got it", consulted by both
+     * send jobs. It lives here rather than in either job because the whole
+     * point is that the two audiences agree: a subscriber and a registered
+     * member are different rows in different tables, with different claim
+     * columns, and neither knows the other exists. This table is the only
+     * place their sends meet.
+     *
+     * Four orderings have to collapse onto one answer, and they do:
+     *
+     *   subscribe → verify → promotion, then register → verify   → blocked
+     *   register  → verify → promotion, then subscribe → verify  → blocked
+     *   subscribe twice / register twice                         → blocked by
+     *                                                              the row's own
+     *                                                              claim column
+     *
+     * ONLY SUCCESSFUL sends count. A failed attempt means the person never
+     * received anything, so it must leave them eligible — otherwise one
+     * SendGrid outage would permanently consume somebody's single send. This is
+     * why the check is not "is there a row" but "is there a row that worked".
+     *
+     * CASE-INSENSITIVE for free: `email` is `utf8mb4_unicode_ci`, so MySQL
+     * compares `Foo@Bar.com` and `foo@bar.com` as equal without a LOWER() that
+     * would make `vps_email_idx` unusable.
+     *
+     * TEST SENDS COUNT, deliberately. A "Send test" delivers this exact
+     * template to a real inbox, so as far as the person reading it is concerned
+     * they have received the promotion — and filtering `is_test` out here would
+     * both loosen the rule the registration job already applied and let that
+     * address be mailed the same thing twice. The flag exists so the admin
+     * history can label a row, not so the row can be ignored.
+     *
+     * Scoped to the SITE, like everything else in this feature: the template is
+     * global but it is rendered per site, so two brands are two different
+     * emails. This is also the scope the registration job already applied, so
+     * no existing behaviour changes by routing it through here.
+     */
+    public static function alreadySentTo(int $siteId, string $email): bool
+    {
+        $email = trim($email);
+
+        if ($email === '') {
+            return false;
+        }
+
+        return self::query()
+            ->where('site_id', $siteId)
+            ->where('email', $email)
+            ->where('status', self::STATUS_SUCCESS)
+            ->exists();
+    }
+
+    /**
+     * How long a sender may hold one address before the lock expires on its own.
+     *
+     * Generous on purpose: it only has to outlast a single SMTP/API call plus
+     * the two history writes. If a worker is killed mid-send the lock is
+     * released by this timeout rather than by anybody noticing, and the next
+     * sweep re-evaluates the address from scratch.
+     */
+    public const int SEND_LOCK_SECONDS = 180;
+
+    /**
+     * The mutex two send jobs contend for when they target the SAME address.
+     *
+     * {@see self::alreadySentTo()} answers "has this address been mailed", but
+     * it reads a row that is only written AFTER the send — so two jobs that
+     * start together both see nothing and both send. That is not hypothetical
+     * here: the sweep queues the subscriber job and the member job for one
+     * address in the same run, and production runs two queue workers
+     * (deploy/supervisor/casino-worker.conf, numprocs=2), so the two can be
+     * picked up at the same instant.
+     *
+     * Holding this lock across the check, the send and the history write makes
+     * the three one critical section per address, so the loser arrives after
+     * the winner's row exists and its gate sees it.
+     *
+     * LOWERCASED, unlike the SQL check. There the `utf8mb4_unicode_ci`
+     * collation makes the comparison case-insensitive for free; a cache key is
+     * a byte-for-byte string compare with no collation to inherit, so
+     * `Foo@Bar.com` and `foo@bar.com` would otherwise take two different locks
+     * and defeat the point.
+     */
+    public static function lockKeyFor(int $siteId, string $email): string
+    {
+        return 'promotion-after-verification:' . $siteId . ':' . mb_strtolower(trim($email));
+    }
+
     public function site(): BelongsTo
     {
         return $this->belongsTo(Site::class);
@@ -131,20 +221,32 @@ class VerificationPromotionSend extends Model
         return $query->where('status', $status);
     }
 
-    /** Inclusive from 00:00:00 of the given day. */
-    public function scopeSentFrom(Builder $query, mixed $date): Builder
+    /**
+     * Inclusive from 00:00:00 of the given day, IN THE OPERATOR'S ZONE.
+     *
+     * `$timezone` is the caller's IANA zone. Absent — an old client, a script,
+     * a curl by hand — falls back to UTC, which is exactly what this scope did
+     * before, so nothing that already worked changes. See App\Support\DayWindow
+     * for why a calendar day cannot be compared against a UTC column without it.
+     */
+    public function scopeSentFrom(Builder $query, mixed $date, ?string $timezone = null): Builder
     {
-        $day = self::day($date);
+        $at = DayWindow::startUtc(self::dayString($date), $timezone);
 
-        return $day === null ? $query : $query->where('sent_at', '>=', $day->startOfDay());
+        return $at === null ? $query : $query->where('sent_at', '>=', $at);
     }
 
-    /** Inclusive to 23:59:59 of the given day. */
-    public function scopeSentUntil(Builder $query, mixed $date): Builder
+    /**
+     * Inclusive to 23:59:59 of the given day, IN THE OPERATOR'S ZONE.
+     *
+     * Same contract as {@see self::scopeSentFrom()}: absent `$timezone` means
+     * UTC, i.e. the previous behaviour.
+     */
+    public function scopeSentUntil(Builder $query, mixed $date, ?string $timezone = null): Builder
     {
-        $day = self::day($date);
+        $at = DayWindow::endUtc(self::dayString($date), $timezone);
 
-        return $day === null ? $query : $query->where('sent_at', '<=', $day->endOfDay());
+        return $at === null ? $query : $query->where('sent_at', '<=', $at);
     }
 
     /**
@@ -154,16 +256,12 @@ class VerificationPromotionSend extends Model
      * listing, and a stale bookmark should show the unfiltered history instead
      * of a 500.
      */
-    private static function day(mixed $value): ?Carbon
+    private static function dayString(mixed $value): ?string
     {
         if (! is_scalar($value) || trim((string) $value) === '') {
             return null;
         }
 
-        try {
-            return Carbon::createFromFormat('!Y-m-d', trim((string) $value));
-        } catch (\Throwable) {
-            return null;
-        }
+        return trim((string) $value);
     }
 }

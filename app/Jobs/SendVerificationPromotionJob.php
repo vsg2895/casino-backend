@@ -19,6 +19,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -30,12 +31,24 @@ use Throwable;
  * to amortise, and per-subscriber jobs keep one bad address from touching
  * anyone else.
  *
- * ONCE-EVER DELIVERY. The guard is a conditional UPDATE on
+ * ONCE-EVER DELIVERY, PER SUBSCRIBER. The guard is a conditional UPDATE on
  * `newsletters.verification_promotion_sent_at` — atomic in InnoDB, so exactly
  * one caller can ever observe one affected row for a given subscriber. Every
  * duplication route collapses onto it: an overlapping cron, a re-queued job, a
  * queue retry, several workers, repeated clicks on the verify link. It is a
  * database-level guarantee, not an application-level check.
+ *
+ * ONCE-EVER DELIVERY, PER ADDRESS. The claim above cannot see across audiences:
+ * the same person can also hold a registered account, which is a different row
+ * in a different table with a claim column of its own. Two further guards close
+ * that, and both are shared with {@see SendRegistrationPromotionJob} so the two
+ * sides cannot disagree:
+ *
+ *   - {@see VerificationPromotionSend::alreadySentTo()} — has this ADDRESS
+ *     already been mailed this template, by either flow, at this site;
+ *   - a lock on the address, held across that check, the send and the history
+ *     write, so two jobs starting at the same instant cannot both pass a check
+ *     that only becomes true once one of them finishes.
  *
  * The claim is RELEASED if the send fails, so a transient SendGrid outage does
  * not permanently consume the subscriber's one chance; the next sweep picks them
@@ -142,6 +155,100 @@ class SendVerificationPromotionJob implements ShouldQueue
             return;
         }
 
+        /*
+         * ── ONE ADDRESS, ONE SENDER AT A TIME ───────────────────────────────
+         *
+         * Everything from here on — the cross-audience check, the send and the
+         * history write — runs while holding a lock on this ADDRESS, not on
+         * this subscriber row.
+         *
+         * The row-level claims cannot do this job. A subscriber and a member
+         * with the same address are two rows in two tables, so both claims
+         * succeed; and the record the cross-audience gate reads is only written
+         * after the mail goes out, so two jobs starting together both look,
+         * both see nothing, and both send. The sweep queues exactly that pair
+         * in a single run, and production runs two queue workers.
+         *
+         * `Cache::lock()->get(Closure)` releases in a `finally`, so a thrown
+         * send failure still frees the address — the throw is deliberate (it
+         * hands the queue its retry) and must not leave the lock stranded.
+         *
+         * Not acquiring is NOT an error and NOT a claim: the other job holds
+         * the address right now. We leave this subscriber unclaimed, so the
+         * next sweep reconsiders them — by which time the winner's send record
+         * exists and the gate below settles it properly.
+         */
+        $delivered = Cache::lock(
+            VerificationPromotionSend::lockKeyFor((int) $newsletter->site_id, (string) $newsletter->email),
+            VerificationPromotionSend::SEND_LOCK_SECONDS,
+        )->get(fn (): bool => $this->deliver($newsletter, $config, $promotions, $mailers));
+
+        if ($delivered === false) {
+            $this->skipped('another promotion job is working on this address right now', $newsletter->email);
+        }
+    }
+
+    /**
+     * The critical section: decide, send, record — holding the address lock.
+     *
+     * Split out of {@see self::handle()} only so the lock can wrap it as one
+     * closure. The order of the checks and the send is byte-for-byte what it
+     * was when they sat inline.
+     *
+     * Always returns true. The value exists so the caller can tell "the lock
+     * was not acquired" (Laravel's `Lock::get()` returns false) from "this
+     * ran" — a void closure would make the two indistinguishable.
+     */
+    private function deliver(
+        Newsletter $newsletter,
+        VerificationPromotionEmail $config,
+        PostVerificationPromotionEmailService $promotions,
+        PromotionMailerFactory $mailers,
+    ): bool {
+        /*
+         * THE CROSS-AUDIENCE GATE.
+         *
+         * One person, one promotion. The same human can reach this template by
+         * two completely separate routes — subscribing to the newsletter, and
+         * registering an account — and the two are different rows in different
+         * tables whose claim columns know nothing about each other. Without
+         * this check, somebody who registered, verified and was mailed, and who
+         * then subscribed and verified, would be mailed the identical email a
+         * second time.
+         *
+         * `verification_promotion_sends` is the only place the two audiences
+         * meet, and the address is the only identity they share. The sibling
+         * job {@see SendRegistrationPromotionJob} has applied exactly this gate
+         * since it was written; this side was missing it, which made the
+         * duplicate one-directional — blocked when the newsletter came first,
+         * not when the registration did.
+         *
+         * Placed AFTER the opt-out check and BEFORE the transport resolve, so
+         * it sits in the same position as the sibling's and the two read alike.
+         */
+        if (VerificationPromotionSend::alreadySentTo((int) $newsletter->site_id, (string) $newsletter->email)) {
+            $this->skipped('this address already received the promotion through the registration flow', $newsletter->email);
+
+            /*
+             * Claimed anyway, WITHOUT sending.
+             *
+             * The sweep selects on `verification_promotion_sent_at IS NULL`, so
+             * leaving the claim open would re-queue this subscriber every
+             * single minute, for ever, for a decision that can never come out
+             * differently — the send record it is reading is immutable. Taking
+             * the claim retires them from the sweep.
+             *
+             * The claim column means "this subscriber's one send has been
+             * accounted for", not "we mailed them" — the history tables are
+             * what record a send, and neither gets a row here, so the admin
+             * history shows exactly one email for this address. Same reasoning,
+             * same behaviour, as the sibling job.
+             */
+            $this->claim($newsletter);
+
+            return true;
+        }
+
         // Resolve the transport BEFORE claiming. A missing/disabled credential
         // must not burn the subscriber's single claim — log it and leave them
         // eligible for the next sweep, once an admin has fixed the setting.
@@ -154,12 +261,12 @@ class SendVerificationPromotionJob implements ShouldQueue
                 'error'         => $e->getMessage(),
             ]);
 
-            return;
+            return true;
         }
 
         // ── The claim. Exactly one caller wins. ──────────────────────────────
         if (! $this->claim($newsletter)) {
-            return;
+            return true;
         }
 
         try {
@@ -197,11 +304,12 @@ class SendVerificationPromotionJob implements ShouldQueue
             throw $e;
         }
 
-        $this->record($newsletter, PromotionEmailHistory::STATUS_SUCCESS);
-
         // Names the credential this actually went out with, so "is production
         // using the right SendGrid key?" is answerable from the log. Carries a
         // prefix and a fingerprint, never key material — see MailCredential.
+        $this->record($newsletter, PromotionEmailHistory::STATUS_SUCCESS);
+
+        return true;
     }
 
     /**

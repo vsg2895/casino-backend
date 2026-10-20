@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use Carbon\Carbon;
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Throwable;
 
 /**
  * One warmup delivery attempt — which address was mailed, from which site, with
@@ -118,35 +117,43 @@ class WarmupSendRecipient extends Model
     }
 
     /**
-     * Lower bound of the `sent_at` history filter, inclusive from midnight.
+     * Lower bound of the `sent_at` history filter, inclusive from midnight
+     * IN THE OPERATOR'S ZONE.
+     *
+     * `$timezone` is the caller's IANA zone; absent falls back to UTC, which is
+     * exactly what this scope did before. See App\Support\DayWindow.
      */
-    public function scopeSentFrom(Builder $query, mixed $from): Builder
+    public function scopeSentFrom(Builder $query, mixed $from, ?string $timezone = null): Builder
     {
-        $date = self::asDay($from);
+        $at = DayWindow::startUtc(self::dayString($from), $timezone);
 
-        return $date === null ? $query : $query->where('sent_at', '>=', $date->startOfDay());
+        return $at === null ? $query : $query->where('sent_at', '>=', $at);
     }
 
     /**
-     * Upper bound of the `sent_at` history filter, inclusive of the whole day.
+     * Upper bound of the `sent_at` history filter, inclusive of the whole day
+     * IN THE OPERATOR'S ZONE.
      *
-     * Expressed as "< the day AFTER $to" rather than "<= $to" on purpose.
-     * `sent_at` is a DATETIME, so `<= '2026-09-01'` compares against
-     * `2026-09-01 00:00:00` and would silently drop every send made during that
-     * day — the sibling promotion-history filter can use `<=` only because its
-     * column is a plain DATE. The half-open form is also index-friendly, which
-     * `whereDate()` would not be: wrapping the column in a function makes
+     * The old comment here named the very bug this now fixes: "both bounds are
+     * UTC days … for an admin outside UTC a row near midnight can display on
+     * the adjacent day". It does not any more — the bound is resolved in the
+     * caller's zone and converted, so the row the table shows on the 20th is
+     * the row the filter for the 20th returns.
+     *
+     * The half-open `< next midnight` form is gone with it. It existed to stop
+     * a bare `'2026-09-01'` being read as that day's 00:00:00 and dropping the
+     * whole day; DayWindow hands over a real instant at 23:59:59, so `<=` is
+     * exact. `sent_at` is `timestamp(0)`, checked — with fractional seconds the
+     * half-open form would be required again.
+     *
+     * Still no `whereDate()`: wrapping the column in a function makes
      * `warmup_recipients_sent_index` unusable.
-     *
-     * Both bounds are UTC days, matching config('app.timezone') and the stored
-     * column. The table renders `sent_at` in the browser's zone, so for an admin
-     * outside UTC a row near midnight can display on the adjacent day.
      */
-    public function scopeSentUntil(Builder $query, mixed $to): Builder
+    public function scopeSentUntil(Builder $query, mixed $to, ?string $timezone = null): Builder
     {
-        $date = self::asDay($to);
+        $at = DayWindow::endUtc(self::dayString($to), $timezone);
 
-        return $date === null ? $query : $query->where('sent_at', '<', $date->addDay()->startOfDay());
+        return $at === null ? $query : $query->where('sent_at', '<=', $at);
     }
 
     /**
@@ -156,17 +163,13 @@ class WarmupSendRecipient extends Model
      * malformed `?sent_from=whatever` should return the unfiltered list, not a
      * 500. The send path validates properly.
      */
-    private static function asDay(mixed $value): ?Carbon
+    private static function dayString(mixed $value): ?string
     {
         if (! is_scalar($value) || trim((string) $value) === '') {
             return null;
         }
 
-        try {
-            return Carbon::parse(trim((string) $value));
-        } catch (Throwable) {
-            return null;
-        }
+        return trim((string) $value);
     }
 
     /**

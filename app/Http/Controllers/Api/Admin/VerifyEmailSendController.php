@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\VerifyEmailSendResource;
 use App\Models\VerifyEmailSend;
+use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -91,11 +92,39 @@ class VerifyEmailSendController extends Controller
      */
     private function filtered(Request $request): Builder
     {
+        /*
+         * The operator's own IANA timezone, sent by the browser.
+         *
+         * `sent_from`/`sent_to` are CALENDAR DAYS picked from a local calendar
+         * and `sent_at` is stored in UTC, so the zone is what decides where the
+         * operator's day starts. Absent falls back to UTC — exactly what this
+         * filter did before. See App\Support\DayWindow.
+         *
+         * Read straight off the query string rather than validated: this is a
+         * read-only history listing whose other filters are deliberately
+         * forgiving of a stale bookmark, and DayWindow ignores a zone it does
+         * not recognise rather than throwing.
+         */
+        $tz = $this->filterTimezone($request);
+
         return VerifyEmailSend::query()
             ->search($request->query('search'))
             ->forSite($request->query('site_id'))
             ->withStatus($request->query('status'))
-            ->sentFrom($request->query('sent_from'))
-            ->sentUntil($request->query('sent_to'));
+            ->sentFrom($request->query('sent_from'), $tz)
+            ->sentUntil($request->query('sent_to'), $tz);
+    }
+
+    /**
+     * The caller's IANA timezone, or null.
+     *
+     * Null for anything unrecognised, which DayWindow then reads as UTC — the
+     * behaviour every one of these filters had before it learned about zones.
+     */
+    private function filterTimezone(Request $request): ?string
+    {
+        $tz = $request->query('tz');
+
+        return (is_string($tz) && DayWindow::isValidTimezone($tz)) ? $tz : null;
     }
 }

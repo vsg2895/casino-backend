@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UniOne\UniOneReceiverResource;
 use App\Models\UniOne\UniOneReceiver;
 use App\Services\UniOne\UniOneReceiverImportService;
+use App\Support\DayWindow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -220,6 +221,26 @@ class UniOneReceiverController extends Controller
             'search'         => ['nullable', 'string', 'max:160'],
             'per_page'       => ['nullable', 'integer', 'min:5', 'max:200'],
 
+            /*
+             * The operator's OWN timezone, sent by the browser.
+             *
+             * Every date below is a CALENDAR DAY the operator picked, and a
+             * calendar day only means something in a zone. Without this the
+             * server read "2026-10-20" as UTC midnight, so for an operator in
+             * UTC+3 the first three hours of their day fell outside their own
+             * filter — while the table, which renders in local time, showed
+             * those very rows as the 20th. See App\Support\DayWindow.
+             *
+             * Optional, and an absent value falls back to UTC, which is exactly
+             * what every one of these filters did before. An old client, a
+             * script or a curl by hand therefore behaves unchanged.
+             */
+            'tz' => ['nullable', 'string', 'max:64', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (is_string($value) && $value !== '' && ! DayWindow::isValidTimezone($value)) {
+                    $fail('The selected timezone is not recognised.');
+                }
+            }],
+
             // ── the "Last sent" column ──────────────────────────────────────
             // `sent` is the coarse cut (has this address ever been mailed?);
             // the pair below narrows the ones that have. Separate from
@@ -251,16 +272,28 @@ class UniOneReceiverController extends Controller
         // window is dropped instead of narrowing an already-empty set.
         $window = $sent !== 'never';
 
+        /*
+         * Every calendar-day bound resolved in the OPERATOR'S zone, then
+         * compared against the UTC column. `tz` absent → UTC, i.e. the
+         * behaviour these four filters had before.
+         */
+        $tz = $filters['tz'] ?? null;
+
+        $addedFrom = DayWindow::startUtc($filters['from'] ?? null, $tz);
+        $addedTo   = DayWindow::endUtc($filters['to'] ?? null, $tz);
+        $sentFrom  = $window ? DayWindow::startUtc($filters['sent_from'] ?? null, $tz) : null;
+        $sentTo    = $window ? DayWindow::endUtc($filters['sent_to'] ?? null, $tz) : null;
+
         return UniOneReceiver::query()
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
             ->when($filters['consent_source'] ?? null, fn ($q, $v) => $q->where('consent_source', 'like', "%{$v}%"))
-            ->when($filters['from'] ?? null, fn ($q, $v) => $q->where('created_at', '>=', $v))
-            ->when($filters['to'] ?? null, fn ($q, $v) => $q->where('created_at', '<=', $v . ' 23:59:59'))
+            ->when($addedFrom, fn ($q, $v) => $q->where('created_at', '>=', $v))
+            ->when($addedTo, fn ($q, $v) => $q->where('created_at', '<=', $v))
             // ── Last sent ───────────────────────────────────────────────────
             ->when($sent === 'never', fn ($q) => $q->whereNull('last_sent_at'))
             ->when($sent === 'ever', fn ($q) => $q->whereNotNull('last_sent_at'))
-            ->when($window && ($filters['sent_from'] ?? null), fn ($q) => $q->where('last_sent_at', '>=', $filters['sent_from']))
-            ->when($window && ($filters['sent_to'] ?? null), fn ($q) => $q->where('last_sent_at', '<=', $filters['sent_to'] . ' 23:59:59'))
+            ->when($sentFrom, fn ($q, $v) => $q->where('last_sent_at', '>=', $v))
+            ->when($sentTo, fn ($q, $v) => $q->where('last_sent_at', '<=', $v))
             ->when($filters['last_status'] ?? null, fn ($q, $v) => $q->where('last_status', $v))
             // ── Counts ──────────────────────────────────────────────────────
             // isset() rather than ?? null: 0 is a meaningful bound here and
