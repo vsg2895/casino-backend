@@ -481,6 +481,109 @@ class WarmupEmailController extends Controller
     }
 
     /**
+     * The MOST RECENT warmup run, summarised — or null if none has happened.
+     *
+     * The question this answers is the one an operator has on opening the
+     * screen the next morning: "how many went out last time?". Until now the
+     * only way to get it was the History tab, filtered by hand, counted by eye
+     * — and the run header that already records the answer was never read back.
+     *
+     * WHICH NUMBER IS THE ANSWER. Three different counts exist for one run and
+     * they are not interchangeable:
+     *
+     *   requested_count  what the admin typed (null = "everyone")
+     *   queued_count     what the picker actually found and queued
+     *   sent_count       what the transport accepted
+     *
+     * `sent_count` leads, because "I sent 250" means 250 arrived at the
+     * provider, not 250 were asked for. The other two ride along so a shortfall
+     * explains itself: asking for 250 with only 180 off cooldown is a cooldown
+     * to lower, while 250 queued and 243 sent is seven bounces to look at.
+     *
+     * IN-PROGRESS IS A REAL STATE and must not read as a finished total. A run
+     * opened mid-flight has written only the rows its finished batches wrote,
+     * so `sent_count` is a partial. `in_progress` lets the screen say so
+     * instead of showing a number that will grow while it is being read.
+     *
+     * The staleness bound is the run lock's own TTL: after that window the lock
+     * is gone and no job can still be queueing for this run, so a run with
+     * nothing recorded is finished-and-reached-nobody rather than pending. An
+     * unbounded check would leave a crashed fan-out "in progress" forever.
+     *
+     * Two queries, both on indexed columns, regardless of how many runs or
+     * recipients exist: one for the header, one grouped count for the outcomes.
+     */
+    public function lastSend(): JsonResponse
+    {
+        $send = WarmupSend::query()
+            ->with(['site:id,name', 'user:id,name'])
+            ->latest('id')
+            ->first();
+
+        if ($send === null) {
+            // Not a 404: "no run yet" is a normal state of a working screen,
+            // and the client renders nothing rather than an error.
+            return response()->json(['data' => null]);
+        }
+
+        // One grouped read rather than a count per status.
+        $byStatus = WarmupSendRecipient::query()
+            ->where('warmup_send_id', $send->id)
+            ->selectRaw('status, COUNT(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        $sent = (int) ($byStatus[WarmupSendRecipient::STATUS_SENT] ?? 0);
+        $failed = (int) ($byStatus[WarmupSendRecipient::STATUS_FAILED] ?? 0);
+        $attempted = $sent + $failed;
+
+        $queued = (int) $send->queued_count;
+        $cancelled = $send->cancelled_at !== null;
+
+        /*
+         * Still running? Only while all three hold:
+         *
+         *   - it was not cancelled,
+         *   - fewer attempts are recorded than were queued (or the fan-out has
+         *     not written queued_count yet, which it does only when it finishes),
+         *   - and it started recently enough that the run lock could still exist.
+         *
+         * The last clause is what stops a crashed fan-out from being reported as
+         * in-flight for the rest of time.
+         */
+        $withinLockWindow = $send->created_at !== null
+            && $send->created_at->gt(now()->subSeconds(self::RUN_LOCK_SECONDS));
+
+        $inProgress = ! $cancelled
+            && ($queued === 0 || $attempted < $queued)
+            && $withinLockWindow;
+
+        return response()->json([
+            'data' => [
+                'id'              => $send->id,
+                // The run's own timestamp. The per-address `sent_at` values are
+                // minutes later and differ between batches; this is the one
+                // instant the whole run can be labelled with.
+                'started_at'      => $send->created_at?->toISOString(),
+                'requested_count' => $send->requested_count,
+                'queued_count'    => $queued,
+                'sent_count'      => $sent,
+                'failed_count'    => $failed,
+                'attempted_count' => $attempted,
+                'cooldown_days'   => $send->cooldown_days,
+                'template'        => $send->template,
+                'template_label'  => $this->templates->label($send->template),
+                'site_name'       => $send->site?->name,
+                // Who pressed Send. Null for a run whose admin account has since
+                // been deleted — the audit outlives the account.
+                'sent_by'         => $send->user?->name,
+                'in_progress'     => $inProgress,
+                'cancelled_at'    => $send->cancelled_at?->toISOString(),
+            ],
+        ]);
+    }
+
+    /**
      * Per-address delivery history: which address, from which site, with which
      * template, and when.
      *

@@ -427,6 +427,11 @@ Route::prefix('v1')->group(function () {
         Route::get('warmup-emails/history/count', [WarmupEmailController::class, 'historyCount']);
         Route::delete('warmup-emails/history/{recipient}', [WarmupEmailController::class, 'destroyHistory']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
+        // The last run, summarised: how many actually went out, and when. Read
+        // on opening the screen, which is where the question is asked.
+        // LITERAL SEGMENT, so it is declared before the apiResource below —
+        // otherwise `{warmup_email}` swallows "last-send" and model binding 404s.
+        Route::get('warmup-emails/last-send', [WarmupEmailController::class, 'lastSend']);
         // Stop a wedged or unwanted run: cancels queued batches and frees the run
         // lock, so a new run can start immediately.
         Route::post('warmup-emails/cancel', [WarmupEmailController::class, 'cancel']);

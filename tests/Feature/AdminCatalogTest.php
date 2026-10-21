@@ -102,14 +102,16 @@ class AdminCatalogTest extends TestCase
         ])->assertCreated()->json('data.id');
 
         $original = SpecialOffer::find($id)->slug;
-        $this->assertMatchesRegularExpression('/^2nd_deposit_bonus_copy_[a-z]{6}$/', $original);
+        // The casino leads, " (Copy)" never reaches the URL, and there is no
+        // random tail — see SpecialOffer::slugBase().
+        $this->assertSame("{$casino->slug}-2nd-deposit-bonus", $original);
 
         $this->putJson("/api/v1/admin/special-offers/{$id}", ['title' => '3rd Deposit Bonus'])
             ->assertOk()
             ->assertJsonPath('data.title', '3rd Deposit Bonus');
 
         $moved = SpecialOffer::find($id)->slug;
-        $this->assertMatchesRegularExpression('/^3rd_deposit_bonus_[a-z]{6}$/', $moved, 'the link must carry the new title');
+        $this->assertSame("{$casino->slug}-3rd-deposit-bonus", $moved, 'the link must carry the new title');
 
         // And the address it used to answer to still goes somewhere.
         $this->assertDatabaseHas('redirects', [
@@ -196,12 +198,16 @@ class AdminCatalogTest extends TestCase
             'rating'    => 5,
         ])->assertCreated()->json('data.id');
 
+        // Typed with underscores, stored with hyphens: the request normalises a
+        // hand-written address through the same slugBase() the generator uses,
+        // so the two cannot drift into different shapes. The editor's CHOICE is
+        // what survives — the casino prefix is not added to a hand-written one.
         $this->putJson("/api/v1/admin/special-offers/{$id}", [
             'title' => 'Renamed Entirely',
             'slug'  => 'my_chosen_address',
-        ])->assertOk()->assertJsonPath('data.slug', 'my_chosen_address');
+        ])->assertOk()->assertJsonPath('data.slug', 'my-chosen-address');
 
-        $this->assertSame('my_chosen_address', SpecialOffer::find($id)->slug);
+        $this->assertSame('my-chosen-address', SpecialOffer::find($id)->slug);
     }
 
     /**
@@ -224,17 +230,17 @@ class AdminCatalogTest extends TestCase
         $offer->slug = '';
         $offer->save();
 
-        $this->assertMatchesRegularExpression('/^summer_bonus_[a-z]{6}$/', $offer->fresh()->slug);
+        $this->assertSame("{$casino->slug}-summer-bonus", $offer->fresh()->slug);
     }
 
     /**
      * The scenario this behaviour exists for, start to finish.
      *
-     * Duplicate "2nd Deposit Bonus" → the copy's address is baked from the copy
-     * title, `2nd_deposit_bonus_copy_xxxxxx`. Rename it to "3rd Deposit Bonus"
-     * and the address follows, with a 301 left behind on every site it appears
-     * on. No second step, no clearing a field: the link says what the bonus is
-     * called.
+     * Duplicate "2nd Deposit Bonus" → " (Copy)" is stripped from the address,
+     * so the copy collides with its original and takes `-2`. Rename it to
+     * "3rd Deposit Bonus" and the address follows, with a 301 left behind on
+     * every site it appears on. No second step, no clearing a field: the link
+     * says what the bonus is called, and never says "copy".
      */
     public function test_a_renamed_duplicate_gets_a_link_that_matches_its_title(): void
     {
@@ -253,12 +259,12 @@ class AdminCatalogTest extends TestCase
             ->assertCreated()->json('data.id');
 
         $copySlug = SpecialOffer::find($copyId)->slug;
-        $this->assertMatchesRegularExpression('/^2nd_deposit_bonus_copy_[a-z]{6}$/', $copySlug);
+        $this->assertSame("{$casino->slug}-2nd-deposit-bonus-2", $copySlug);
 
         $this->putJson("/api/v1/admin/special-offers/{$copyId}", ['title' => '3rd Deposit Bonus'])->assertOk();
 
-        $this->assertMatchesRegularExpression(
-            '/^3rd_deposit_bonus_[a-z]{6}$/',
+        $this->assertSame(
+            "{$casino->slug}-3rd-deposit-bonus",
             SpecialOffer::find($copyId)->slug,
             'the copy wording must not survive in the URL',
         );
@@ -284,9 +290,9 @@ class AdminCatalogTest extends TestCase
         // would, so a hand-written address and a generated one look alike.
         $this->putJson("/api/v1/admin/special-offers/{$id}", ['slug' => '3rd Deposit Bonus!'])
             ->assertOk()
-            ->assertJsonPath('data.slug', '3rd_deposit_bonus');
+            ->assertJsonPath('data.slug', '3rd-deposit-bonus');
 
-        $this->assertSame('3rd_deposit_bonus', SpecialOffer::find($id)->slug);
+        $this->assertSame('3rd-deposit-bonus', SpecialOffer::find($id)->slug);
     }
 
     public function test_an_address_another_offer_already_owns_is_refused(): void
@@ -305,7 +311,15 @@ class AdminCatalogTest extends TestCase
         $this->putJson("/api/v1/admin/special-offers/{$mine->id}", ['slug' => $mine->slug])->assertOk();
     }
 
-    public function test_special_offer_slug_is_name_based_with_a_unique_suffix(): void
+    /**
+     * Two offers with the SAME title on the same casino.
+     *
+     * The first takes the clean address; only the second is suffixed, and with
+     * a readable `-2` rather than six random letters. The old scheme appended
+     * a random tail to EVERY slug, collision or not, which is what put
+     * `welcome_bonus_uubsjs` in front of visitors.
+     */
+    public function test_special_offer_slug_is_suffixed_only_when_it_collides(): void
     {
         $this->actingAsAdmin();
         $casino = Casino::factory()->create();
@@ -321,12 +335,11 @@ class AdminCatalogTest extends TestCase
         $slugA = $make();
         $slugB = $make();
 
-        // Both are title-based with underscores...
-        $this->assertStringStartsWith('welcome_bonus_', $slugA);
-        $this->assertStringStartsWith('welcome_bonus_', $slugB);
-        // ...but each carries its own unique letters-only suffix (no "-1"/"-2").
+        // The first is clean — no suffix at all.
+        $this->assertSame("{$casino->slug}-welcome-bonus", $slugA);
+        // The second, and only the second, is numbered.
+        $this->assertSame("{$casino->slug}-welcome-bonus-2", $slugB);
         $this->assertNotSame($slugA, $slugB);
-        $this->assertMatchesRegularExpression('/^welcome_bonus_[a-z]{6}$/', $slugA);
     }
 
     public function test_admin_can_duplicate_a_special_offer(): void
