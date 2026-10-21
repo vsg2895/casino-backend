@@ -34,5 +34,6 @@ return [
         'luckysevenhub'   => env('SITE_URL_LUCKYSEVENHUB', 'https://luckysevenhub.com'),
         'betpulsehq'      => env('SITE_URL_BETPULSEHQ', 'https://betpulsehq.com'),
         'sevenstarslots'  => env('SITE_URL_SEVENSTARSLOTS', 'https://sevenstarslots.com'),
+        'goldenspinhq'    => env('SITE_URL_GOLDENSPINHQ', 'https://goldenspinhq.com'),
     ],
 ];

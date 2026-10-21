@@ -382,6 +382,16 @@ class ForumModerationController extends Controller
                 'role'          => $m->role,
                 'status'        => $m->status,
                 'verified'      => $m->email_verified_at !== null,
+                /*
+                 * WHEN they confirmed, not just whether.
+                 *
+                 * `verified` above is a boolean and drives the "unconfirmed"
+                 * tag and the filter; it cannot answer "did this person
+                 * confirm, and when" — which is the question asked of this
+                 * screen whenever a signup is queried. The column has always
+                 * held the timestamp; it simply never reached the admin.
+                 */
+                'email_verified_at' => $m->email_verified_at?->toISOString(),
                 'posts_count'   => (int) $m->posts_count,
                 'approved_posts_count' => (int) $m->approved_posts_count,
                 'banned_until'  => $m->banned_until?->toISOString(),

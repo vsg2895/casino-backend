@@ -90,26 +90,32 @@ class DispatchVerificationPromotions extends Command
             // "The sweep ran and found nobody" and "the sweep never ran at all"
             // look identical from the outside otherwise, and they have
             // completely different causes.
-            //
-            // The funnel is computed HERE and nowhere else. It costs a handful
-            // of COUNTs, which is not worth paying every minute on the happy
-            // path — but this is the exact moment somebody wants to know WHY
-            // nobody was picked, so the breakdown is worth its price precisely
-            // when the count is zero.
-
             $this->info('No subscribers are eligible right now.');
+        } else {
+            foreach ($candidates as $candidate) {
+                SendVerificationPromotionJob::dispatch((int) $candidate->id);
+            }
 
-            return self::SUCCESS;
+            $emails = $candidates->pluck('email')->implode(', ');
+
+            $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
         }
 
-        foreach ($candidates as $candidate) {
-            SendVerificationPromotionJob::dispatch((int) $candidate->id);
-        }
-
-        $emails = $candidates->pluck('email')->implode(', ');
-
-        $this->info("Queued {$candidates->count()} post-verification promotion(s): {$emails}");
-
+        /*
+         * THE MEMBER SWEEP RUNS UNCONDITIONALLY.
+         *
+         * This used to sit after an early `return` taken when no SUBSCRIBER was
+         * eligible — so registered members were only ever dispatched in a run
+         * where a newsletter subscriber happened to be due at the same minute.
+         * With no pending subscribers, which is the normal state, the
+         * registration promotion never went out at all.
+         *
+         * It presented exactly as "the newsletter flow works and the
+         * registration flow does not", because the newsletter flow IS the one
+         * that gates the other. The two audiences are independent and must be
+         * swept independently; the only thing they share is the cut-off
+         * computed above, which is the whole reason they live in one command.
+         */
         $this->dispatchMembers($cutoff, $limit);
 
         return self::SUCCESS;

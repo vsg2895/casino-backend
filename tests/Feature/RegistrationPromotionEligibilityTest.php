@@ -67,14 +67,23 @@ class RegistrationPromotionEligibilityTest extends TestCase
         return $member->refresh();
     }
 
-    /** The sweep's own definition of eligibility, as the command runs it. */
+    /**
+     * The sweep's own definition of eligibility — WITHOUT running the sweep.
+     *
+     * It used to invoke `promotions:dispatch-verification` first and then count
+     * the rows still unclaimed, which quietly measured two different things at
+     * once: who qualifies, and who the sweep failed to process. That only
+     * agreed with the assertions because the member sweep was unreachable —
+     * it sat behind an early `return` taken whenever no newsletter subscriber
+     * was due, so members were never claimed and the leftover count looked like
+     * an eligibility count.
+     *
+     * Fixing the sweep made every one of these tests fail, which is the correct
+     * outcome for a helper that was reading a bug as its baseline. It now
+     * counts eligibility and mutates nothing.
+     */
     private function eligibleCount(): int
     {
-        $this->artisan('promotions:dispatch-verification')->assertSuccessful();
-
-        // The command reports what it queued; counting the rows it would pick is
-        // the same query, run here so the assertion names a number rather than
-        // parsing console output.
         $cutoff = Carbon::now()->subMinutes((int) VerificationPromotionEmail::current()->delay_minutes);
 
         return ForumUser::query()
