@@ -251,6 +251,11 @@ Route::prefix('v1')->group(function () {
         Route::post('uploads/category-logo', [MediaUploadController::class, 'storeCategoryLogo']);
 
         // Categories
+        //
+        // "reorder" is a LITERAL segment sharing the `categories/` prefix, so it
+        // is declared BEFORE the apiResource — otherwise `{category}` swallows
+        // it and model binding answers 404. Same rule as nav-items/reorder.
+        Route::post('categories/reorder', [AdminCategoryController::class, 'reorder']);
         Route::apiResource('categories', AdminCategoryController::class)
             ->only(['index', 'store', 'update', 'destroy']);
 
