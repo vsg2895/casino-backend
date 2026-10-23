@@ -334,10 +334,34 @@ class VerificationPromotionEmailController extends Controller
     {
         $to = $request->validated('to');
         $config = VerificationPromotionEmail::current();
-        // Any site: it only supplies the unsubscribe link. The branding the test
-        // carries is the fixed one from config, exactly as a real send — which is
-        // what makes this test byte-identical to what subscribers receive.
-        $site = $this->unsubscribeSite();
+
+        /*
+         * WHICH SITE THIS TEST IS ATTRIBUTED TO.
+         *
+         * The site does not change what the recipient receives — this template
+         * is pinned to one brand on the server, so the mail is byte-identical
+         * whichever site is chosen. What it changes is the HISTORY ROW: every
+         * test writes to `verification_promotion_sends`, and that table is
+         * site-scoped, so the row shows up under whichever site is recorded
+         * here and is reachable by the "Site" filter on the After-verification
+         * tab.
+         *
+         * It used to be `unsubscribeSite()` — the first ACTIVE site by id —
+         * which meant every test on every brand was filed under site 1. An
+         * operator testing a Winpalack-branded mail saw the row appear under
+         * Idev Affiliation, with nothing in the UI explaining why and no way to
+         * change it. The request has validated an optional `site_id` since the
+         * field was added; it was simply never read.
+         *
+         * The fallback is unchanged, so a caller that sends no `site_id` —
+         * including any older admin bundle still deployed — behaves exactly as
+         * before rather than failing.
+         */
+        $siteId = $request->validated('site_id');
+
+        $site = $siteId === null
+            ? $this->unsubscribeSite()
+            : Site::query()->whereKey($siteId)->first();
 
         if ($site === null) {
             return response()->json([

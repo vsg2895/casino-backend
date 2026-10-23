@@ -8,8 +8,10 @@ use App\Jobs\SendVerificationPromotionJob;
 use App\Mail\PostVerificationPromotionEmail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
+use App\Models\Site;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
+use App\Models\VerificationPromotionSend;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
@@ -248,5 +250,121 @@ class VerificationPromotionSendingTest extends TestCase
 
         Mail::assertSent(PostVerificationPromotionEmail::class);
         Mail::assertNotSent(\App\Mail\VerifyEmailMail::class);
+    }
+
+    // ── Which site a test is FILED UNDER ─────────────────────────────────────
+    //
+    // The site does not change the mail — this template is pinned to one brand
+    // — but it does decide the history row, and therefore whether the "Site"
+    // filter on the After-verification tab can find the test afterwards.
+
+    public function test_a_test_send_is_recorded_under_the_chosen_site(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        // The first ACTIVE site by id is what the server used to pick for every
+        // test regardless of intent; the second is the one being asked for.
+        [$default] = $this->siteWithKey();
+        $chosen = Site::factory()->create(['name' => 'SevenStarSlots', 'active' => true]);
+        $this->configureSection();
+
+        $this->postJson('/api/v1/admin/verification-promotion/test', [
+            'to'      => 'admin@example.test',
+            'site_id' => $chosen->id,
+        ])->assertOk()->assertJson(['ok' => true]);
+
+        $row = VerificationPromotionSend::query()->latest('id')->first();
+
+        $this->assertNotNull($row);
+        $this->assertSame($chosen->id, $row->site_id, 'the row must be filed under the chosen site');
+        $this->assertNotSame($default->id, $row->site_id);
+        $this->assertTrue((bool) $row->is_test);
+    }
+
+    /**
+     * No `site_id` must behave exactly as it did before the picker existed.
+     *
+     * This is the compatibility that matters during a deploy: the admin bundle
+     * and the API ship separately, so an older bundle will keep posting without
+     * the field for as long as a browser has it cached.
+     */
+    public function test_a_test_send_without_a_site_falls_back_to_the_first_active_site(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        [$default] = $this->siteWithKey();
+        Site::factory()->create(['name' => 'Later Site', 'active' => true]);
+        $this->configureSection();
+
+        $this->postJson('/api/v1/admin/verification-promotion/test', ['to' => 'admin@example.test'])
+            ->assertOk();
+
+        $this->assertSame(
+            $default->id,
+            VerificationPromotionSend::query()->latest('id')->first()?->site_id,
+        );
+    }
+
+    /** A site id that does not exist is a validation error, not a silent fallback. */
+    public function test_an_unknown_site_is_rejected(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        $this->siteWithKey();
+        $this->configureSection();
+
+        $this->postJson('/api/v1/admin/verification-promotion/test', [
+            'to'      => 'admin@example.test',
+            'site_id' => 999999,
+        ])->assertStatus(422)->assertJsonValidationErrors('site_id');
+
+        Mail::assertNothingSent();
+    }
+
+    /**
+     * An INACTIVE site is still a legitimate choice.
+     *
+     * The old fallback deliberately preferred an active site because it was
+     * picking one on the operator's behalf. An explicit choice is different:
+     * a brand that is paused is exactly the one whose history an operator may
+     * be inspecting, and refusing it would be a rule nothing on screen states.
+     */
+    public function test_an_inactive_site_can_still_be_chosen(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        $this->siteWithKey();
+        $paused = Site::factory()->create(['name' => 'Paused Brand', 'active' => false]);
+        $this->configureSection();
+
+        $this->postJson('/api/v1/admin/verification-promotion/test', [
+            'to'      => 'admin@example.test',
+            'site_id' => $paused->id,
+        ])->assertOk();
+
+        $this->assertSame(
+            $paused->id,
+            VerificationPromotionSend::query()->latest('id')->first()?->site_id,
+        );
+    }
+
+    /** The chosen site must also make the row findable by the history filter. */
+    public function test_the_recorded_test_is_findable_by_the_history_site_filter(): void
+    {
+        Mail::fake();
+        $this->actingAsAdmin();
+        $this->siteWithKey();
+        $chosen = Site::factory()->create(['name' => 'GoldenSpinHQ', 'active' => true]);
+        $this->configureSection();
+
+        $this->postJson('/api/v1/admin/verification-promotion/test', [
+            'to'      => 'admin@example.test',
+            'site_id' => $chosen->id,
+        ])->assertOk();
+
+        $this->getJson('/api/v1/admin/verification-promotion/history?site_id=' . $chosen->id)
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.email', 'admin@example.test');
     }
 }
