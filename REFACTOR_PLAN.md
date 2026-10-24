@@ -369,8 +369,8 @@ style.
 These stood out while reading. Each one is "current behaviour" and is preserved by this
 plan. They're listed so you can decide whether any is a bug.
 
-1. **`/special-offers` does not check `casinos.active`.** `Public\SpecialOfferController::baseQuery()` requires the casino to be attached and active **on the pivot**, but not `casinos.active = true`. The `/bonus` pages check both. An offer from a globally deactivated casino can therefore appear on `/special-offers` but not on `/bonus`.
-2. **Category page featured offer skips the expiry gate.** `Public\CategoryController::show()` loads `featuredSpecialOffer` with `where('active', true)` only. `Public\CasinoController` uses `active + claimable()`, so an expired featured offer can show on a category page but not on the casino page.
+1. **[FIXED 2026-10-24, listing only; the single-offer page stays ungated by design]** **`/special-offers` did not check `casinos.active`.** `Public\SpecialOfferController::baseQuery()` requires the casino to be attached and active **on the pivot**, but not `casinos.active = true`. The `/bonus` pages check both. An offer from a globally deactivated casino can therefore appear on `/special-offers` but not on `/bonus`.
+2. **[FIXED 2026-10-24]** **Category page featured offer skipped the expiry gate.** `Public\CategoryController::show()` loads `featuredSpecialOffer` with `where('active', true)` only. `Public\CasinoController` uses `active + claimable()`, so an expired featured offer can show on a category page but not on the casino page.
 
 ---
 

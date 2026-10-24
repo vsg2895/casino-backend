@@ -41,6 +41,11 @@ class SpecialOfferController extends Controller
                 // anywhere. Offers with no expiry are unaffected, so this
                 // changes nothing until someone sets a date.
                 ->claimable()
+                // The casino's OWN switch, as /bonus and the casino page apply
+                // it: a globally deactivated operator's offers must not stay
+                // listed here once its casino page has gone. Listing only —
+                // show() stays reachable by direct link, see its docblock.
+                ->whereHas('casino', static fn ($q) => $q->where('casinos.active', true))
                 ->orderBy('special_offers.sort_order');
 
             if ($category !== null) {

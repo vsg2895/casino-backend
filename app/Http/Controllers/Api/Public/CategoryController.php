@@ -158,14 +158,14 @@ class CategoryController extends Controller
                     ])
                     ->paginate($perPage, ['*'], 'page', $page);
 
-                // `featuredSpecialOffer` is visibility-gated here for the same
-                // reason it is in Public\CasinoController: switching an offer off
-                // must remove its card from EVERY public surface, and an
-                // unconstrained load would keep serving the hidden offer on this
-                // catalog while the casino page correctly dropped it.
+                // `featuredSpecialOffer` is gated here exactly as it is in
+                // Public\CasinoController — switched on AND claimable: switching
+                // an offer off, or letting it expire, must remove its card from
+                // EVERY public surface, and a looser load would keep serving it
+                // on this catalog while the casino page correctly dropped it.
                 $paginator->getCollection()->load([
                     'categories',
-                    'featuredSpecialOffer' => fn ($query) => $query->where('active', true),
+                    'featuredSpecialOffer' => fn ($query) => $query->where('active', true)->claimable(),
                     // The listing card shows where each casino accepts players.
                     ...Casino::publicCountriesEagerLoad(),
                 ]);
