@@ -420,12 +420,12 @@ UniOneAdminWrites, ReceiverCampaignEndpoints.
 
 ### Bugs found while characterizing (reported, NOT fixed: behaviour freeze)
 
-1. **UniOne key rotation keeps the old verification** (`UniOneKeyController::update`). The
+1. **[FIXED 2026-10-24]** **UniOne key rotation kept the old verification** (`UniOneKeyController::update`). The
    reset of `last_verified_at` / `last_verify_status` goes through `fill()`, but neither column is
    fillable, so it is silently discarded. A replaced, unproven key stays "verified" and eligible as
-   the default sender. Pinned by `test_key_update_with_a_new_api_key_currently_keeps_its_verification_known_bug`.
-   Fix: `forceFill()` those two columns. `Model::preventSilentlyDiscardingAttributes()` in dev
-   would catch this whole class of bug.
+   the default sender.    Fixed with `forceFill()` on those two columns only; `is_default` is untouched, so a rotated
+   default keeps sending (guarded by `test_rotating_the_default_key_keeps_it_the_sending_default`).
+   `Model::preventSilentlyDiscardingAttributes()` in dev would catch this whole class of bug.
 2. **SEO template preview 500s without `name`** (`SeoTemplateController::preview`). `validated()`
    drops an absent nullable key, then `$validated['name']` is read directly. Fix: `$validated['name'] ?? null`.
 

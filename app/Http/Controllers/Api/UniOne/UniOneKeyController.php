@@ -65,17 +65,28 @@ class UniOneKeyController extends Controller
 
         // Replace, never reveal: an empty api_key means "leave it alone", which
         // is what lets the edit form open without ever holding the secret.
-        if (($data['api_key'] ?? '') === '') {
+        $replacesSecret = ($data['api_key'] ?? '') !== '';
+
+        if (! $replacesSecret) {
             unset($data['api_key']);
-        } else {
-            // A replaced key invalidates its own verification — the new
-            // credential has not been proven, and an unverified key cannot be
-            // default (see UniOneKeyService::makeDefault).
-            $data['last_verified_at'] = null;
-            $data['last_verify_status'] = null;
         }
 
-        $uniOneKey->fill($data)->save();
+        $uniOneKey->fill($data);
+
+        if ($replacesSecret) {
+            // A replaced key invalidates its own verification — the new
+            // credential has not been proven, and an unverified key cannot be
+            // made default (see UniOneKeyService::makeDefault).
+            //
+            // forceFill, not fill(): neither column is fillable, on purpose, so
+            // that only verify() can mark a key proven. Passed through fill()
+            // this reset was silently discarded and a rotated key stayed
+            // "verified". `is_default` is deliberately untouched: a rotated
+            // default keeps sending, it just shows as unverified until checked.
+            $uniOneKey->forceFill(['last_verified_at' => null, 'last_verify_status' => null]);
+        }
+
+        $uniOneKey->save();
 
         // Busted on EVERY write, or a rotated key keeps sending with the old
         // credential until the TTL expires.

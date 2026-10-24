@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use App\Models\UniOne\UniOneApiKey;
 use App\Models\UniOne\UniOneReceiver;
+use App\Services\UniOne\UniOneKeyService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
@@ -97,15 +98,48 @@ class UniOneAdminWritesTest extends TestCase
         $this->assertNotNull($key->last_verified_at);
     }
 
+    public function test_key_update_with_a_new_api_key_clears_its_verification(): void
+    {
+        $this->actingAsAdmin();
+        $key = $this->key();
+        $key->forceFill(['last_verified_at' => now(), 'last_verify_status' => 'ok'])->save();
+
+        $this->putJson(self::BASE."/keys/{$key->id}", [
+            'name' => 'Test key', 'api_key' => 'rotated-key', 'key_type' => UniOneApiKey::TYPE_USER, 'region' => UniOneApiKey::REGION_EU1,
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.last_verified_at', null);
+
+        $key->refresh();
+        $this->assertSame('rotated-key', $key->api_key);
+        $this->assertNull($key->last_verified_at);
+        $this->assertNull($key->last_verify_status);
+        $this->assertFalse($key->isVerified());
+    }
+
     /**
-     * KNOWN BUG, pinned so a refactor cannot change it silently.
-     *
-     * UniOneKeyController::update() means to clear the verification when the
-     * key is replaced, but `last_verified_at` / `last_verify_status` are not
-     * fillable, so fill() discards the reset and a rotated key stays verified.
-     * Fixing it should flip the last two assertions to assertNull.
+     * Rotation must not interrupt sending: the default flag is untouched and the
+     * send path's lookups resolve the rotated key, carrying the NEW secret.
      */
-    public function test_key_update_with_a_new_api_key_currently_keeps_its_verification_known_bug(): void
+    public function test_rotating_the_default_key_keeps_it_the_sending_default(): void
+    {
+        $this->actingAsAdmin();
+        $key = $this->key();
+        $key->forceFill(['last_verified_at' => now(), 'last_verify_status' => 'ok'])->save();
+        $keys = app(UniOneKeyService::class);
+        $keys->makeDefault($key);
+        $this->assertSame('original-secret-key', $keys->default()?->api_key); // warm the cache
+
+        $this->putJson(self::BASE."/keys/{$key->id}", [
+            'name' => 'Test key', 'api_key' => 'rotated-key', 'key_type' => UniOneApiKey::TYPE_USER, 'region' => UniOneApiKey::REGION_EU1,
+        ])->assertOk();
+
+        $this->assertTrue((bool) $key->fresh()->is_default);
+        $this->assertSame('rotated-key', $keys->default()?->api_key);
+        $this->assertSame('rotated-key', $keys->find($key->id)?->api_key);
+    }
+
+    public function test_a_rotated_key_must_be_verified_again_before_becoming_the_default(): void
     {
         $this->actingAsAdmin();
         $key = $this->key();
@@ -115,10 +149,9 @@ class UniOneAdminWritesTest extends TestCase
             'name' => 'Test key', 'api_key' => 'rotated-key', 'key_type' => UniOneApiKey::TYPE_USER, 'region' => UniOneApiKey::REGION_EU1,
         ])->assertOk();
 
-        $key->refresh();
-        $this->assertSame('rotated-key', $key->api_key);
-        $this->assertNotNull($key->last_verified_at);
-        $this->assertSame('ok', $key->last_verify_status);
+        $this->patchJson(self::BASE."/keys/{$key->id}/default")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['is_default' => 'Verify this key before making it the default.']);
     }
 
     public function test_key_update_returns_404_for_an_unknown_key_before_validating(): void
