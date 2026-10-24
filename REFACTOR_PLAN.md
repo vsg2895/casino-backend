@@ -107,12 +107,16 @@ defaults and data are never touched.
 - **Why behaviour is unchanged:** an index never changes a result set, and ORDER BY is fully specified (`published_at, id`), so no tie ordering can change.
 - **Verification:** EXPLAIN before and after on MySQL; the full suite on SQLite.
 
-#### DB-2 · (optional) Drop `casino_reviews_site_id_index` after DB-1 — **Needs review**
+#### DB-2 · Drop `casino_reviews_site_id_index` after DB-1 — **Rejected (2026-10-24)**
 
-Once DB-1 exists, `(site_id)` is a strict left prefix of it, so MySQL can use DB-1 to back
-the `site_id` foreign key. Dropping it saves one index write per review. **Not in the work
-list:** you asked for no destructive operations, and dropping an index, although not data
-loss, is a one-way change in production if `down()` is not run. Your call.
+Once DB-1 exists, `(site_id)` is a left prefix of it, and `sys.schema_redundant_indexes`
+lists it as redundant. **It is not.** InnoDB appends the primary key to every secondary
+index, so `(site_id)` is effectively `(site_id, id)`. That makes it the only index serving the
+admin review list filtered by site (`WHERE site_id = ? ORDER BY id DESC LIMIT 25`). EXPLAIN
+with it ignored shows MySQL walking the whole table's PRIMARY key and filtering `site_id` row by
+row, approaching a full scan for a small site at volume. `sys` compares column prefixes only and
+cannot see that. Kept, on your decision; the saving (one index write per review) does not justify
+it.
 
 #### Considered and rejected
 
@@ -359,7 +363,7 @@ style.
 | Observer registration → `#[ObservedBy]` | The provider comment says registration **order** is deliberate (ForumPost before ForumArticle). Attributes would hide that ordering. |
 | `Model::automaticallyEagerLoadRelationships()` | Same results, fewer queries, but changes memory and query patterns everywhere at once. |
 | `Public\CasinoReviewController::feed` eager-limit rewrite | See §2.4. The original author's explicit decision. |
-| DB-2 drop index, DB-4 bulk reorder | See §2.2 / §2.3. |
+| DB-4 bulk reorder | See §2.3. (DB-2 was rejected; see §2.2.) |
 | Mailgun/SMTP **job** dedup | Send-path semantics differ; needs a design discussion, not a refactor. |
 
 ---
@@ -396,7 +400,7 @@ plan. They're listed so you can decide whether any is a bug.
 | 7 | §4.6 service extraction | Med/High | Only with explicit sign-off |
 
 **Please confirm:** (1) approve steps 0–5, (2) yes/no on §5.1, (3) the worker `--timeout`
-for §5.2, (4) keep or delete the test scaffolding (§5.3), (5) DB-2 drop: yes/no.
+for §5.2, (4) keep or delete the test scaffolding (§5.3), (5) DB-2 drop: decided, kept.
 
 ---
 
