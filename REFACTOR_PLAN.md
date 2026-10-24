@@ -426,8 +426,8 @@ UniOneAdminWrites, ReceiverCampaignEndpoints.
    the default sender.    Fixed with `forceFill()` on those two columns only; `is_default` is untouched, so a rotated
    default keeps sending (guarded by `test_rotating_the_default_key_keeps_it_the_sending_default`).
    `Model::preventSilentlyDiscardingAttributes()` in dev would catch this whole class of bug.
-2. **SEO template preview 500s without `name`** (`SeoTemplateController::preview`). `validated()`
-   drops an absent nullable key, then `$validated['name']` is read directly. Fix: `$validated['name'] ?? null`.
+2. **[FIXED 2026-10-24]** **SEO template preview 500'd without `name`** (`SeoTemplateController::preview`). `validated()`
+   drops an absent nullable key, then `$validated['name']` is read directly. Fixed with `($validated['name'] ?? null)`; an omitted name now falls back to "Example Casino" like a blank one.
 
 ### Tooling note
 

@@ -103,11 +103,6 @@ class SeoTemplateTest extends TestCase
             ]);
     }
 
-    /**
-     * `name` is sent as null, not omitted: omitting the key currently 500s
-     * (Undefined array key "name"), because validated() drops absent nullable
-     * keys. Reported as a bug; deliberately not pinned here.
-     */
     public function test_preview_substitutes_the_example_name_when_the_name_is_blank(): void
     {
         $this->actingAsAdmin();
@@ -116,5 +111,25 @@ class SeoTemplateTest extends TestCase
         $this->postJson($this->url($site, '/preview'), ['pattern' => '{{name}} on {{site_name}} {{rating}}', 'name' => null])
             ->assertOk()
             ->assertExactJson(['preview' => 'Example Casino on Spin Hub {{rating}}']);
+    }
+
+    public function test_preview_substitutes_the_example_name_when_the_name_is_omitted(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey(['name' => 'Spin Hub']);
+
+        $this->postJson($this->url($site, '/preview'), ['pattern' => '{{name}} on {{site_name}}'])
+            ->assertOk()
+            ->assertExactJson(['preview' => 'Example Casino on Spin Hub']);
+    }
+
+    public function test_preview_substitutes_the_given_name(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey(['name' => 'Spin Hub']);
+
+        $this->postJson($this->url($site, '/preview'), ['pattern' => '{{name}} on {{site_name}}', 'name' => 'Lucky Star'])
+            ->assertOk()
+            ->assertExactJson(['preview' => 'Lucky Star on Spin Hub']);
     }
 }

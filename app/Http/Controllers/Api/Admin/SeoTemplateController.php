@@ -102,7 +102,9 @@ class SeoTemplateController extends Controller
 
         return response()->json([
             'preview' => $resolver->preview($site, $validated['pattern'], [
-                'name' => $validated['name'] ?: 'Example Casino',
+                // `?? null` first: validated() omits an absent nullable key, so
+                // reading it directly 500'd when the client sent no name.
+                'name' => ($validated['name'] ?? null) ?: 'Example Casino',
             ]),
         ]);
     }
