@@ -79,8 +79,6 @@ Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();
 
-//Schedule::command('test:command')->everyMinute();
-
 // Delete token rows that have already expired. Purely housekeeping: an expired
 // token is rejected by Sanctum whether the row still exists, so this
 // keeps `personal_access_tokens` from growing without bound and nothing more.

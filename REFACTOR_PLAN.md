@@ -341,7 +341,7 @@ scope, so I can't confirm the effective value. Declaring an explicit timeout is 
 behaviour-neutral no-op **only if** it equals the worker value. **Please tell me the
 supervisor `--timeout`** and I'll add matching declarations.
 
-### 5.3 Dead test scaffolding
+### 5.3 Dead test scaffolding — **[DELETED 2026-10-24 on your decision]**
 
 `app/Jobs/Test/ForHighPriorityJob.php`, `ForLowPriorityJob.php` and
 `app/Console/Commands/TestCommand.php` (`test:command`, schedule line commented out in
@@ -400,7 +400,7 @@ plan. They're listed so you can decide whether any is a bug.
 | 7 | §4.6 service extraction | Med/High | Only with explicit sign-off |
 
 **Please confirm:** (1) approve steps 0–5, (2) yes/no on §5.1, (3) the worker `--timeout`
-for §5.2, (4) keep or delete the test scaffolding (§5.3), (5) DB-2 drop: decided, kept.
+for §5.2, (4) test scaffolding (§5.3): decided, deleted, (5) DB-2 drop: decided, kept.
 
 ---
 
