@@ -63,7 +63,7 @@ opportunities are fewer than in a typical audit, but some are significant:
 | A | `VerifySiteAccess` runs a **bcrypt cost-12 `Hash::check` on every public request**: **~192 ms measured**, paid even when `SiteCache` hits | **Largest latency item in the API** | High → §5.1 |
 | B | Public review feed and per-casino review listing have no index matching `site_id + status + casino_id` → ORDER BY `published_at` | Medium, grows with reviews | Low (additive index) |
 | C | The "casino attached to and active on this site" predicate is copy-pasted **12 times** | Maintainability; divergence risk | Low |
-| D | ~150 inline `$request->validate()` calls across 45 controllers, against the project's "Form Request for every write" rule | Convention / testability | Medium |
+| D | 45 inline `->validate()` calls in 19 controllers (corrected: the first count also matched `$request->validated()`), against the project's "Form Request for every write" rule | Convention / testability | Medium |
 | E | Receiver-campaign endpoints duplicated between `MailgunKeyController` and `SmtpCredentialController` (6 methods each) | Maintainability | Medium |
 | F | 5 production jobs declare no `$timeout`, against the project rule "timeout below `retry_after`" | Correctness hazard (duplicate sends) | Needs review |
 | G | No lazy-loading detection in development | N+1 regressions go unnoticed | Low |
@@ -222,7 +222,12 @@ DB-3 (duplicate soft-delete predicate in `Public\CasinoController` and `CasinoFa
 
 ### 4.4 Inline validation → Form Requests — **Medium** (done in batches)
 
-**Now:** about 150 `$request->validate([...])` calls in 45 controllers. **After:**
+**Now:** 45 inline `->validate()` calls in 19 controllers. _(Corrected during execution: the
+first count's regex also matched `$request->validated()`, i.e. code already on Form Requests.)_
+Of the 45, the read-only GET filters (`index`/`filters` query strings) stay inline because
+the project rule covers **writes**, and five methods are excluded by rule 1 below:
+`ForumArticleController::storePost`/`updatePost`, `ForumPostController::update`,
+`ForumAuthController::google` and `EmailValidationCheckController::store`. **After:**
 `Store{X}Request` / `Update{X}Request` classes under `app/Http/Requests/{Admin,Public}`,
 following the existing naming convention.
 

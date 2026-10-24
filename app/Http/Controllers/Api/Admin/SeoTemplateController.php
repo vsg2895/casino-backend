@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\PreviewSeoTemplateRequest;
+use App\Http\Requests\Admin\UpdateSeoTemplatesRequest;
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\SeoTemplate;
 use App\Models\Site;
 use App\Support\Seo\SeoResolver;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 /**
  * Title and description patterns for one site.
@@ -39,8 +39,8 @@ class SeoTemplateController extends Controller
             $row = $stored->get($entity);
 
             $data[] = [
-                'entity'              => $entity,
-                'title_pattern'       => $row->title_pattern ?? null,
+                'entity' => $entity,
+                'title_pattern' => $row->title_pattern ?? null,
                 'description_pattern' => $row->description_pattern ?? null,
             ];
         }
@@ -55,14 +55,9 @@ class SeoTemplateController extends Controller
      * "no pattern" has exactly one representation and the resolver never has to
      * treat an empty string as meaningful.
      */
-    public function update(Request $request, Site $site): JsonResponse
+    public function update(UpdateSeoTemplatesRequest $request, Site $site): JsonResponse
     {
-        $validated = $request->validate([
-            'templates'                       => ['required', 'array', 'max:20'],
-            'templates.*.entity'              => ['required', Rule::in(SeoTemplate::ENTITIES)],
-            'templates.*.title_pattern'       => ['nullable', 'string', 'max:255'],
-            'templates.*.description_pattern' => ['nullable', 'string', 'max:500'],
-        ]);
+        $validated = $request->validated();
 
         foreach ($validated['templates'] as $row) {
             $title = trim((string) ($row['title_pattern'] ?? ''));
@@ -80,7 +75,7 @@ class SeoTemplateController extends Controller
             SeoTemplate::updateOrCreate(
                 ['site_id' => $site->id, 'entity' => $row['entity']],
                 [
-                    'title_pattern'       => $title === '' ? null : $title,
+                    'title_pattern' => $title === '' ? null : $title,
                     'description_pattern' => $description === '' ? null : $description,
                 ],
             );
@@ -101,12 +96,9 @@ class SeoTemplateController extends Controller
      * output — including any token they mistyped, which survives visibly rather
      * than being silently dropped.
      */
-    public function preview(Request $request, Site $site, SeoResolver $resolver): JsonResponse
+    public function preview(PreviewSeoTemplateRequest $request, Site $site, SeoResolver $resolver): JsonResponse
     {
-        $validated = $request->validate([
-            'pattern' => ['required', 'string', 'max:500'],
-            'name'    => ['nullable', 'string', 'max:120'],
-        ]);
+        $validated = $request->validated();
 
         return response()->json([
             'preview' => $resolver->preview($site, $validated['pattern'], [
