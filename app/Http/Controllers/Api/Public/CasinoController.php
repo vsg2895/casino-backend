@@ -11,6 +11,7 @@ use App\Models\FacetConfig;
 use App\Models\Site;
 use App\Services\CasinoFacetService;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -47,7 +48,7 @@ class CasinoController extends Controller
             // leaves the relation null and the resource omits the key.
             'detail',
             'featuredSpecialOffer' => $visibleOnly,
-            'specialOffers'        => $visibleOnly,
+            'specialOffers' => $visibleOnly,
             // Both offer relations carry the bonus type, because the resource
             // reads it to tell the front end which call to action to render.
             'featuredSpecialOffer.bonusCategory',
@@ -76,8 +77,8 @@ class CasinoController extends Controller
 
         // Each filter combination is cached separately and all of them are
         // busted together by the `casinos` tag on any casino change.
-        $cacheKey = 'casinos:index:site:' . $site->id
-            . ':f:' . ($selected === [] ? 'none' : md5(json_encode($selected)));
+        $cacheKey = 'casinos:index:site:'.$site->id
+            .':f:'.($selected === [] ? 'none' : md5(json_encode($selected)));
 
         $data = SiteCache::remember($site->id, ['casinos'], $cacheKey, 3600, function () use ($site, $selected, $facets) {
             $query = $this->baseQuery($site);
@@ -94,7 +95,7 @@ class CasinoController extends Controller
         return response()->json([
             'data' => $data,
             'meta' => [
-                'total'    => count($data),
+                'total' => count($data),
                 'selected' => (object) $selected,
             ],
         ]);
@@ -112,7 +113,7 @@ class CasinoController extends Controller
         /** @var Site $site */
         $site = app('current_site');
 
-        $data = SiteCache::remember($site->id, ['casinos'], 'casinos:facets:site:' . $site->id, 3600,
+        $data = SiteCache::remember($site->id, ['casinos'], 'casinos:facets:site:'.$site->id, 3600,
             fn () => $facets->available($site));
 
         return response()->json(['data' => $data]);
@@ -123,7 +124,7 @@ class CasinoController extends Controller
         /** @var Site $site */
         $site = app('current_site');
 
-        $data = SiteCache::remember($site->id, ['casinos'], 'casinos:show:site:' . $site->id . ':slug:' . $slug, 3600, function () use ($site, $slug) {
+        $data = SiteCache::remember($site->id, ['casinos'], 'casinos:show:site:'.$site->id.':slug:'.$slug, 3600, function () use ($site, $slug) {
             $casino = $this->baseQuery($site)->where('casinos.slug', $slug)->firstOrFail()->load(self::relations());
 
             return (new CasinoWithAttachmentResource($casino))->resolve();
@@ -132,7 +133,7 @@ class CasinoController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    /** @return \Illuminate\Database\Eloquent\Builder<Casino> */
+    /** @return Builder<Casino> */
     private function baseQuery(Site $site)
     {
         return Casino::query()
@@ -140,7 +141,6 @@ class CasinoController extends Controller
             ->where('pivot.site_id', $site->id)
             ->where('pivot.active', true)
             ->where('casinos.active', true)
-            ->whereNull('casinos.deleted_at')
             ->select([
                 'casinos.*',
                 'pivot.affiliate_url',
