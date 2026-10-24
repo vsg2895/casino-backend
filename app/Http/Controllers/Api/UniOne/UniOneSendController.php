@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\UniOne;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\UniOne\PreviewUniOneSendRequest;
+use App\Http\Requests\UniOne\StoreUniOneSendRequest;
+use App\Http\Requests\UniOne\TestUniOneSendRequest;
 use App\Http\Resources\UniOne\UniOneSendResource;
 use App\Models\UniOne\UniOneApiKey;
 use App\Models\UniOne\UniOneSend;
@@ -12,6 +15,9 @@ use App\Models\UniOne\UniOneSendRecipient;
 use App\Services\UniOne\UniOneClient;
 use App\Services\UniOne\UniOneKeyService;
 use App\Services\UniOne\UniOneSendService;
+use App\Services\UniOne\UniOneTemplateService;
+use App\Support\UniOne\UniOneErrors;
+use App\Support\UniOne\UniOneResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -32,18 +38,15 @@ class UniOneSendController extends Controller
      * There is exactly one — viglinksi's promotion template — so this returns
      * the rendered HTML and its subject rather than a list to choose from.
      */
-    public function templatePreview(\App\Services\UniOne\UniOneTemplateService $templates): JsonResponse
+    public function templatePreview(UniOneTemplateService $templates): JsonResponse
     {
         return response()->json(['data' => $templates->preview()]);
     }
 
     /** The modal's live preview: eligible count and chunk maths. */
-    public function preview(Request $request): JsonResponse
+    public function preview(PreviewUniOneSendRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'count'         => ['required', 'integer', 'min:1', 'max:100000'],
-            'cooldown_days' => ['nullable', 'integer', 'min:0', 'max:365'],
-        ]);
+        $data = $request->validated();
 
         return response()->json([
             'data' => $this->sends->preview((int) $data['count'], $data['cooldown_days'] ?? null),
@@ -57,16 +60,9 @@ class UniOneSendController extends Controller
      * writes no send row, stamps no `last_sent_at` and consumes no receiver. An
      * operator is watching and wants the answer now.
      */
-    public function test(Request $request): JsonResponse
+    public function test(TestUniOneSendRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'unione_api_key_id' => ['required', 'integer'],
-            'email'      => ['required', 'email'],
-            'subject'    => ['nullable', 'string', 'max:255'],
-            'from_email' => ['required', 'email'],
-            'from_name'  => ['nullable', 'string', 'max:120'],
-            'reply_to'   => ['nullable', 'email'],
-        ]);
+        $data = $request->validated();
 
         $key = $this->keys->find((int) $data['unione_api_key_id']);
 
@@ -81,22 +77,22 @@ class UniOneSendController extends Controller
          * while leaving everything the provider does to the message untested,
          * which is exactly where the missing hero image lived.
          */
-        $templates = app(\App\Services\UniOne\UniOneTemplateService::class);
+        $templates = app(UniOneTemplateService::class);
         $shared = $templates->sharedBody();
 
         $response = (new UniOneClient($key))->send(array_filter([
             'recipients' => [[
-                'email'         => $data['email'],
+                'email' => $data['email'],
                 'substitutions' => $templates->substitutionsFor($data['email'], null),
             ]],
-            'subject'    => ($data['subject'] ?? null) ?: $templates->subjectFor(),
+            'subject' => ($data['subject'] ?? null) ?: $templates->subjectFor(),
             'from_email' => $data['from_email'],
-            'from_name'  => $data['from_name'] ?? null,
-            'reply_to'   => $data['reply_to'] ?? null,
-            'body'       => ['html' => $shared['html'], 'plaintext' => $shared['plaintext']],
+            'from_name' => $data['from_name'] ?? null,
+            'reply_to' => $data['reply_to'] ?? null,
+            'body' => ['html' => $shared['html'], 'plaintext' => $shared['plaintext']],
             'template_engine' => 'simple',
             'track_links' => $key->track_links ? 1 : 0,
-            'track_read'  => $key->track_read ? 1 : 0,
+            'track_read' => $key->track_read ? 1 : 0,
             'skip_unsubscribe' => 0,
         ], static fn ($v): bool => $v !== null && $v !== '' && $v !== []));
 
@@ -114,26 +110,17 @@ class UniOneSendController extends Controller
         $this->recordTest($key, $data, $response);
 
         return response()->json([
-            'ok'      => $response->ok,
-            'job_id'  => $response->jobId,
-            'failed'  => $response->failedEmails,
+            'ok' => $response->ok,
+            'job_id' => $response->jobId,
+            'failed' => $response->failedEmails,
             'message' => $this->explain($response),
-            'code'    => $response->apiErrorCode,
+            'code' => $response->apiErrorCode,
         ], $response->ok ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreUniOneSendRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'unione_api_key_id' => ['required', 'integer'],
-            'count'         => ['required', 'integer', 'min:1', 'max:100000'],
-            'cooldown_days' => ['nullable', 'integer', 'min:0', 'max:365'],
-            // The template supplies the subject when this is left blank.
-            'subject'    => ['nullable', 'string', 'max:255'],
-            'from_email' => ['required', 'email', 'max:255'],
-            'from_name'  => ['nullable', 'string', 'max:120'],
-            'reply_to'   => ['nullable', 'email', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         $key = $this->keys->find((int) $data['unione_api_key_id']);
 
@@ -154,9 +141,9 @@ class UniOneSendController extends Controller
     public function index(Request $request): JsonResponse
     {
         $filters = $request->validate([
-            'status'   => ['nullable', 'string', 'max:12'],
-            'key_id'   => ['nullable', 'integer'],
-            'search'   => ['nullable', 'string', 'max:160'],
+            'status' => ['nullable', 'string', 'max:12'],
+            'key_id' => ['nullable', 'integer'],
+            'search' => ['nullable', 'string', 'max:160'],
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
         ]);
 
@@ -174,8 +161,8 @@ class UniOneSendController extends Controller
             'data' => UniOneSendResource::collection($sends->items())->resolve(),
             'meta' => [
                 'current_page' => $sends->currentPage(),
-                'last_page'    => $sends->lastPage(),
-                'total'        => $sends->total(),
+                'last_page' => $sends->lastPage(),
+                'total' => $sends->total(),
             ],
         ]);
     }
@@ -221,7 +208,7 @@ class UniOneSendController extends Controller
             });
 
             fclose($out);
-        }, 'unione-send-log-' . now()->format('Y-m-d') . '.csv', ['Content-Type' => 'text/csv']);
+        }, 'unione-send-log-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv']);
     }
 
     /**
@@ -271,38 +258,38 @@ class UniOneSendController extends Controller
         try {
             UniOneSend::create([
                 'unione_api_key_id' => $key->id,
-                'user_id'           => auth()->id(),
-                'subject'           => (string) (($data['subject'] ?? null) ?: app(\App\Services\UniOne\UniOneTemplateService::class)->subjectFor()),
-                'from_email'        => (string) $data['from_email'],
-                'from_name'         => $data['from_name'] ?? null,
-                'reply_to'          => $data['reply_to'] ?? null,
+                'user_id' => auth()->id(),
+                'subject' => (string) (($data['subject'] ?? null) ?: app(UniOneTemplateService::class)->subjectFor()),
+                'from_email' => (string) $data['from_email'],
+                'from_name' => $data['from_name'] ?? null,
+                'reply_to' => $data['reply_to'] ?? null,
                 // The bodies are NOT copied: a test re-renders the shared
                 // template every time, so storing a snapshot of it here would
                 // be two LONGTEXT columns of something nothing reads back.
-                'html_body'         => '',
-                'requested_count'   => 1,
-                'eligible_count'    => 1,
-                'accepted_count'    => $response->ok ? 1 : 0,
-                'failed_count'      => $response->ok ? 0 : 1,
-                'chunk_count'       => 0,
-                'status'            => $response->ok ? UniOneSend::STATUS_COMPLETED : UniOneSend::STATUS_FAILED,
-                'error'            => $response->ok ? null : mb_strimwidth((string) $this->explain($response), 0, 500, '…'),
-                'is_test'           => true,
-                'completed_at'      => now(),
+                'html_body' => '',
+                'requested_count' => 1,
+                'eligible_count' => 1,
+                'accepted_count' => $response->ok ? 1 : 0,
+                'failed_count' => $response->ok ? 0 : 1,
+                'chunk_count' => 0,
+                'status' => $response->ok ? UniOneSend::STATUS_COMPLETED : UniOneSend::STATUS_FAILED,
+                'error' => $response->ok ? null : mb_strimwidth((string) $this->explain($response), 0, 500, '…'),
+                'is_test' => true,
+                'completed_at' => now(),
             ]);
         } catch (\Throwable $e) {
             Log::warning('UniOne test send history write failed', [
                 'key_id' => $key->id,
-                'error'  => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
     }
 
-    private function explain(\App\Support\UniOne\UniOneResponse $response): ?string
+    private function explain(UniOneResponse $response): ?string
     {
         return $response->ok
             ? null
-            : \App\Support\UniOne\UniOneErrors::explain(
+            : UniOneErrors::explain(
                 $response->apiErrorCode,
                 $response->message,
                 $response->httpStatus,
