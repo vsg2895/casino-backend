@@ -1,7 +1,7 @@
 # Backend Refactoring & Optimization Plan
 
-_Drafted 2026-10-24. Scope: `backend/` only. **Status: steps 0–5 executed on branch
-`refactor/backend-plan` (15 commits); §5 items untouched pending decisions.** See §9._
+_Drafted 2026-10-24. Scope: `backend/` only. **Status: steps 0–7 executed on branch
+`refactor/backend-plan`; step 7 covered 5 of the 6 listed controllers.** See §9._
 
 ---
 
@@ -286,7 +286,7 @@ pairs, including key order (JSON key order is part of an `assertExactJson`-style
 
 Commit: `refactor(messaging): share receiver-campaign endpoints between credentials`
 
-### 4.6 Fat controllers → services — **Medium/High, LAST, only if you want it**
+### 4.6 Fat controllers → services — **[DONE 2026-10-24 on your sign-off; 5 of 6, see §9]**
 
 `WarmupEmailController` (781 lines, 26 methods), `ForumModerationController` (504),
 `NewsletterPhoneController` (490), `VerificationPromotionEmailController` (485),
@@ -296,8 +296,17 @@ that the project convention ("Form Request → Service → Resource") puts in se
 Extracting that logic is a pure move, but it touches the messaging subsystem, which
 `docs/MESSAGING.md` calls the least guessable part of the codebase. I'd do it only after
 4.4/4.5 have landed and only for one controller per commit, starting with
-`WarmupEmailController` (10 existing warmup test files cover it). **Not scheduled until you
-confirm.**
+`WarmupEmailController` (10 existing warmup test files cover it).
+
+**What moved, and what deliberately stayed.** Business logic (locks, transactions, state
+changes, sends, audit logs) moved; request parsing, status-code choice and response shaping
+stayed in the controllers, as did the read-only listings (query-string filters → builder →
+inline array), because converting those to Resources would be a shape-risking rewrite, not a
+move. `MailgunKeyController` was **not** done: after §4.5 its remaining logic is the key test,
+which has the same shape as `SendgridKeyController::test` and depends on the controller concern
+`ResolvesTestSubscriber` (used by five controllers). Extracting only the Mailgun half would
+leave the two diverged; the right change is one shared credential-test service for both,
+which is a design decision, not a move.
 
 ---
 
@@ -421,9 +430,14 @@ for §5.2, (4) test scaffolding (§5.3): decided, deleted, (5) DB-2 drop: decide
 | 3b DB-3 | Duplicate soft-delete predicate removed from 2 Eloquent builders; exactly 5 of 2,404 captured queries changed, each by that predicate only. |
 | 4 Form Requests | 33 inline write validations → 25 Form Requests. Excluded where a 404/503 precedes validation (§4.4). GET filters left inline. |
 | 5 Receiver concern | 5 endpoints × 2 channels share one concern; 16 responses byte-identical before/after. |
+| 7 Services | `WarmupRunService`, `Sms\BulkSmsRunService`, `PostVerificationPromotionTestSender`, `VerificationPromotionOverrideService`, `Forum\ForumModerationService`, `Forum\ForumAccountService`. Shared `QueuedRunOutcome`/`QueuedRunRefusal` + `RespondsWithQueuedRun` for the two lock-guarded runs. Controllers: Warmup 781→391, NewsletterPhone 490→441, VerificationPromotion 485→260, ForumModeration 493→367, ForumAuth 476→289 lines. |
 
-**Safety checks after every step:** `php -l` gate clean, full suite green (1,199 → 1,275 tests),
+**Safety checks after every step:** `php -l` gate clean, full suite green (1,199 → 1,275 tests; 1,325 after step 7),
 and the route table identical to `main` (344 routes: same methods, URIs, names, actions, middleware).
+
+**Step 7 characterization tests (33):** WarmupEndpointContract, BulkSmsSendEndpoint,
+VerificationPromotionAdminContract, ForumModerationActionsContract, ForumPasswordAuthContract;
+each committed and run green against the unchanged controller first.
 
 **New characterization tests (76):** AffiliateClick, CasinoFacets, NavItemReorder, SeoTemplate,
 AdminReviewModeration, MailgunReceiverBulk, CasinoCountryDetachAll, ForumModerationValidation,
