@@ -331,7 +331,14 @@ availability (on a cache failure it must fall back to `Hash::check`, never deny 
 Rejected alternatives: lowering bcrypt cost or switching to SHA-256 would change the stored
 hashes (a data change) and break the "stored as `Hash::make`" rule.
 
-### 5.2 Job timeouts (finding F)
+### 5.2 Job timeouts (finding F) — **[RESOLVED 2026-10-24: no risk today]**
+
+`deploy/supervisor/casino-worker.conf` runs `queue:work` with no `--timeout`, so Laravel's default
+60 s applies to these five jobs, well below `retry_after` (1200 s). No duplicate-send risk.
+Declaring `public int $timeout = 60;` on each would be a pure no-op that satisfies the project rule
+explicitly; optional.
+
+_Original note:_
 
 These jobs declare no `$timeout` and inherit the worker's `--timeout`:
 `ProcessNewsletterSubscription`, `SendNewsletterWelcomeEmail`, `InvalidateCasinoCache`,
