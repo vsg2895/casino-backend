@@ -1,6 +1,7 @@
 # Backend Refactoring & Optimization Plan
 
-_Drafted 2026-10-24. Scope: `backend/` only. **Status: awaiting approval — no code has been changed.**_
+_Drafted 2026-10-24. Scope: `backend/` only. **Status: steps 0–5 executed on branch
+`refactor/backend-plan` (15 commits); §5 items untouched pending decisions.** See §9._
 
 ---
 
@@ -396,3 +397,42 @@ plan. They're listed so you can decide whether any is a bug.
 
 **Please confirm:** (1) approve steps 0–5, (2) yes/no on §5.1, (3) the worker `--timeout`
 for §5.2, (4) keep or delete the test scaffolding (§5.3), (5) DB-2 drop: yes/no.
+
+---
+
+## 9. Execution log (2026-10-24)
+
+| Step | Result |
+|---|---|
+| 1 Bootstrap | Lazy-loading violations logged outside production. A full-suite run logged **zero** violations. |
+| 2 DB-1 | `casino_reviews_site_status_casino_pub_idx` migration; up/down verified on SQLite. **Not yet applied to the local MySQL** (needs your OK). |
+| 3 Scopes | 10 inline copies → `Casino::attachedToSite`, `SpecialOffer::casinoAttachedToSite`, `SpecialOffer::visibleInBonusArea`. SQL of 6,295 captured queries byte-identical. |
+| 3b DB-3 | Duplicate soft-delete predicate removed from 2 Eloquent builders; exactly 5 of 2,404 captured queries changed, each by that predicate only. |
+| 4 Form Requests | 33 inline write validations → 25 Form Requests. Excluded where a 404/503 precedes validation (§4.4). GET filters left inline. |
+| 5 Receiver concern | 5 endpoints × 2 channels share one concern; 16 responses byte-identical before/after. |
+
+**Safety checks after every step:** `php -l` gate clean, full suite green (1,199 → 1,275 tests),
+and the route table identical to `main` (344 routes: same methods, URIs, names, actions, middleware).
+
+**New characterization tests (76):** AffiliateClick, CasinoFacets, NavItemReorder, SeoTemplate,
+AdminReviewModeration, MailgunReceiverBulk, CasinoCountryDetachAll, ForumModerationValidation,
+UniOneAdminWrites, ReceiverCampaignEndpoints.
+
+### Bugs found while characterizing (reported, NOT fixed: behaviour freeze)
+
+1. **UniOne key rotation keeps the old verification** (`UniOneKeyController::update`). The
+   reset of `last_verified_at` / `last_verify_status` goes through `fill()`, but neither column is
+   fillable, so it is silently discarded. A replaced, unproven key stays "verified" and eligible as
+   the default sender. Pinned by `test_key_update_with_a_new_api_key_currently_keeps_its_verification_known_bug`.
+   Fix: `forceFill()` those two columns. `Model::preventSilentlyDiscardingAttributes()` in dev
+   would catch this whole class of bug.
+2. **SEO template preview 500s without `name`** (`SeoTemplateController::preview`). `validated()`
+   drops an absent nullable key, then `$validated['name']` is read directly. Fix: `$validated['name'] ?? null`.
+
+### Tooling note
+
+There is no `pint.json`, so Pint's default Laravel preset restyles each touched file
+(unspaced concatenation, un-aligned `=>`). The codebase's own style is spaced concatenation
+(315 vs 43 occurrences). The changes are whitespace-only (`git diff -w` hides them), but they
+make diffs noisier. A `pint.json` with `concat_space: one` and `binary_operator_spaces: align`
+would stop the churn; that's a config change for you to decide.
