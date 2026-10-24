@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\RespondsWithQueuedRun;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\BulkNewsletterPhoneIdsRequest;
 use App\Http\Requests\Admin\ImportNewsletterPhonesRequest;
@@ -13,12 +14,12 @@ use App\Http\Requests\Admin\UpdateNewsletterPhoneRequest;
 use App\Http\Resources\NewsletterPhoneResource;
 use App\Http\Resources\PhoneSmsHistoryResource;
 use App\Jobs\ImportPhoneNewslettersJob;
-use App\Jobs\SendBulkSmsJob;
 use App\Models\NewsletterBasedOnPhone;
 use App\Models\PhoneNewsletterImport;
 use App\Models\PhoneSmsHistory;
 use App\Models\TwilioConfig;
 use App\Services\PhoneRecipientService;
+use App\Services\Sms\BulkSmsRunService;
 use App\Support\CsvExport;
 use App\Support\Phone\PhoneAudienceFilter;
 use Illuminate\Database\Eloquent\Builder;
@@ -26,7 +27,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -51,15 +51,15 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class NewsletterPhoneController extends Controller
 {
+    use RespondsWithQueuedRun;
+
     /** Page size bounds for the admin listings. */
     private const int DEFAULT_PER_PAGE = 50;
+
     private const int MAX_PER_PAGE = 200;
 
     /** Columns the listing may be sorted by. A whitelist, not user input. */
     private const array SORTABLE = ['created_at', 'phone', 'opted_out'];
-
-    /** How long the "a bulk run is in flight" lock is held for. */
-    private const int RUN_LOCK_SECONDS = 900;
 
     /** Recipients shown in the pre-send preview. */
     private const int PREVIEW_LIMIT = 25;
@@ -231,7 +231,7 @@ class NewsletterPhoneController extends Controller
         } while ($ids->count() === self::DELETE_CHUNK);
 
         Log::info('Phone newsletter numbers bulk-deleted', [
-            'deleted'  => $deleted,
+            'deleted' => $deleted,
             'admin_id' => $request->user()?->id,
         ]);
 
@@ -257,12 +257,12 @@ class NewsletterPhoneController extends Controller
         $file = $request->file('file');
 
         $import = PhoneNewsletterImport::create([
-            'user_id'  => $request->user()?->id,
+            'user_id' => $request->user()?->id,
             'filename' => $file->getClientOriginalName(),
             // Staged on the local disk; the job reads it and deletes it. The
             // worker must therefore share this filesystem with the web process.
-            'path'     => $file->store('phone-imports', 'local'),
-            'status'   => PhoneNewsletterImport::STATUS_QUEUED,
+            'path' => $file->store('phone-imports', 'local'),
+            'status' => PhoneNewsletterImport::STATUS_QUEUED,
         ]);
 
         ImportPhoneNewslettersJob::dispatch($import->id);
@@ -283,14 +283,14 @@ class NewsletterPhoneController extends Controller
     {
         return response()->json([
             'import_id' => $import->id,
-            'status'    => $import->status,
-            'finished'  => $import->isFinished(),
-            'imported'  => $import->imported,
-            'skipped'   => $import->skipped,
-            'invalid'   => $import->invalid,
-            'total'     => $import->total,
-            'error'     => $import->error,
-            'message'   => $import->summary(),
+            'status' => $import->status,
+            'finished' => $import->isFinished(),
+            'imported' => $import->imported,
+            'skipped' => $import->skipped,
+            'invalid' => $import->invalid,
+            'total' => $import->total,
+            'error' => $import->error,
+            'message' => $import->summary(),
         ], $status);
     }
 
@@ -332,15 +332,15 @@ class NewsletterPhoneController extends Controller
 
         $sample = $recipients->sample($filter, self::PREVIEW_LIMIT)
             ->map(fn (NewsletterBasedOnPhone $row): array => [
-                'phone'      => $row->phone,
+                'phone' => $row->phone,
                 'created_at' => $row->created_at,
             ])
             ->all();
 
         return response()->json([
-            'total'       => $recipients->count($filter),
-            'sample'      => $sample,
-            'filters'     => $filter->describe(),
+            'total' => $recipients->count($filter),
+            'sample' => $sample,
+            'filters' => $filter->describe(),
             'sample_size' => count($sample),
         ]);
     }
@@ -358,75 +358,26 @@ class NewsletterPhoneController extends Controller
     }
 
     /**
-     * Start a bulk SMS run.
-     *
-     * Returns as soon as the fan-out is queued — the actual sending happens in
-     * {@see SendBulkSmsJob} and its batches, on the low-priority queue.
-     *
-     * Guarded by a cross-process lock rather than a UI-only disabled button. Two
-     * concurrent runs would message the same numbers twice, and a duplicate SMS is
-     * billed and cannot be recalled, so the guard has to hold across tabs,
-     * browsers and app servers. The lock is released by the fan-out job when it
-     * finishes, and expires on its own if the worker dies.
+     * Start a bulk SMS run. Returns as soon as the fan-out is queued; the run
+     * itself, and the lock that keeps two from overlapping, is
+     * {@see BulkSmsRunService::start()}.
      */
-    public function send(SendBulkSmsRequest $request, PhoneRecipientService $recipients): JsonResponse
+    public function send(SendBulkSmsRequest $request, BulkSmsRunService $runs): JsonResponse
     {
         $config = TwilioConfig::findOrFail($request->integer('twilio_config_id'));
-
-        // Checked before anything is queued, so a misconfigured credential is one
-        // clear error rather than a queued run that fails per recipient.
-        if (! $config->hasSender()) {
-            return response()->json([
-                'ok'      => false,
-                'message' => "\"{$config->name}\" has no sender configured. Add a Twilio phone number or a Messaging Service SID first.",
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
         $filter = $request->audienceFilter();
 
-        // Resolved before the lock is taken: telling the admin "nobody matches"
-        // costs one COUNT and avoids holding a 15-minute lock for a run that has
-        // nothing to do.
-        $total = $recipients->count($filter);
+        $outcome = $runs->start($config, $request->body(), $filter, $request->user()?->id);
 
-        if ($total === 0) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'No numbers match the selected filters, so nothing was queued.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        if (! $outcome->wasQueued()) {
+            return $this->refusedRun($outcome);
         }
-
-        $lock = Cache::lock(SendBulkSmsJob::runLockKey(), self::RUN_LOCK_SECONDS);
-
-        if (! $lock->get()) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'A bulk SMS run is already in progress. Wait for it to finish before starting another.',
-            ], Response::HTTP_CONFLICT);
-        }
-
-        // The owner token travels with the job so the job — and only the job — can
-        // release this exact lock; a later run's lock can never be released by an
-        // earlier, slower one.
-        SendBulkSmsJob::dispatch(
-            $config->id,
-            $request->body(),
-            $filter->toArray(),
-            $lock->owner(),
-        );
-
-        Log::info('Bulk SMS run queued', [
-            'twilio_config_id' => $config->id,
-            'recipients'       => $total,
-            'filters'          => $filter->describe(),
-            'admin_id'         => $request->user()?->id,
-        ]);
 
         return response()->json([
-            'ok'         => true,
-            'recipients' => $total,
-            'filters'    => $filter->describe(),
-            'message'    => "Queued an SMS to {$total} number(s) ({$filter->describe()}).",
+            'ok' => true,
+            'recipients' => $outcome->recipients,
+            'filters' => $filter->describe(),
+            'message' => $outcome->message,
         ], Response::HTTP_ACCEPTED);
     }
 
@@ -453,7 +404,6 @@ class NewsletterPhoneController extends Controller
         return PhoneSmsHistoryResource::collection($query->paginate($perPage));
     }
 
-    /** Total history rows matching the current filters, as a dedicated COUNT. */
     /**
      * Delete one row of the SMS history.
      *
@@ -466,6 +416,7 @@ class NewsletterPhoneController extends Controller
         return response()->json(null, 204);
     }
 
+    /** Total history rows matching the current filters, as a dedicated COUNT. */
     public function historyCount(Request $request): JsonResponse
     {
         return response()->json(['total' => $this->filteredHistory($request)->count()]);

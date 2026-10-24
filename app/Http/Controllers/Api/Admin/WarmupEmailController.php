@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\RespondsWithQueuedRun;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\BulkWarmupEmailIdsRequest;
 use App\Http\Requests\Admin\ImportWarmupEmailsRequest;
@@ -18,7 +19,6 @@ use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\WarmupMailResolver;
 use App\Services\WarmupImportService;
-use App\Services\WarmupRunRefusal;
 use App\Services\WarmupRunService;
 use App\Support\DayWindow;
 use App\Support\Spreadsheet\EmailSpreadsheetReader;
@@ -41,6 +41,8 @@ use Throwable;
  */
 class WarmupEmailController extends Controller
 {
+    use RespondsWithQueuedRun;
+
     public function __construct(private readonly EmailTemplateCatalog $templates) {}
 
     /** Page size bounds for the admin listing. */
@@ -169,8 +171,8 @@ class WarmupEmailController extends Controller
      * Queue a warmup run: one site's email template, sent to a chosen number of
      * addresses — or to the whole list when no count is given.
      *
-     * The run itself is {@see WarmupRunService::start()}; this maps its outcome
-     * to a status. Every refusal answers `{ok: false, message}`.
+     * The run itself is {@see WarmupRunService::start()}; a refusal answers
+     * through {@see RespondsWithQueuedRun}.
      */
     public function send(SendWarmupEmailsRequest $request, WarmupRunService $runs): JsonResponse
     {
@@ -182,14 +184,7 @@ class WarmupEmailController extends Controller
         );
 
         if (! $outcome->wasQueued()) {
-            return response()->json([
-                'ok' => false,
-                'message' => $outcome->message,
-            ], match ($outcome->refusal) {
-                WarmupRunRefusal::AlreadyRunning => Response::HTTP_CONFLICT,
-                WarmupRunRefusal::QueueFailed => Response::HTTP_INTERNAL_SERVER_ERROR,
-                default => Response::HTTP_UNPROCESSABLE_ENTITY,
-            });
+            return $this->refusedRun($outcome);
         }
 
         return response()->json([

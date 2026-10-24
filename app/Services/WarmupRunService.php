@@ -64,11 +64,11 @@ final class WarmupRunService
      * app servers. The lock is released by the fan-out job, and expires on its own
      * if a worker dies.
      */
-    public function start(string $template, ?int $limit, ?int $cooldown, ?int $userId): WarmupRunOutcome
+    public function start(string $template, ?int $limit, ?int $cooldown, ?int $userId): QueuedRunOutcome
     {
         if ($this->recipients->available() === 0) {
-            return WarmupRunOutcome::refused(
-                WarmupRunRefusal::NothingToSend,
+            return QueuedRunOutcome::refused(
+                QueuedRunRefusal::Unsendable,
                 'The warmup list is empty. Add or import addresses first.',
             );
         }
@@ -79,7 +79,7 @@ final class WarmupRunService
         $site = $this->site();
 
         if ($site === null) {
-            return WarmupRunOutcome::refused(WarmupRunRefusal::NothingToSend, $this->missingSiteMessage());
+            return QueuedRunOutcome::refused(QueuedRunRefusal::Unsendable, $this->missingSiteMessage());
         }
 
         // Counted BEFORE the lock so an unsatisfiable run never blocks a valid
@@ -88,8 +88,8 @@ final class WarmupRunService
         $recipientCount = $this->recipients->count($limit, $cooldown);
 
         if ($recipientCount === 0) {
-            return WarmupRunOutcome::refused(
-                WarmupRunRefusal::NothingToSend,
+            return QueuedRunOutcome::refused(
+                QueuedRunRefusal::Unsendable,
                 $cooldown === null
                     ? 'No addresses are available to send to.'
                     : sprintf(
@@ -102,8 +102,8 @@ final class WarmupRunService
         $lock = Cache::lock(SendWarmupCampaignJob::runLockKey(), self::RUN_LOCK_SECONDS);
 
         if (! $lock->get()) {
-            return WarmupRunOutcome::refused(
-                WarmupRunRefusal::AlreadyRunning,
+            return QueuedRunOutcome::refused(
+                QueuedRunRefusal::AlreadyRunning,
                 'A warmup run is already in progress. Wait for it to finish before starting another.',
             );
         }
@@ -134,8 +134,8 @@ final class WarmupRunService
                 'error' => $e->getMessage(),
             ]);
 
-            return WarmupRunOutcome::refused(
-                WarmupRunRefusal::QueueFailed,
+            return QueuedRunOutcome::refused(
+                QueuedRunRefusal::QueueFailed,
                 'The warmup run could not be queued: '.$e->getMessage(),
             );
         }
@@ -150,7 +150,7 @@ final class WarmupRunService
             'admin_id' => $userId,
         ]);
 
-        return WarmupRunOutcome::queued($send->id, $recipientCount, sprintf(
+        $message = sprintf(
             'Warmup queued: %s template for %s to %s.',
             $this->templates->label($template),
             $site->name,
@@ -163,7 +163,9 @@ final class WarmupRunService
                         ? ''
                         : " not contacted in the last {$cooldown} day(s)",
                 ),
-        ));
+        );
+
+        return QueuedRunOutcome::queued($recipientCount, $message, $send->id);
     }
 
     /**

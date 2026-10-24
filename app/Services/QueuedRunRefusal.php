@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace App\Services;
 
 /**
- * Why {@see WarmupRunService::start()} did not queue a run.
+ * Why a queued bulk run did not start.
  *
  * The reason, not an HTTP status: the controller decides how each one is
- * answered, so the service stays usable outside a request.
+ * answered ({@see \App\Http\Controllers\Concerns\RespondsWithQueuedRun}), so the
+ * services stay usable outside a request.
  */
-enum WarmupRunRefusal
+enum QueuedRunRefusal
 {
-    /** The list is empty, no warmup site resolves, or the cooldown leaves nobody. */
-    case NothingToSend;
+    /** Nothing can be sent: no audience, no sender, or no site to send as. */
+    case Unsendable;
 
     /** Another run holds the run lock. */
     case AlreadyRunning;
