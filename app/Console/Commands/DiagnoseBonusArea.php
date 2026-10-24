@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Http\Controllers\Api\Public\BonusController;
 use App\Models\BonusCategory;
 use App\Models\Site;
 use App\Models\SpecialOffer;
@@ -18,7 +19,7 @@ use Illuminate\Support\Carbon;
  * to run on production at any time, which is the whole point of it existing.
  *
  * THE PROBLEM IT SOLVES. The bonus chips render from
- * {@see \App\Http\Controllers\Api\Public\BonusController::index()}, and that
+ * {@see BonusController::index()}, and that
  * endpoint drops a category the moment it has no visible offer on the site.
  * The front end then renders nothing at all — `sections.length === 0` returns
  * null — so an operator sees a blank band with no error anywhere: not in the
@@ -65,14 +66,14 @@ class DiagnoseBonusArea extends Command
         if ($sites->isEmpty()) {
             $this->error($slugs === []
                 ? 'No sites are registered.'
-                : 'No site matches: ' . implode(', ', $slugs));
+                : 'No site matches: '.implode(', ', $slugs));
 
             return self::FAILURE;
         }
 
         // Category-level facts are site-independent — read them once rather
         // than per site, and report them once.
-        $categoriesTotal  = BonusCategory::query()->count();
+        $categoriesTotal = BonusCategory::query()->count();
         $categoriesActive = BonusCategory::query()->active()->count();
 
         $this->line('');
@@ -123,9 +124,7 @@ class DiagnoseBonusArea extends Command
             ->whereHas('casino.sites', fn (Builder $q) => $q->where('sites.id', $site->id));
 
         $attachedActive = SpecialOffer::query()
-            ->whereHas('casino.sites', fn (Builder $q) => $q
-                ->where('sites.id', $site->id)
-                ->where('casino_site.active', true));
+            ->casinoAttachedToSite($site->id);
 
         $casinoActive = (clone $attachedActive)
             ->whereHas('casino', fn (Builder $q) => $q->where('casinos.active', true));
@@ -177,12 +176,7 @@ class DiagnoseBonusArea extends Command
         $visibleCategories = BonusCategory::query()
             ->active()
             ->whereHas('specialOffers', function (Builder $q) use ($site): void {
-                $q->where('special_offers.active', true)
-                    ->claimable()
-                    ->whereHas('casino.sites', fn (Builder $s) => $s
-                        ->where('sites.id', $site->id)
-                        ->where('casino_site.active', true))
-                    ->whereHas('casino', fn (Builder $c) => $c->where('casinos.active', true));
+                $q->visibleInBonusArea($site->id);
             })
             ->count();
 

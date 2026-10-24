@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Http\Requests\Admin\UpdateCasinoRequest;
 use Database\Factories\CasinoFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -45,9 +47,9 @@ class Casino extends Model
         return [
             'noindex' => 'boolean',
             'reviewed_at' => 'date',
-            'rating'     => 'integer',
+            'rating' => 'integer',
             'sort_order' => 'integer',
-            'active'     => 'boolean',
+            'active' => 'boolean',
         ];
     }
 
@@ -57,7 +59,7 @@ class Casino extends Model
      *
      * `doNotGenerateSlugsOnUpdate()` is what makes the slug ADMIN-OWNED rather
      * than immutable: an admin may edit it deliberately (validated for format
-     * and uniqueness in {@see \App\Http\Requests\Admin\UpdateCasinoRequest}),
+     * and uniqueness in {@see UpdateCasinoRequest}),
      * but simply renaming a casino must never move its public URL out from under
      * the pages already indexed against it.
      */
@@ -75,6 +77,21 @@ class Casino extends Model
             ->withPivot(['affiliate_url', 'position', 'featured', 'active'])
             ->withTimestamps()
             ->orderByPivot('position');
+    }
+
+    /**
+     * Casinos a site publishes: attached to it, with the attachment active.
+     *
+     * The tenancy predicate every public reader shares. It checks the PIVOT
+     * only. A casino's own `active` flag is a separate gate that callers add
+     * where they want it, because not every caller does: affiliate click
+     * counting deliberately does not.
+     */
+    public function scopeAttachedToSite(Builder $query, int $siteId): Builder
+    {
+        return $query->whereHas('sites', static function (Builder $sites) use ($siteId): void {
+            $sites->where('sites.id', $siteId)->where('casino_site.active', true);
+        });
     }
 
     public function categories(): BelongsToMany

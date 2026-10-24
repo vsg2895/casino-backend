@@ -32,13 +32,13 @@ class AffiliateClickController extends Controller
 
         $validated = $request->validate([
             'casino_slug' => ['required', 'string', 'max:255'],
-            'offer_slug'  => ['nullable', 'string', 'max:255'],
+            'offer_slug' => ['nullable', 'string', 'max:255'],
         ]);
 
         // Scoped to casinos actually attached to THIS site, so a slug from
         // another domain's catalogue cannot be counted here.
         $casino = Casino::query()
-            ->whereHas('sites', fn ($q) => $q->where('sites.id', $site->id)->where('casino_site.active', true))
+            ->attachedToSite($site->id)
             ->where('slug', $validated['casino_slug'])
             ->first(['id']);
 
