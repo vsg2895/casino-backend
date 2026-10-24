@@ -8,16 +8,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ModerateForumPostsRequest;
 use App\Http\Requests\Admin\UpdateForumMemberRoleRequest;
 use App\Http\Requests\Admin\UpdateForumMemberStatusRequest;
-use App\Jobs\RevalidateNextJsSites;
-use App\Models\ForumModerationLog;
 use App\Models\ForumPost;
 use App\Models\ForumReport;
 use App\Models\ForumUser;
-use App\Models\Site;
-use App\Support\SiteCache;
+use App\Services\Forum\ForumModerationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -28,8 +24,8 @@ use Symfony\Component\HttpFoundation\Response;
  * the full body, the author, their history, the thread, the time, the reports —
  * so nothing requires opening a second view before clicking approve.
  *
- * Every state change is logged with the acting admin. A moderation system whose
- * actions cannot be attributed is not one.
+ * The state changes themselves, and their audit log, are
+ * {@see ForumModerationService}.
  */
 class ForumModerationController extends Controller
 {
@@ -224,7 +220,7 @@ class ForumModerationController extends Controller
      * a separate single-item route would be the identical code with a different
      * arity, and would drift.
      */
-    public function act(ModerateForumPostsRequest $request): JsonResponse
+    public function act(ModerateForumPostsRequest $request, ForumModerationService $moderation): JsonResponse
     {
         $data = $request->validated();
 
@@ -232,95 +228,27 @@ class ForumModerationController extends Controller
 
         abort_if($posts->isEmpty(), Response::HTTP_NOT_FOUND);
 
-        $actorId = $request->user()?->id;
-        $siteIds = [];
-
-        // One transaction for the whole batch: a bulk approve that half-applied
-        // would leave counters describing a state that never existed.
-        DB::transaction(function () use ($posts, $data, $actorId, &$siteIds): void {
-            foreach ($posts as $post) {
-                $from = $post->status;
-                $siteIds[(int) $post->site_id] = true;
-
-                match ($data['action']) {
-                    'approve' => $this->transition($post, ForumPost::STATUS_APPROVED),
-                    'reject' => $this->transition($post, ForumPost::STATUS_REJECTED),
-                    'spam' => $this->markSpam($post),
-                    'delete' => $post->delete(),
-                    'restore' => $post->restore(),
-                };
-
-                ForumModerationLog::record(
-                    (int) $post->site_id,
-                    $actorId,
-                    'post',
-                    (int) $post->id,
-                    $data['action'],
-                    $from,
-                    $post->fresh()?->status,
-                    $data['reason'] ?? null,
-                );
-            }
-
-            // Acting on a post resolves the reports that pointed at it —
-            // otherwise the reported tab keeps showing work that is done.
-            ForumReport::query()
-                ->whereIn('forum_post_id', $posts->pluck('id'))
-                ->open()
-                ->update([
-                    'status' => $data['action'] === 'approve'
-                        ? ForumReport::STATUS_DISMISSED
-                        : ForumReport::STATUS_ACTIONED,
-                    'handled_by' => $actorId,
-                    'handled_at' => now(),
-                ]);
-        });
-
-        foreach (array_keys($siteIds) as $siteId) {
-            SiteCache::flushSite($siteId);
-            RevalidateNextJsSites::dispatch(['forum'], [$siteId]);
-        }
+        $moderation->act($posts, $data['action'], $data['reason'] ?? null, $request->user()?->id);
 
         return response()->json([
             'data' => ['affected' => $posts->count(), 'action' => $data['action']],
         ]);
     }
 
-    /**
-     * Ban or mute a member, or lift it.
-     *
-     * Their posts are NOT bulk-deleted by this. Removing a person's whole
-     * history on a mute is disproportionate, and on a ban it is a separate,
-     * deliberate action — the moderator selects the posts and deletes them.
-     */
-    public function member(UpdateForumMemberStatusRequest $request, ForumUser $forumUser): JsonResponse
-    {
+    /** Ban or mute a member, or lift it. See {@see ForumModerationService::setMemberStatus()}. */
+    public function member(
+        UpdateForumMemberStatusRequest $request,
+        ForumUser $forumUser,
+        ForumModerationService $moderation,
+    ): JsonResponse {
         $data = $request->validated();
 
-        $from = $forumUser->status;
-
-        $forumUser->forceFill([
-            'status' => $data['status'],
-            // Only a mute expires. A ban with an expiry would be a mute wearing
-            // the wrong label.
-            'banned_until' => $data['status'] === ForumUser::STATUS_MUTED ? ($data['until'] ?? null) : null,
-            'ban_reason' => $data['status'] === ForumUser::STATUS_ACTIVE ? null : ($data['reason'] ?? null),
-        ])->save();
-
-        if ($data['status'] === ForumUser::STATUS_BANNED) {
-            // Revoke every session. A ban that leaves a live token is advice.
-            $forumUser->tokens()->delete();
-        }
-
-        ForumModerationLog::record(
-            (int) $forumUser->site_id,
-            $request->user()?->id,
-            'member',
-            (int) $forumUser->id,
-            'status:'.$data['status'],
-            $from,
+        $moderation->setMemberStatus(
+            $forumUser,
             $data['status'],
+            $data['until'] ?? null,
             $data['reason'] ?? null,
+            $request->user()?->id,
         );
 
         return response()->json([
@@ -400,31 +328,13 @@ class ForumModerationController extends Controller
         ]);
     }
 
-    /**
-     * Change a member's role.
-     *
-     * Separate from the status endpoint, because they are separate axes — see
-     * the migration. Logged like every other moderation action.
-     */
-    public function memberRole(UpdateForumMemberRoleRequest $request, ForumUser $forumUser): JsonResponse
-    {
-        $data = $request->validated();
-
-        $from = $forumUser->role;
-
-        // forceFill: `role` is not fillable, precisely so that no request body
-        // anywhere else can set it.
-        $forumUser->forceFill(['role' => $data['role']])->save();
-
-        ForumModerationLog::record(
-            (int) $forumUser->site_id,
-            $request->user()?->id,
-            'member',
-            (int) $forumUser->id,
-            'role:'.$data['role'],
-            $from,
-            $data['role'],
-        );
+    /** Change a member's role. See {@see ForumModerationService::setMemberRole()}. */
+    public function memberRole(
+        UpdateForumMemberRoleRequest $request,
+        ForumUser $forumUser,
+        ForumModerationService $moderation,
+    ): JsonResponse {
+        $moderation->setMemberRole($forumUser, $request->validated('role'), $request->user()?->id);
 
         return response()->json(['data' => ['id' => (int) $forumUser->id, 'role' => $forumUser->role]]);
     }
@@ -453,41 +363,5 @@ class ForumModerationController extends Controller
                 'total' => $posts->total(),
             ],
         ]);
-    }
-
-    /**
-     * Move a post to a status.
-     *
-     * Goes through the model so ForumPostObserver sees it — writing the column
-     * with a query builder would skip every counter.
-     */
-    private function transition(ForumPost $post, string $status): void
-    {
-        // Approving something that was soft-deleted has to restore it too, or
-        // the counters stay right and the post stays invisible.
-        if ($status === ForumPost::STATUS_APPROVED && $post->trashed()) {
-            $post->restore();
-        }
-
-        $post->status = $status;
-        $post->approved_at = $status === ForumPost::STATUS_APPROVED ? now() : null;
-        $post->save();
-    }
-
-    /**
-     * Spam is rejected AND hidden.
-     *
-     * Two steps rather than one, because they mean different things: the status
-     * records the judgement for the author's trust score, the soft delete takes
-     * it off the page. Keeping it merely "rejected" would leave it in the
-     * moderator's default view forever.
-     */
-    private function markSpam(ForumPost $post): void
-    {
-        $this->transition($post, ForumPost::STATUS_SPAM);
-
-        if (! $post->trashed()) {
-            $post->delete();
-        }
     }
 }
