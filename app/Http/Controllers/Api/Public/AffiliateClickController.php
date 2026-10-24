@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Public\StoreAffiliateClickRequest;
 use App\Models\AffiliateClick;
 use App\Models\Casino;
 use App\Models\Site;
 use App\Models\SpecialOffer;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 /**
@@ -25,15 +25,12 @@ use Illuminate\Http\Response;
  */
 class AffiliateClickController extends Controller
 {
-    public function store(Request $request): JsonResponse
+    public function store(StoreAffiliateClickRequest $request): JsonResponse
     {
         /** @var Site $site */
         $site = app('current_site');
 
-        $validated = $request->validate([
-            'casino_slug' => ['required', 'string', 'max:255'],
-            'offer_slug' => ['nullable', 'string', 'max:255'],
-        ]);
+        $validated = $request->validated();
 
         // Scoped to casinos actually attached to THIS site, so a slug from
         // another domain's catalogue cannot be counted here.

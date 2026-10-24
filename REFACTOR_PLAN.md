@@ -227,7 +227,11 @@ first count's regex also matched `$request->validated()`, i.e. code already on F
 Of the 45, the read-only GET filters (`index`/`filters` query strings) stay inline because
 the project rule covers **writes**, and five methods are excluded by rule 1 below:
 `ForumArticleController::storePost`/`updatePost`, `ForumPostController::update`,
-`ForumAuthController::google` and `EmailValidationCheckController::store`. **After:**
+`ForumAuthController::google` and `EmailValidationCheckController::store`. Found while
+executing and also excluded by rule 1: `ForumTaxonomyController` (updates 404 via
+`assertOwns()` first), `ForumAuthController::login/forgotPassword/resetPassword` and
+`ForumPostController::report` (their `site()` helper 404s when the feature is off). Each of
+those would turn a 404 into a 422 for an invalid body. **After:**
 `Store{X}Request` / `Update{X}Request` classes under `app/Http/Requests/{Admin,Public}`,
 following the existing naming convention.
 
