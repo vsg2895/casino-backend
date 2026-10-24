@@ -302,7 +302,7 @@ confirm.**
 Each of these could be beneficial, but I am not 100% sure it is behaviour-neutral, or it
 needs a decision only you can make.
 
-### 5.1 Site-key verification cost (finding A) — **High, recommended**
+### 5.1 Site-key verification cost (finding A) — **[IMPLEMENTED 2026-10-24 on your approval]**
 
 **Measured:** `Hash::check` against the stored `$2y$12$` hash takes **~192 ms** on this
 machine. It runs on **every** public request before `SiteCache` is consulted. An ISR
