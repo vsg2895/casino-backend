@@ -4,28 +4,24 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
-use App\Exceptions\PromotionMailerException;
+use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\SendTestSiteEmailRequest;
 use App\Http\Requests\Admin\UpdateVerificationPromotionEmailRequest;
+use App\Http\Requests\Admin\UpdateVerificationPromotionOverrideRequest;
 use App\Http\Resources\VerificationPromotionEmailResource;
 use App\Http\Resources\VerificationPromotionSendResource;
-use App\Http\Requests\Admin\UpdateVerificationPromotionOverrideRequest;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
-use App\Models\VerificationPromotionOverride;
 use App\Models\VerificationPromotionSend;
-use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PostVerificationPromotionEmailService;
-use App\Support\Mail\MailCredential;
+use App\Services\PostVerificationPromotionTestSender;
+use App\Services\VerificationPromotionOverrideService;
 use App\Support\DayWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Log;
-use Throwable;
 
 /**
  * Admin management of the ONE global post-verification promotion.
@@ -38,25 +34,13 @@ use Throwable;
  * {@see SitePromotionEmailController} — show (materialising defaults on first
  * access), update, live preview of unsaved edits, and a test send.
  *
- * THE TEST SEND DELIBERATELY DOES NOT USE
- * {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}. That shared path
- * sends the per-site templates over the .env SMTP mailer, which is right for
- * them — those buttons exist to prove the operator's own mail server works.
- * This feature's test has a different job: it must mirror its REAL send exactly,
- * so it goes through the same provider ({@see VerificationPromotionEmail}, the
- * .env SendGrid key) and the same sender (this section's own from_email). A
- * green result here therefore proves the automatic promotion's delivery path,
- * which a success over some other transport would not.
- *
- * It also ignores the Enable switch: that switch pauses the AUTOMATIC send, and
- * an admin must still be able to test a paused template before turning it on.
+ * The test send deliberately does NOT use
+ * {@see SendsAdminTestEmail}; it mirrors the
+ * real send instead. See {@see PostVerificationPromotionTestSender}.
  */
 class VerificationPromotionEmailController extends Controller
 {
-    public function __construct(
-        private readonly PostVerificationPromotionEmailService $promotions,
-        private readonly PromotionMailerFactory $mailers,
-    ) {}
+    public function __construct(private readonly PostVerificationPromotionEmailService $promotions) {}
 
     /** Rows per page in the history listing. */
     private const int HISTORY_PER_PAGE = 25;
@@ -106,7 +90,7 @@ class VerificationPromotionEmailController extends Controller
         $base = $this->filteredHistory($request);
 
         return response()->json([
-            'total'  => (clone $base)->count(),
+            'total' => (clone $base)->count(),
             'failed' => (clone $base)->where('status', VerificationPromotionSend::STATUS_FAILED)->count(),
         ]);
     }
@@ -117,38 +101,6 @@ class VerificationPromotionEmailController extends Controller
         $send->delete();
 
         return response()->json(null, 204);
-    }
-
-    /**
-     * Record a "Send test" in this stream's own history.
-     *
-     * A test used to leave an email and no evidence — the one case where
-     * evidence is wanted most, because the operator is testing precisely
-     * because something is in doubt. Failures are recorded too.
-     *
-     * Flagged `is_test`, and deliberately NOT written to the shared promotion
-     * history: that table drives the 24-hour dedup, and a test must never make
-     * a real subscriber's send get skipped.
-     */
-    private function recordTest(Site $site, string $to, string $status, ?string $error = null): void
-    {
-        try {
-            VerificationPromotionSend::create([
-                'site_id' => $site->id,
-                'email'   => $to,
-                'status'  => $status,
-                'error'   => $error === null ? null : mb_strimwidth($error, 0, 500, '…'),
-                'is_test' => true,
-                'sent_at' => Carbon::now(),
-            ]);
-        } catch (Throwable $e) {
-            // The mail has already gone; a history write must not turn a
-            // successful test into an error response.
-            Log::warning('Post-verification test history write failed', [
-                'to'    => $to,
-                'error' => $e->getMessage(),
-            ]);
-        }
     }
 
     /**
@@ -214,7 +166,7 @@ class VerificationPromotionEmailController extends Controller
      */
     public function preview(UpdateVerificationPromotionEmailRequest $request): JsonResponse
     {
-        $site = $this->unsubscribeSite();
+        $site = $this->promotions->previewSite();
 
         if ($site === null) {
             return response()->json([
@@ -236,45 +188,9 @@ class VerificationPromotionEmailController extends Controller
      * admin screen can render the full list without inventing placeholders and
      * without the operator having to create a row before editing one.
      */
-    public function overrides(): JsonResponse
+    public function overrides(VerificationPromotionOverrideService $overrides): JsonResponse
     {
-        $rows = VerificationPromotionOverride::query()
-            ->get()
-            ->keyBy('site_id');
-
-        $sites = Site::query()->orderBy('name')->get(['id', 'name', 'slug', 'domain']);
-
-        // The template's own footer links, label-only. The screen renders one
-        // URL input PER default link, captioned with its label, so an operator
-        // can see they are re-pointing "Privacy Policy" and not renaming it.
-        $labels = collect(VerificationPromotionEmail::query()->first()?->footer_links ?? [])
-            ->map(static fn ($l): string => (string) ($l['label'] ?? ''))
-            ->all();
-
-        return response()->json([
-            'footer_link_labels' => $labels,
-            'data' => $sites->map(static function (Site $site) use ($rows): array {
-                /** @var VerificationPromotionOverride|null $row */
-                $row = $rows->get($site->id);
-
-                return [
-                    'site_id'   => (int) $site->id,
-                    'site_name' => $site->name,
-                    'site_slug' => $site->slug,
-                    'domain'    => $site->domain,
-                    // Whether this site currently changes anything at all — the
-                    // screen shows it as a badge, and it is the honest answer to
-                    // "is this site still on the defaults?".
-                    'active'    => $row !== null && $row->overrides() !== [],
-                    'hero_image_url'        => $row?->hero_image_url,
-                    'hero_url'              => $row?->hero_url,
-                    'top_button_url'        => $row?->top_button_url,
-                    'cta_button_url'        => $row?->cta_button_url,
-                    'email_preferences_url' => $row?->email_preferences_url,
-                    'footer_link_urls'      => $row?->footer_link_urls ?? [],
-                ];
-            })->all(),
-        ]);
+        return response()->json($overrides->listing());
     }
 
     /**
@@ -289,37 +205,14 @@ class VerificationPromotionEmailController extends Controller
     public function updateOverride(
         UpdateVerificationPromotionOverrideRequest $request,
         Site $site,
+        VerificationPromotionOverrideService $overrides,
     ): JsonResponse {
-        $data = $request->validated();
-
-        /*
-         * Only when the caller actually sent the key.
-         *
-         * Every other field follows validated(), which omits absent keys and
-         * so leaves them untouched. Defaulting this one to [] instead made a
-         * partial update silently wipe the footer targets — inconsistent with
-         * the rest of the payload and a quiet way to lose settings.
-         *
-         * Positional, so gaps are preserved rather than compacted: entry 2
-         * must stay entry 2 even when entry 1 is blank, or clearing one link
-         * would silently re-point the next one.
-         */
-        if ($request->has('footer_link_urls')) {
-            $data['footer_link_urls'] = array_map(
-                static fn ($u): ?string => trim((string) $u) === '' ? null : trim((string) $u),
-                $data['footer_link_urls'] ?? [],
-            );
-        }
-
-        $row = VerificationPromotionOverride::query()->updateOrCreate(
-            ['site_id' => $site->id],
-            $data,
-        );
+        $row = $overrides->save($site, $request->validated(), $request->has('footer_link_urls'));
 
         return response()->json([
             'data' => [
                 'site_id' => (int) $site->id,
-                'active'  => $row->overrides() !== [],
+                'active' => $row->overrides() !== [],
             ],
         ]);
     }
@@ -327,147 +220,29 @@ class VerificationPromotionEmailController extends Controller
     /**
      * Send a one-off test of the SAVED template through the SAVED transport.
      *
-     * Uses the configured provider/credential rather than SMTP (see the class
-     * docblock), so a green result here means the real send path works.
+     * Uses the configured provider/credential rather than SMTP, so a green
+     * result here means the real send path works. See
+     * {@see PostVerificationPromotionTestSender}.
      */
-    public function sendTest(SendTestSiteEmailRequest $request): JsonResponse
+    public function sendTest(SendTestSiteEmailRequest $request, PostVerificationPromotionTestSender $tester): JsonResponse
     {
-        $to = $request->validated('to');
-        $config = VerificationPromotionEmail::current();
-
-        /*
-         * WHICH SITE THIS TEST IS ATTRIBUTED TO.
-         *
-         * The site does not change what the recipient receives — this template
-         * is pinned to one brand on the server, so the mail is byte-identical
-         * whichever site is chosen. What it changes is the HISTORY ROW: every
-         * test writes to `verification_promotion_sends`, and that table is
-         * site-scoped, so the row shows up under whichever site is recorded
-         * here and is reachable by the "Site" filter on the After-verification
-         * tab.
-         *
-         * It used to be `unsubscribeSite()` — the first ACTIVE site by id —
-         * which meant every test on every brand was filed under site 1. An
-         * operator testing a Winpalack-branded mail saw the row appear under
-         * Idev Affiliation, with nothing in the UI explaining why and no way to
-         * change it. The request has validated an optional `site_id` since the
-         * field was added; it was simply never read.
-         *
-         * The fallback is unchanged, so a caller that sends no `site_id` —
-         * including any older admin bundle still deployed — behaves exactly as
-         * before rather than failing.
-         */
         $siteId = $request->validated('site_id');
 
-        $site = $siteId === null
-            ? $this->unsubscribeSite()
-            : Site::query()->whereKey($siteId)->first();
+        $result = $tester->send(
+            VerificationPromotionEmail::current(),
+            $siteId === null ? null : (int) $siteId,
+            $request->validated('to'),
+            $request->validated('name'),
+        );
 
-        if ($site === null) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Register a site before sending a test — the unsubscribe link is built from one.',
-            ], 422);
-        }
-
-        // Which credential this test will use. Resolved BEFORE the transport so
-        // it can be reported even when the transport itself fails — that is the
-        // case where knowing the key matters most.
-        $credential = MailCredential::describe($config->provider, $config->credentialId());
-
-        // Same resolution the job performs. A missing/disabled key fails loudly
-        // here instead of falling back to another transport and reporting a
-        // success that proves nothing.
-        try {
-            $resolved = $this->mailers->resolve($config->provider, $config->credentialId());
-        } catch (PromotionMailerException $e) {
-            Log::warning('Post-verification promotion test email: transport unavailable', [
-                'to'       => $to,
-                'provider' => $config->provider,
-                'error'    => $e->getMessage(),
-                ...$credential,
-            ]);
-
-            return response()->json([
-                'ok' => false,
-                // The exception describes the configuration problem (which
-                // provider, which key state) and never contains key material.
-                'message' => 'Mail transport unavailable (' . $credential['source'] . '): ' . $e->getMessage(),
-            ], 422);
-        }
-
-        // The sender is the one configured in THIS section, exactly as the real
-        // send uses it: PromotionEmail::envelope() falls back to the template's
-        // own from_email when no override is applied, so the test proves the
-        // same From the automatic promotion will use.
-        $from = (string) $config->from_email;
-
-        try {
-            // No usingFromAddress(): the mailable already takes from_email from
-            // the template, which is what this section configures.
-            $mailable = $this->promotions
-                ->previewMail($site, $config, $to, $request->validated('name'));
-
-            $sent = $resolved->mailer->to($to)->send($mailable);
-        } catch (Throwable $e) {
-            Log::warning('Post-verification promotion test email failed', [
-                'to'       => $to,
-                'provider' => $config->provider,
-                'from'     => $from,
-                'error'    => $e->getMessage(),
-                ...$credential,
-            ]);
-
-            $this->recordTest($site, $to, VerificationPromotionSend::STATUS_FAILED, $e->getMessage());
-
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Could not send test email via ' . $credential['source']
-                    . ' (' . $credential['key_prefix'] . ' ' . $credential['key_fingerprint'] . '): '
-                    . $e->getMessage(),
-            ], 502);
-        }
-
-        // Logged on SUCCESS too, not just failure. This button is the fastest
-        // way to answer "which key is production actually sending with?", and
-        // that answer is worthless if it is only recorded when things break.
-        // Fingerprint, never key material — see MailCredential.
-        // SendGrid's own id for the message — the handle for looking up its
-        // real fate in the Activity Feed when it does not appear in an inbox.
-        $messageId = $sent?->getSymfonySentMessage()?->getMessageId();
-
-        $this->recordTest($site, $to, VerificationPromotionSend::STATUS_SUCCESS);
-
-        Log::info('Post-verification promotion test email sent', [
-            'to'         => $to,
-            'provider'   => $config->provider,
-            'from'       => $from,
-            'message_id' => $messageId,
-            ...$credential,
-        ]);
-
-        return response()->json([
-            'ok' => true,
-            // The credential is echoed back so it can be checked from the admin
-            // panel alone, with no shell access. Safe to surface: an
-            // already-authenticated screen, and a one-way fingerprint.
-            'message' => "Test email sent to {$to} from {$from} via {$credential['source']}"
-                . " (key {$credential['key_prefix']} fingerprint {$credential['key_fingerprint']})"
-                . ($messageId ? " — SendGrid id {$messageId}" : '') . '.',
-        ]);
-    }
-
-    /**
-     * A site to build the preview/test UNSUBSCRIBE link from — nothing else.
-     *
-     * Since the branding is fixed in config, the choice no longer affects a
-     * single visible string; it only decides which domain hosts the sample
-     * opt-out link. Lowest active id, for a stable, repeatable default.
-     */
-    private function unsubscribeSite(): ?Site
-    {
-        return Site::query()->where('active', true)->orderBy('id')->first()
-            ?? Site::query()->orderBy('id')->first();
+        return response()->json(
+            ['ok' => $result->ok, 'message' => $result->message],
+            match (true) {
+                $result->ok => 200,
+                $result->attempted => 502,
+                default => 422,
+            },
+        );
     }
 
     /**

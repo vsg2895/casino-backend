@@ -51,16 +51,16 @@ class PostVerificationPromotionEmailService
         $brand = self::brand();
 
         return [
-            'site_name'       => $brand['site_name'],
-            'site_url'        => $brand['site_url'],
+            'site_name' => $brand['site_name'],
+            'site_url' => $brand['site_url'],
             // Bare domain (no scheme) for footer copy — "confirmed at
             // winpalack.com" — where "https://" would read wrong.
-            'site_domain'     => $brand['site_domain'],
+            'site_domain' => $brand['site_domain'],
             // Footer contact line. A placeholder rather than a literal in the
             // template row, so the config key stays the single source.
-            'contact_email'   => $brand['contact_email'],
-            'email'           => $email,
-            'year'            => (string) Carbon::now()->year,
+            'contact_email' => $brand['contact_email'],
+            'email' => $email,
+            'year' => (string) Carbon::now()->year,
             'unsubscribe_url' => $unsubscribeUrl,
         ];
     }
@@ -76,6 +76,19 @@ class PostVerificationPromotionEmailService
         $brand = config('promotions.after_verification');
 
         return $brand;
+    }
+
+    /**
+     * A site to build the preview/test UNSUBSCRIBE link from — nothing else.
+     *
+     * Since the branding is fixed in config, the choice no longer affects a
+     * single visible string; it only decides which domain hosts the sample
+     * opt-out link. Lowest active id, for a stable, repeatable default.
+     */
+    public function previewSite(): ?Site
+    {
+        return Site::query()->where('active', true)->orderBy('id')->first()
+            ?? Site::query()->orderBy('id')->first();
     }
 
     /**
