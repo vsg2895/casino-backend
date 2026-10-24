@@ -34,11 +34,26 @@ if (! $slug || ! $providedKey)        abort(401, 'Missing site credentials');
 
 $site = Site::where('slug', $slug)->where('active', true)->first();
 if (! $site)                          abort(404, 'Site not found');   // inactive == unknown, on purpose
-if (! Hash::check($providedKey, $site->api_key))  abort(403, 'Invalid site key');
+if (! $this->keyMatches($site, $providedKey))      abort(403, 'Invalid site key');
 
 $request->merge(['_site' => $site]);
 app()->instance('current_site', $site);
 ```
+
+`keyMatches()` is `Hash::check` with **successful** results remembered for 10 minutes. The
+stored key is bcrypt cost 12, ~190 ms per check on every public request, and a site's
+server sends the same key every time. The cache entry is
+`site-key-ok:{site_id}:HMAC-SHA256(provided key | stored hash, APP_KEY)`, and that shape
+is what keeps it safe. Do not simplify it:
+
+- **Rotation is immediate.** The stored hash is part of the entry name, so after
+  `rotateApiKey()` the old key maps to an entry that does not exist. No invalidation code.
+- **Only matches are cached.** A wrong key pays full bcrypt every time.
+- **The site row is still read on every request**, so deactivation is immediate (404).
+- The plain key never reaches the cache, and a cache failure falls back to `Hash::check`
+  (it can neither let a request in nor keep one out).
+
+`VerifySiteAccessTest` pins all of this, including a check that bcrypt runs once.
 
 Controllers read the resolved site from `$request->_site` or `app('current_site')` and
 **scope every query with it** — through the `casino_site` pivot for casinos, through
@@ -74,6 +89,12 @@ back to `https://{domain}`. It builds the links baked into delivered email, so i
 ## Key principles
 
 1. **Scope every public query by the resolved site.** No exceptions, no "internal" routes.
+   Use the shared scopes rather than re-typing the predicate: `Casino::attachedToSite($id)`
+   (pivot attached + active; deliberately NOT `casinos.active`, so add that where the surface
+   needs it), `SpecialOffer::casinoAttachedToSite($id)`, and
+   `SpecialOffer::visibleInBonusArea($id)` (offer active + claimable + casino active and
+   attached). Raw `DB::table()` builders apply no global scopes, so they must keep their
+   explicit `whereNull('…deleted_at')`.
 2. **Cache every public read** with `SiteCache::remember($site->id, $tags, $key, 3600, …)`,
    returning **resolved arrays** — never models or unresolved Resources. See
    [../docs/CACHING.md](../docs/CACHING.md) for why (`__PHP_Incomplete_Class` silently
@@ -81,7 +102,11 @@ back to `https://{domain}`. It builds the links baked into delivered email, so i
 3. **Invalidate in an Observer**, not in a controller. `CasinoObserver::saved()` flushes
    `SiteCache` per affected site and dispatches `RevalidateNextJsSites`.
 4. **Use API Resources for every response.** Never return a model or an array literal.
-5. **Use Form Requests for every write.** Never validate inline.
+5. **Use Form Requests for every write.** Never validate inline. One exception: a method
+   that can answer 404/403/503 **before** validating (an `assertOwns()`, a feature-flag
+   `site()` helper that aborts) keeps its inline `validate()`, because a Form Request runs
+   first and would turn that 404 into a 422 (see `ForumTaxonomyController`,
+   `ForumAuthController`). Read-only GET filter validation may stay inline.
 6. **No `__()` or lang files for content.** English only.
 7. **Every job declares `public const string ON_QUEUE`** — `high` when a human is
    waiting (imports, welcome/verify mail), `low` for bulk fan-out (campaigns, SMS,
@@ -105,7 +130,9 @@ app/
 │   │   ├── Public/    Casino, CasinoReview, Category, Country, SpecialOffer, CmsPage, SocialLink,
 │   │   │              Newsletter, Unsubscribe, Verify, SiteFeature
 │   │   └── AuthController.php
-│   ├── Requests/{Admin,Public}/
+│   ├── Controllers/Concerns/   ManagesReceiverCampaign (Mailgun + SMTP receiver endpoints),
+│   │                          SendsAdminTestEmail, ResolvesTestSubscriber
+│   ├── Requests/{Admin,Public,UniOne}/
 │   ├── Resources/
 │   └── Middleware/VerifySiteAccess.php
 ├── Models/            Site, Casino, CasinoReview, Category, Continent, Country, SpecialOffer,
@@ -214,6 +241,10 @@ find app routes database config -name '*.php' -print0 | xargs -0 -n1 php -l
 
 Avoid `php artisan test` in normal work — it fills `storage/logs/laravel.log` with
 `testing.` noise. `migrate:fresh --seed` **rotates every site's API key**.
+
+Outside production, lazy loads are **logged** as warnings, never thrown
+(`AppServiceProvider`). To list N+1 queries the suite hits:
+`LOG_CHANNEL=stderr vendor/bin/phpunit 2>&1 | grep 'Lazy loaded'` (empty today).
 
 ## SEO obligations
 
