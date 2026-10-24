@@ -5,21 +5,23 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\BulkMailgunReceiversRequest;
 use App\Http\Requests\Admin\ImportMailgunReceiversRequest;
+use App\Http\Requests\Admin\ResetMailgunReceiverSendsRequest;
 use App\Http\Requests\Admin\StoreMailgunReceiverRequest;
 use App\Http\Requests\Admin\UpdateMailgunReceiverRequest;
 use App\Http\Resources\MailgunReceiverResource;
 use App\Jobs\ImportMailgunReceiversJob;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunReceiverImport;
-use App\Support\Mail\ReceiverSource;
 use App\Services\MailgunReceiverSendStateResetter;
 use App\Support\DayWindow;
+use App\Support\Mail\ReceiverSource;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Admin CRUD for the Mailgun receiver list.
@@ -32,6 +34,7 @@ use Illuminate\Support\Facades\DB;
 class MailgunReceiverController extends Controller
 {
     private const int DEFAULT_PER_PAGE = 50;
+
     private const int MAX_PER_PAGE = 200;
 
     public function index(Request $request): AnonymousResourceCollection
@@ -56,11 +59,11 @@ class MailgunReceiverController extends Controller
     {
         $receiver = MailgunReceiver::create([
             ...$request->validated(),
-            'source'              => MailgunReceiver::SOURCE_MANUAL,
+            'source' => MailgunReceiver::SOURCE_MANUAL,
             'consent_recorded_at' => now(),
             // Every receiver is active. There is no half-member of this list:
             // an address is either on it and mailed, or removed.
-            'is_active'           => true,
+            'is_active' => true,
         ]);
 
         return (new MailgunReceiverResource($receiver))
@@ -101,13 +104,9 @@ class MailgunReceiverController extends Controller
      * address from the audience means deleting it; opting a person out means
      * their unsubscribe, which no admin action may forge.
      */
-    public function bulk(Request $request): JsonResponse
+    public function bulk(BulkMailgunReceiversRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'action' => ['required', 'string', 'in:delete'],
-            'ids'    => ['required', 'array', 'min:1', 'max:5000'],
-            'ids.*'  => ['integer'],
-        ]);
+        $validated = $request->validated();
 
         $affected = MailgunReceiver::whereIn('id', $validated['ids'])->delete();
 
@@ -126,11 +125,9 @@ class MailgunReceiverController extends Controller
      * campaign can mail the whole list. The confirmation lives in the admin
      * dialog — by the time this runs, the answer was yes.
      */
-    public function resetSends(Request $request, MailgunReceiverSendStateResetter $resetter): JsonResponse
+    public function resetSends(ResetMailgunReceiverSendsRequest $request, MailgunReceiverSendStateResetter $resetter): JsonResponse
     {
-        $validated = $request->validate([
-            'clear_errors' => ['sometimes', 'boolean'],
-        ]);
+        $validated = $request->validated();
 
         $affected = $resetter->reset((bool) ($validated['clear_errors'] ?? false));
 
@@ -150,14 +147,14 @@ class MailgunReceiverController extends Controller
         $path = $file->store('mailgun-receiver-imports', 'local');
 
         $import = MailgunReceiverImport::create([
-            'user_id'        => $request->user()?->id,
-            'filename'       => $file->getClientOriginalName(),
+            'user_id' => $request->user()?->id,
+            'filename' => $file->getClientOriginalName(),
             // Stamped on every row the job writes. Stored here rather than
             // passed to the job because the upload and the processing are two
             // requests, and the choice belongs to the upload.
-            'source_label'   => $request->validated()['source_label'] ?? ReceiverSource::DEFAULT,
-            'path'           => $path,
-            'status'         => MailgunReceiverImport::STATUS_QUEUED,
+            'source_label' => $request->validated()['source_label'] ?? ReceiverSource::DEFAULT,
+            'path' => $path,
+            'status' => MailgunReceiverImport::STATUS_QUEUED,
         ]);
 
         ImportMailgunReceiversJob::dispatch($import->id);
@@ -204,7 +201,7 @@ class MailgunReceiverController extends Controller
      * The filter set, shared by the listing and the count so the two can never
      * disagree about how many rows match.
      */
-    private function filtered(Request $request): \Illuminate\Database\Eloquent\Builder
+    private function filtered(Request $request): Builder
     {
         $query = MailgunReceiver::query()->search($request->query('search'));
 

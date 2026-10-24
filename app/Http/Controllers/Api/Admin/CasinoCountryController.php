@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\DetachAllCasinoCountriesRequest;
 use App\Jobs\InvalidateCasinoCache;
 use App\Models\Casino;
 use App\Models\Country;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -47,7 +47,7 @@ class CasinoCountryController extends Controller
 
         if ($casinoIds->isEmpty() || $countryIds->isEmpty()) {
             return response()->json([
-                'ok'      => false,
+                'ok' => false,
                 'message' => 'Need at least one active casino and one active country.',
             ], 422);
         }
@@ -73,12 +73,12 @@ class CasinoCountryController extends Controller
         $this->refreshAffectedSites();
 
         return response()->json([
-            'ok'       => true,
-            'casinos'  => $casinoIds->count(),
+            'ok' => true,
+            'casinos' => $casinoIds->count(),
             'countries' => $countryIds->count(),
             'attached' => $after - $before,
-            'total'    => $after,
-            'message'  => sprintf(
+            'total' => $after,
+            'message' => sprintf(
                 '%d attachment(s) added — %d casino(s) x %d country/countries.',
                 $after - $before,
                 $casinoIds->count(),
@@ -94,15 +94,8 @@ class CasinoCountryController extends Controller
      * lists as readily as bulk-attached ones and there is no undo, so it must
      * not be reachable by a stray POST or a mis-wired button.
      */
-    public function detachAll(Request $request): JsonResponse
+    public function detachAll(DetachAllCasinoCountriesRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'confirm' => ['required', 'accepted'],
-        ], [
-            'confirm.required' => 'Send confirm=true — this removes every casino/country attachment.',
-            'confirm.accepted' => 'Send confirm=true — this removes every casino/country attachment.',
-        ]);
-
         $removed = DB::table('casino_country')->count();
 
         DB::table('casino_country')->delete();
@@ -110,7 +103,7 @@ class CasinoCountryController extends Controller
         $this->refreshAffectedSites();
 
         return response()->json([
-            'ok'      => true,
+            'ok' => true,
             'removed' => $removed,
             'message' => "{$removed} attachment(s) removed. No casino is attached to any country now.",
         ]);
