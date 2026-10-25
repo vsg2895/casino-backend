@@ -64,6 +64,12 @@ class SendRegistrationPromotionJob implements ShouldQueue
 
     public int $backoff = 60;
 
+    /**
+     * Below the queue's retry_after (1200 s). 60 is the worker default production
+     * already applied; declared so the job no longer depends on worker flags.
+     */
+    public int $timeout = 60;
+
     public function __construct(public readonly int $memberId)
     {
         $this->onQueue(self::ON_QUEUE);

@@ -217,7 +217,11 @@ class ForumPostController extends Controller
                 'reporter_ip' => filter_var($request->ip(), FILTER_VALIDATE_IP) !== false
                     ? inet_pton((string) $request->ip())
                     : null,
+                // A re-report reopens a handled report, so it must also stop
+                // naming the moderator who closed it and when.
                 'status'      => ForumReport::STATUS_OPEN,
+                'handled_by'  => null,
+                'handled_at'  => null,
             ],
         );
 

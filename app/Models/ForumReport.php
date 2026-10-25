@@ -20,12 +20,23 @@ class ForumReport extends Model
     /** @var list<string> */
     public const array REASONS = ['spam', 'abuse', 'off_topic', 'other'];
 
+    /**
+     * `reporter_ip`, `status` and the `handled_*` pair must be here: the report
+     * endpoint sets them through updateOrCreate(), and without them fill()
+     * dropped them silently — every report landed with no IP, and a re-report
+     * never reopened a dismissed one. All four values are server-chosen, never
+     * request input.
+     */
     protected $fillable = [
         'site_id',
         'forum_post_id',
         'forum_user_id',
+        'reporter_ip',
         'reason',
         'note',
+        'status',
+        'handled_by',
+        'handled_at',
     ];
 
     protected $hidden = ['reporter_ip'];

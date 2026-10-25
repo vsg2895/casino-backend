@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Models\SiteRevalidation;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -50,7 +52,6 @@ Schedule::command('promotions:dispatch-due')
 Schedule::command('promotions:dispatch-verification')
     ->everyMinute();
 
-// Provision upcoming monthly partitions for the promotion history table.
 // Mailgun receiver sends. Hourly rather than every minute: the cooldown is
 // expressed in DAYS, so a finer tick would only re-check a set that cannot have
 // changed. No withoutOverlapping() — the command only dispatches, and the
@@ -76,6 +77,7 @@ if (config('news.scheduled')) {
     Schedule::command('news:scrape')->hourly();
 }
 
+// Provision upcoming monthly partitions for the promotion history table.
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();

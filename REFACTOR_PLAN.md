@@ -1,7 +1,8 @@
 # Backend Refactoring & Optimization Plan
 
 _Drafted 2026-10-24. Scope: `backend/` only. **Status: steps 0–7 executed on branch
-`refactor/backend-plan`; step 7 covered 5 of the 6 listed controllers.** See §9._
+`refactor/backend-plan`; step 7 covered 5 of the 6 listed controllers.** See §9. A second,
+independent audit pass on the same day is in **§10**; its changes are uncommitted._
 
 ---
 
@@ -14,11 +15,11 @@ work list.
 
 **Risk levels**
 
-| Level  | Meaning |
-|--------|---------|
-| Low    | Mechanical; the same SQL / same output can be shown by a test or by `toRawSql()` comparison. |
+| Level  | Meaning                                                                                                                                      |
+|--------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| Low    | Mechanical; the same SQL / same output can be shown by a test or by `toRawSql()` comparison.                                                 |
 | Medium | Moves code across a boundary (controller → Form Request / trait / scope). Equivalence relies on tests that exist or that Phase 0 adds first. |
-| High   | Touches the tenancy/security boundary or runtime config. Needs your explicit sign-off even after this plan is approved. |
+| High   | Touches the tenancy/security boundary or runtime config. Needs your explicit sign-off even after this plan is approved.                      |
 
 **Per-module workflow (after approval)**
 1. Write or extend the characterization tests for the module first, and run them green against the **unchanged** code.
@@ -28,16 +29,16 @@ work list.
 
 ### Verified environment
 
-| Thing | Version | Source |
-|---|---|---|
-| PHP (CLI) | 8.5.5 (`composer.json` floor `^8.3`) | `php -v` |
-| laravel/framework | 13.38.0 | `composer show --direct` |
-| laravel/sanctum | 4.3.2 | 〃 |
-| spatie/laravel-permission | 8.0.0 | 〃 |
-| spatie/laravel-medialibrary | 11.23.0 | 〃 |
-| spatie/laravel-sluggable | 4.0.2 | 〃 |
-| phpunit/phpunit | 12.5.30 | 〃 |
-| MySQL (local) | **9.6.0** | `SELECT VERSION()` |
+| Thing                       | Version                              | Source                   |
+|-----------------------------|--------------------------------------|--------------------------|
+| PHP (CLI)                   | 8.5.5 (`composer.json` floor `^8.3`) | `php -v`                 |
+| laravel/framework           | 13.38.0                              | `composer show --direct` |
+| laravel/sanctum             | 4.3.2                                | 〃                        |
+| spatie/laravel-permission   | 8.0.0                                | 〃                        |
+| spatie/laravel-medialibrary | 11.23.0                              | 〃                        |
+| spatie/laravel-sluggable    | 4.0.2                                | 〃                        |
+| phpunit/phpunit             | 12.5.30                              | 〃                        |
+| MySQL (local)               | **9.6.0**                            | `SELECT VERSION()`       |
 
 > ⚠ The project docs say production runs **MySQL 8**, but the local server is **9.6**. Every
 > index and EXPLAIN in this plan uses only syntax that works on both. Final EXPLAINs should
@@ -59,16 +60,16 @@ Earlier tuning passes (e.g. `tune_hot_path_indexes`, `tune_admin_listing_indexes
 `AdminListingPerformanceTest`) have already done most of the obvious work. The remaining
 opportunities are fewer than in a typical audit, but some are significant:
 
-| # | Finding | Impact | Risk |
-|---|---|---|---|
-| A | `VerifySiteAccess` runs a **bcrypt cost-12 `Hash::check` on every public request**: **~192 ms measured**, paid even when `SiteCache` hits | **Largest latency item in the API** | High → §5.1 |
-| B | Public review feed and per-casino review listing have no index matching `site_id + status + casino_id` → ORDER BY `published_at` | Medium, grows with reviews | Low (additive index) |
-| C | The "casino attached to and active on this site" predicate is copy-pasted **12 times** | Maintainability; divergence risk | Low |
-| D | 45 inline `->validate()` calls in 19 controllers (corrected: the first count also matched `$request->validated()`), against the project's "Form Request for every write" rule | Convention / testability | Medium |
-| E | Receiver-campaign endpoints duplicated between `MailgunKeyController` and `SmtpCredentialController` (6 methods each) | Maintainability | Medium |
-| F | 5 production jobs declare no `$timeout`, against the project rule "timeout below `retry_after`" | Correctness hazard (duplicate sends) | Needs review |
-| G | No lazy-loading detection in development | N+1 regressions go unnoticed | Low |
-| H | MySQL `sys.schema_redundant_indexes` reports **zero** redundant indexes; every foreign key is indexed | — | — |
+| # | Finding                                                                                                                                                                       | Impact                               | Risk                 |
+|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------|----------------------|
+| A | `VerifySiteAccess` runs a **bcrypt cost-12 `Hash::check` on every public request**: **~192 ms measured**, paid even when `SiteCache` hits                                     | **Largest latency item in the API**  | High → §5.1          |
+| B | Public review feed and per-casino review listing have no index matching `site_id + status + casino_id` → ORDER BY `published_at`                                              | Medium, grows with reviews           | Low (additive index) |
+| C | The "casino attached to and active on this site" predicate is copy-pasted **12 times**                                                                                        | Maintainability; divergence risk     | Low                  |
+| D | 45 inline `->validate()` calls in 19 controllers (corrected: the first count also matched `$request->validated()`), against the project's "Form Request for every write" rule | Convention / testability             | Medium               |
+| E | Receiver-campaign endpoints duplicated between `MailgunKeyController` and `SmtpCredentialController` (6 methods each)                                                         | Maintainability                      | Medium               |
+| F | 5 production jobs declare no `$timeout`, against the project rule "timeout below `retry_after`"                                                                               | Correctness hazard (duplicate sends) | Needs review         |
+| G | No lazy-loading detection in development                                                                                                                                      | N+1 regressions go unnoticed         | Low                  |
+| H | MySQL `sys.schema_redundant_indexes` reports **zero** redundant indexes; every foreign key is indexed                                                                         | —                                    | —                    |
 
 ---
 
@@ -120,13 +121,13 @@ it.
 
 #### Considered and rejected
 
-| Candidate | Why not |
-|---|---|
-| Make `SpecialOffer::scopeClaimable` sargable (`date(expires_at) >= ?` → `expires_at >= ?`) | `expires_at` is a `DATE` column, so the rewrite is equivalent on MySQL. But EXPLAIN shows the planner reaches `special_offers` through `special_offers_casino_sort_index (casino_id)`, so the date predicate is a post-filter on ~4 rows per casino. No measurable gain, and nonzero risk because SQLite tests compare dates as strings. |
-| New index on `casino_site` for the public casino listing | `casino_site_site_active_position_index (site_id, active, position)` already exists and matches the WHERE and ORDER BY. The local planner drives from `casinos` only because there are 7 rows. |
-| Merge/drop any of the 8 `email_validation_logs` indexes | Each one backs a distinct admin filter or stats query (`verdict`, `outcome`, `reason_code`, `score`, `quota_month`, `site_id+created_at`, `email`). None are redundant per `sys`. |
-| Drop `search_index_title_fulltext` (looks duplicated by `search_index_fulltext (title, body)`) | Not redundant: `MATCH()` must name the **exact** column list of a FULLTEXT index, so the two serve different queries. |
-| Indexes on `promotion_email_histories` | Partitioned table; `promo_hist_unique (site_id, email, sent_date, status)` already serves `sentWithinDayAmong()`. |
+| Candidate                                                                                      | Why not                                                                                                                                                                                                                                                                                                                                  |
+|------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Make `SpecialOffer::scopeClaimable` sargable (`date(expires_at) >= ?` → `expires_at >= ?`)     | `expires_at` is a `DATE` column, so the rewrite is equivalent on MySQL. But EXPLAIN shows the planner reaches `special_offers` through `special_offers_casino_sort_index (casino_id)`, so the date predicate is a post-filter on ~4 rows per casino. No measurable gain, and nonzero risk because SQLite tests compare dates as strings. |
+| New index on `casino_site` for the public casino listing                                       | `casino_site_site_active_position_index (site_id, active, position)` already exists and matches the WHERE and ORDER BY. The local planner drives from `casinos` only because there are 7 rows.                                                                                                                                           |
+| Merge/drop any of the 8 `email_validation_logs` indexes                                        | Each one backs a distinct admin filter or stats query (`verdict`, `outcome`, `reason_code`, `score`, `quota_month`, `site_id+created_at`, `email`). None are redundant per `sys`.                                                                                                                                                        |
+| Drop `search_index_title_fulltext` (looks duplicated by `search_index_fulltext (title, body)`) | Not redundant: `MATCH()` must name the **exact** column list of a FULLTEXT index, so the two serve different queries.                                                                                                                                                                                                                    |
+| Indexes on `promotion_email_histories`                                                         | Partitioned table; `promo_hist_unique (site_id, email, sent_date, status)` already serves `sentWithinDayAmong()`.                                                                                                                                                                                                                        |
 
 ### 2.3 Query refactors (same result set guaranteed)
 
@@ -153,15 +154,15 @@ and change rarely. **Recommendation: leave as is.**
 
 ### 2.4 N+1 / loop audit results
 
-| Location | Pattern | Verdict |
-|---|---|---|
-| `Public\CasinoReviewController::feed` | One preview query per casino on the page | **Keep.** Documented decision, bounded by page size, cached 1 h. An eager-load with `limit()` (Laravel 13 windowed eager limit) is possible but is a readability trade the original author explicitly rejected. |
-| `Admin\CasinoReviewController` / `ForumModerationController` bulk actions | `$model->delete()` per row | **Keep.** Must fire model observers (search index, forum counters). A bulk query delete would skip them, which is a behaviour change. |
-| `ReceiverCampaignSender` | Per-receiver claim/insert/update | **Keep.** Atomic per-recipient claims are the duplicate-send guard. |
-| `Services\CasinoProfileImportService` | `Casino::where('slug')->first()` per spreadsheet row | Candidate for prefetch-by-slug. **Low value** (admin import, small sheets). Listed, not scheduled. |
-| `SpecialOfferResource` | `$this->bonusCategory?->slug` (not behind `whenLoaded`) | **Safe today.** Every caller eager-loads `bonusCategory`: admin index/show/store/update/duplicate, public offers, bonus pages, casino resources. Covered by G below so a future caller that forgets it is caught in dev. |
-| Other resources | Relations behind `whenLoaded` | Clean. |
-| Recipient streaming (`ScheduleRecipientService`, `MailgunReceiverSelector`, `PhoneRecipientService`, `WarmupRecipientService`) | Keyset pagination with explicit column lists | Already optimal. |
+| Location                                                                                                                       | Pattern                                                 | Verdict                                                                                                                                                                                                                  |
+|--------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Public\CasinoReviewController::feed`                                                                                          | One preview query per casino on the page                | **Keep.** Documented decision, bounded by page size, cached 1 h. An eager-load with `limit()` (Laravel 13 windowed eager limit) is possible but is a readability trade the original author explicitly rejected.          |
+| `Admin\CasinoReviewController` / `ForumModerationController` bulk actions                                                      | `$model->delete()` per row                              | **Keep.** Must fire model observers (search index, forum counters). A bulk query delete would skip them, which is a behaviour change.                                                                                    |
+| `ReceiverCampaignSender`                                                                                                       | Per-receiver claim/insert/update                        | **Keep.** Atomic per-recipient claims are the duplicate-send guard.                                                                                                                                                      |
+| `Services\CasinoProfileImportService`                                                                                          | `Casino::where('slug')->first()` per spreadsheet row    | Candidate for prefetch-by-slug. **Low value** (admin import, small sheets). Listed, not scheduled.                                                                                                                       |
+| `SpecialOfferResource`                                                                                                         | `$this->bonusCategory?->slug` (not behind `whenLoaded`) | **Safe today.** Every caller eager-loads `bonusCategory`: admin index/show/store/update/duplicate, public offers, bonus pages, casino resources. Covered by G below so a future caller that forgets it is caught in dev. |
+| Other resources                                                                                                                | Relations behind `whenLoaded`                           | Clean.                                                                                                                                                                                                                   |
+| Recipient streaming (`ScheduleRecipientService`, `MailgunReceiverSelector`, `PhoneRecipientService`, `WarmupRecipientService`) | Keyset pagination with explicit column lists            | Already optimal.                                                                                                                                                                                                         |
 
 No `get()->count()`, `count($q->get())`, `::all()->filter` or `SELECT *`-then-filter
 patterns were found.
@@ -180,13 +181,13 @@ These lock in the current behaviour of code that has **no** test coverage today.
 is written and run green against the unchanged code, then committed on its own
 (`test: lock current behaviour of …`).
 
-| Module touched later | Existing coverage | Tests to add |
-|---|---|---|
-| §4.2 scopes (C) | Public casino/catalog/bonus tests exist | **Unit:** for each of the 12 call sites, build the old inline query and the new scoped query and assert identical `toRawSql()`. This is the strongest equivalence proof available. |
-| §5.1 `VerifySiteAccess` | `VerifySiteAccessTest` (5 cases) | Add: rotated key rejected **immediately** after a successful (cache-warm) request; site deactivated after a warm request returns 404; site A's key rejected on site B; status-code precedence 401 → 404 → 403. |
-| §4.4 Form Requests: `MailgunKeyController`, `SmtpCredentialController`, `TwilioConfigController`, `SmsTemplateController`, `SeoTemplateController`, `NavItemController` | **None** (no test hits these routes) | Per endpoint: (a) happy path with `assertExactJson` / exact key set, (b) one 422 per rule with `assertJsonValidationErrors([...])` pinning the **error keys and messages**, (c) 404 on an unknown id, to pin ordering between route binding and validation. |
-| §4.5 receiver-campaign trait | 1 test touches `receiver-settings` | Each of the 6 endpoints × {Mailgun, SMTP}: exact JSON keys. The SMTP response has **no** `send_enabled`, and that difference must survive. |
-| DB-1 | Review feed covered by `ReviewAutoPublishTest` etc. | None needed: an index cannot change results. EXPLAIN is the check. |
+| Module touched later                                                                                                                                                    | Existing coverage                                   | Tests to add                                                                                                                                                                                                                                                |
+|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| §4.2 scopes (C)                                                                                                                                                         | Public casino/catalog/bonus tests exist             | **Unit:** for each of the 12 call sites, build the old inline query and the new scoped query and assert identical `toRawSql()`. This is the strongest equivalence proof available.                                                                          |
+| §5.1 `VerifySiteAccess`                                                                                                                                                 | `VerifySiteAccessTest` (5 cases)                    | Add: rotated key rejected **immediately** after a successful (cache-warm) request; site deactivated after a warm request returns 404; site A's key rejected on site B; status-code precedence 401 → 404 → 403.                                              |
+| §4.4 Form Requests: `MailgunKeyController`, `SmtpCredentialController`, `TwilioConfigController`, `SmsTemplateController`, `SeoTemplateController`, `NavItemController` | **None** (no test hits these routes)                | Per endpoint: (a) happy path with `assertExactJson` / exact key set, (b) one 422 per rule with `assertJsonValidationErrors([...])` pinning the **error keys and messages**, (c) 404 on an unknown id, to pin ordering between route binding and validation. |
+| §4.5 receiver-campaign trait                                                                                                                                            | 1 test touches `receiver-settings`                  | Each of the 6 endpoints × {Mailgun, SMTP}: exact JSON keys. The SMTP response has **no** `send_enabled`, and that difference must survive.                                                                                                                  |
+| DB-1                                                                                                                                                                    | Review feed covered by `ReviewAutoPublishTest` etc. | None needed: an index cannot change results. EXPLAIN is the check.                                                                                                                                                                                          |
 
 Missing factories (`MailgunKey`, `SmtpCredential`, `TwilioConfig`, `SmsTemplate`,
 `SeoTemplate`, `NavItem`) will be added under `database/factories/`. They are test-only
@@ -198,20 +199,20 @@ infrastructure and don't change runtime behaviour.
 
 ### 4.1 Bootstrap & providers — **Low**
 
-| Item | Now | After | Files | Why behaviour is unchanged |
-|---|---|---|---|---|
-| G. Lazy-loading **detection** | Nothing | `Model::preventLazyLoading(! $this->app->isProduction())` **plus** `Model::handleLazyLoadingViolationUsing(...)` that only **logs** (`Log::warning`). Per the Laravel 13 docs, a custom handler replaces the exception. | `app/Providers/AppServiceProvider.php` | Production: disabled. Dev/tests: logs only, never throws, so no request outcome changes. Tests log to the `null` channel. |
-| Misplaced docblock | The "Public newsletter subscribe limiter" comment sits above the `forum-post` limiter, ~60 lines from the `subscribe` limiter it describes | Move it next to `RateLimiter::for('subscribe', …)` | `AppServiceProvider.php` | Comment only. |
-| `declare(strict_types=1)` missing | `app/Models/User.php`, `app/Http/Controllers/Controller.php` | Add it | 2 files | Neither file has a typed call whose arguments could be coerced. Verified by reading both. Config files and old migrations are **excluded** (§5). |
+| Item                              | Now                                                                                                                                        | After                                                                                                                                                                                                                   | Files                                  | Why behaviour is unchanged                                                                                                                       |
+|-----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| G. Lazy-loading **detection**     | Nothing                                                                                                                                    | `Model::preventLazyLoading(! $this->app->isProduction())` **plus** `Model::handleLazyLoadingViolationUsing(...)` that only **logs** (`Log::warning`). Per the Laravel 13 docs, a custom handler replaces the exception. | `app/Providers/AppServiceProvider.php` | Production: disabled. Dev/tests: logs only, never throws, so no request outcome changes. Tests log to the `null` channel.                        |
+| Misplaced docblock                | The "Public newsletter subscribe limiter" comment sits above the `forum-post` limiter, ~60 lines from the `subscribe` limiter it describes | Move it next to `RateLimiter::for('subscribe', …)`                                                                                                                                                                      | `AppServiceProvider.php`               | Comment only.                                                                                                                                    |
+| `declare(strict_types=1)` missing | `app/Models/User.php`, `app/Http/Controllers/Controller.php`                                                                               | Add it                                                                                                                                                                                                                  | 2 files                                | Neither file has a typed call whose arguments could be coerced. Verified by reading both. Config files and old migrations are **excluded** (§5). |
 
 Commit: `refactor(bootstrap): log lazy-loading violations outside production`
 
 ### 4.2 Shared query scopes — **Low**
 
-| Item | Now | After | Files |
-|---|---|---|---|
+| Item                               | Now                                                                                                           | After                                                                                                                                                                 | Files                                                                                                                                                                                  |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | C. "Casino published by this site" | `whereHas('sites', fn ($q) => $q->where('sites.id', $id)->where('casino_site.active', true))` copy-pasted 12× | `Casino::scopeAttachedToSite(Builder $q, int $siteId)`, written in the **existing `scopeX` style** (the codebase has 85 `scopeX` methods and no `#[Scope]`; see §5.4) | `Models/Casino.php`; call sites in `Public/{CasinoReview,AffiliateClick,Bonus,Category,SpecialOffer}Controller`, `Services/Search/SearchIndexer`, `Console/Commands/DiagnoseBonusArea` |
-| Offer "visible on this site" | Same 4-line closure inlined 3× in `Public\BonusController` (index count, index eager load, show) | One private method or `SpecialOffer` scope used by those 3 sites | `Public/BonusController.php` (+ `Models/SpecialOffer.php`) |
+| Offer "visible on this site"       | Same 4-line closure inlined 3× in `Public\BonusController` (index count, index eager load, show)              | One private method or `SpecialOffer` scope used by those 3 sites                                                                                                      | `Public/BonusController.php` (+ `Models/SpecialOffer.php`)                                                                                                                             |
 
 **Why behaviour is unchanged:** the scope emits byte-identical SQL, and the Phase 0 unit
 test proves it with `toRawSql()` per call site. **Deliberately NOT merged:**
@@ -373,14 +374,14 @@ style.
 
 ### 5.5 Smaller items
 
-| Item | Concern |
-|---|---|
+| Item                                                                            | Concern                                                                                                                                            |
+|---------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | `declare(strict_types=1)` in `config/*.php` and the 6 framework-stub migrations | Config values come from `env()` strings. Strict types could turn silent coercion into a `TypeError` at boot. Migrations must not be edited anyway. |
-| Observer registration → `#[ObservedBy]` | The provider comment says registration **order** is deliberate (ForumPost before ForumArticle). Attributes would hide that ordering. |
-| `Model::automaticallyEagerLoadRelationships()` | Same results, fewer queries, but changes memory and query patterns everywhere at once. |
-| `Public\CasinoReviewController::feed` eager-limit rewrite | See §2.4. The original author's explicit decision. |
-| DB-4 bulk reorder | See §2.3. (DB-2 was rejected; see §2.2.) |
-| Mailgun/SMTP **job** dedup | Send-path semantics differ; needs a design discussion, not a refactor. |
+| Observer registration → `#[ObservedBy]`                                         | The provider comment says registration **order** is deliberate (ForumPost before ForumArticle). Attributes would hide that ordering.               |
+| `Model::automaticallyEagerLoadRelationships()`                                  | Same results, fewer queries, but changes memory and query patterns everywhere at once.                                                             |
+| `Public\CasinoReviewController::feed` eager-limit rewrite                       | See §2.4. The original author's explicit decision.                                                                                                 |
+| DB-4 bulk reorder                                                               | See §2.3. (DB-2 was rejected; see §2.2.)                                                                                                           |
+| Mailgun/SMTP **job** dedup                                                      | Send-path semantics differ; needs a design discussion, not a refactor.                                                                             |
 
 ---
 
@@ -404,16 +405,16 @@ plan. They're listed so you can decide whether any is a bug.
 
 ## 8. Proposed execution order
 
-| Step | Module | Risk | Commit |
-|---|---|---|---|
-| 0 | Characterization tests + factories (§3) | — | `test: lock current behaviour of …` |
-| 1 | Bootstrap & providers (§4.1) | Low | `refactor(bootstrap): …` |
-| 2 | DB-1 index migration (§2.2) | Low | `perf(db): index casino_reviews for the public feed` |
-| 3 | Shared scopes + DB-3 (§4.2, §4.3) | Low | `refactor(queries): …` |
-| 4 | Form Requests, batches 1–5 (§4.4) | Medium | `refactor(validation): …` ×5 |
-| 5 | Receiver-campaign concern (§4.5) | Medium | `refactor(messaging): …` |
-| 6 | §5.1 site-key memoization | High | Only with explicit sign-off |
-| 7 | §4.6 service extraction | Med/High | Only with explicit sign-off |
+| Step | Module                                  | Risk     | Commit                                               |
+|------|-----------------------------------------|----------|------------------------------------------------------|
+| 0    | Characterization tests + factories (§3) | —        | `test: lock current behaviour of …`                  |
+| 1    | Bootstrap & providers (§4.1)            | Low      | `refactor(bootstrap): …`                             |
+| 2    | DB-1 index migration (§2.2)             | Low      | `perf(db): index casino_reviews for the public feed` |
+| 3    | Shared scopes + DB-3 (§4.2, §4.3)       | Low      | `refactor(queries): …`                               |
+| 4    | Form Requests, batches 1–5 (§4.4)       | Medium   | `refactor(validation): …` ×5                         |
+| 5    | Receiver-campaign concern (§4.5)        | Medium   | `refactor(messaging): …`                             |
+| 6    | §5.1 site-key memoization               | High     | Only with explicit sign-off                          |
+| 7    | §4.6 service extraction                 | Med/High | Only with explicit sign-off                          |
 
 **Please confirm:** (1) approve steps 0–5, (2) yes/no on §5.1, (3) the worker `--timeout`
 for §5.2, (4) test scaffolding (§5.3): decided, deleted, (5) DB-2 drop: decided, kept.
@@ -422,14 +423,14 @@ for §5.2, (4) test scaffolding (§5.3): decided, deleted, (5) DB-2 drop: decide
 
 ## 9. Execution log (2026-10-24)
 
-| Step | Result |
-|---|---|
-| 1 Bootstrap | Lazy-loading violations logged outside production. A full-suite run logged **zero** violations. |
-| 2 DB-1 | `casino_reviews_site_status_casino_pub_idx` migration; up/down verified on SQLite. **Not yet applied to the local MySQL** (needs your OK). |
-| 3 Scopes | 10 inline copies → `Casino::attachedToSite`, `SpecialOffer::casinoAttachedToSite`, `SpecialOffer::visibleInBonusArea`. SQL of 6,295 captured queries byte-identical. |
-| 3b DB-3 | Duplicate soft-delete predicate removed from 2 Eloquent builders; exactly 5 of 2,404 captured queries changed, each by that predicate only. |
-| 4 Form Requests | 33 inline write validations → 25 Form Requests. Excluded where a 404/503 precedes validation (§4.4). GET filters left inline. |
-| 5 Receiver concern | 5 endpoints × 2 channels share one concern; 16 responses byte-identical before/after. |
+| Step               | Result                                                                                                                                                               |
+|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 Bootstrap        | Lazy-loading violations logged outside production. A full-suite run logged **zero** violations.                                                                      |
+| 2 DB-1             | `casino_reviews_site_status_casino_pub_idx` migration; up/down verified on SQLite. Applied to the local MySQL (batch 93; confirmed in §10).                          |
+| 3 Scopes           | 10 inline copies → `Casino::attachedToSite`, `SpecialOffer::casinoAttachedToSite`, `SpecialOffer::visibleInBonusArea`. SQL of 6,295 captured queries byte-identical. |
+| 3b DB-3            | Duplicate soft-delete predicate removed from 2 Eloquent builders; exactly 5 of 2,404 captured queries changed, each by that predicate only.                          |
+| 4 Form Requests    | 33 inline write validations → 25 Form Requests. Excluded where a 404/503 precedes validation (§4.4). GET filters left inline.                                        |
+| 5 Receiver concern | 5 endpoints × 2 channels share one concern; 16 responses byte-identical before/after.                                                                                |
 | 7 Services | `WarmupRunService`, `Sms\BulkSmsRunService`, `PostVerificationPromotionTestSender`, `VerificationPromotionOverrideService`, `Forum\ForumModerationService`, `Forum\ForumAccountService`. Shared `QueuedRunOutcome`/`QueuedRunRefusal` + `RespondsWithQueuedRun` for the two lock-guarded runs. Controllers: Warmup 781→391, NewsletterPhone 490→441, VerificationPromotion 485→260, ForumModeration 493→367, ForumAuth 476→289 lines. |
 
 **Safety checks after every step:** `php -l` gate clean, full suite green (1,199 → 1,275 tests; 1,325 after step 7),
@@ -461,3 +462,118 @@ There is no `pint.json`, so Pint's default Laravel preset restyles each touched 
 (315 vs 43 occurrences). The changes are whitespace-only (`git diff -w` hides them), but they
 make diffs noisier. A `pint.json` with `concat_space: one` and `binary_operator_spaces: align`
 would stop the churn; that's a config change for you to decide.
+
+---
+
+## 10. Second audit pass (2026-10-24, uncommitted)
+
+An independent re-audit run after §9, to catch what the first pass missed. Same behaviour
+freeze, same scope (`backend/` only). Nothing here is committed: version control is left to you.
+
+### 10.1 Verified state before touching anything
+
+| Check                          | Result                                                                                                  |
+|--------------------------------|---------------------------------------------------------------------------------------------------------|
+| Plan log vs. git history       | Matches: every §9 step has its commit on `refactor/backend-plan`.                                       |
+| DB-1 on local MySQL            | **Already applied** (`migrate:status`: batch 93). §9 said "not yet applied"; corrected above.            |
+| Baseline suite                 | 1,325 tests / 4,546 assertions, green.                                                                   |
+| Suite → `laravel.log`?         | **No.** `phpunit.xml` sets `LOG_CHANNEL=null`; the log is unchanged since 2026-10-23 despite every run. |
+| Lazy loads hit by the suite    | 0 (`LOG_CHANNEL=stderr vendor/bin/phpunit \| grep 'Lazy loaded'`).                                      |
+| Inline write validation left   | None outside the documented 404-before-422 exclusions. The other 9 calls are GET listings or exports.   |
+
+### 10.2 Database re-audit: real query evidence, no new index needed
+
+§2 relied on static reading plus EXPLAIN. This pass also used MySQL's own statement digests
+(`performance_schema.events_statements_summary_by_digest`, server uptime ≈ 138 days), which
+record what the local admin and sites have **actually** run. (The Boost MCP server was not
+connected in this session, so I used read-only `mysql` queries.)
+
+| Query (from digests)                                                                                            | Finding                                                                                                                                                                                                                                                                                    |
+|-----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `promotion_email_histories … site_id=? AND status=? AND sent_date IN (…) AND created_at>? AND email IN (…)` (dedupe, 3,324 runs) | Index range scan on `promo_hist_site_date`, partition-pruned by `sent_date`. At volume `promo_hist_unique (site_id, email, sent_date, status)` serves the `email IN` lookup directly. **Covered.**                                                                                           |
+| Recipient streaming: `newsletters WHERE site_id=? AND NOT EXISTS (unsubscribes …) ORDER BY created_at DESC, id DESC LIMIT 2000` | Reverse index scan on `newsletters_site_id_created_at_index` (InnoDB appends `id`, so the tiebreak is free) plus a **single-row covering lookup** on `unsubscribes_site_id_email_type_unique`. **Optimal.**                                                                                 |
+| Date-ranged audience counts                                                                                      | Same anti-join, index-driven. A `COUNT` must visit every matching row; no index can avoid that.                                                                                                                                                                                             |
+| Catalog joins (`casino_category`, `casino_country`, `casino_site`) flagged "no index used"                       | Planner choice on **7 casinos**: a scan is cheaper than a lookup at this size. Both pivot directions are indexed (`PRIMARY (category_id, casino_id)` + `casino_id`; same for countries; `casino_site (site_id, active, position)` + unique `(casino_id, site_id)`).                     |
+| `*_id` columns not leading any index (8)                                                                         | All covered or never filtered on alone: morph pairs (`media`, `personal_access_tokens`, `search_index`, `forum_moderation_logs`), `forum_users.google_id` (in the unique `(site_id, google_id)`), `affiliate_clicks.special_offer_id` (in the daily unique), `unione_api_keys.project_id` and `receiver_daily_claims.credential_id` (never in a WHERE). |
+| `sys.schema_redundant_indexes`                                                                                   | One row: `casino_reviews_site_id_index`, which is DB-2, kept on purpose (§2.2).                                                                                                                                                                                                             |
+
+The `*_probe` digests (`nl_probe`, `w_probe`, …) are earlier load-test artefacts, not app queries.
+
+**Verdict: no index to add or drop.** Earlier tuning passes already cover every hot path. §2.5
+(production `sys` checks on a MySQL 8 snapshot) is still the right next step.
+
+### 10.3 Implemented in this pass (low risk; suite 1,325 → 1,328, all green)
+
+| Item                                                                                         | Files                                                                            | Why behaviour is unchanged                                                                                                                                                                                                                                                                                                                                                                       |
+|----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Discarded-attribute detection**, outside production only: `preventSilentlyDiscardingAttributes()` + a handler that logs | `app/Providers/AppServiceProvider.php`                                           | Read from the installed `Model::fill()` (13.38): with a handler registered, Eloquent calls it **instead of** throwing, including for **totally guarded** models. The handler therefore **rethrows** the same `MassAssignmentException` when `$model->totallyGuarded()`, so that path is identical; otherwise it only logs, and the key is still dropped exactly as before. Nothing else in the framework reads the flag. Production registers nothing. |
+| Tests pinning the guard                                                                     | `tests/Feature/DiscardedAttributeGuardTest.php` (3 tests)                        | Dropped key stays dropped and is logged; a totally guarded model still throws (this test fails if the rethrow is removed); a clean payload logs nothing.                                                                                                                                                                                                                                       |
+| `declare(strict_types=1)`                                                                    | `routes/web.php`, `routes/console.php`                                          | Every call in both files already passes correctly typed scalars. `schedule:list` shows the same 11 entries and `route:list` the same 344 routes after the change.                                                                                                                                                                                                                               |
+| Stranded comment moved                                                                       | `routes/console.php`                                                             | "Provision upcoming monthly partitions…" sat above the Mailgun block; it now sits on `promotions:manage-history-partitions`. Comment only.                                                                                                                                                                                                                                                      |
+| Doc note                                                                                     | `CLAUDE.md` (backend)                                                            | Documents the new log line next to the lazy-loading one.                                                                                                                                                                                                                                                                                                                                         |
+
+Gates run: `php -l` over `app routes database config tests` clean, full suite green, route
+table unchanged (344), schedule unchanged.
+
+### 10.4 What the new guard found on its first run
+
+Full suite with `LOG_CHANNEL=stderr`:
+
+| Model           | Dropped keys              | Source                                                   | Verdict                                                                                                                                                       |
+|-----------------|---------------------------|----------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ForumReport`   | `reporter_ip`, `status`   | **Production:** `Public\ForumPostController::report()`   | **Bug: fixed, see 10.5 #1.**                                                                                                                                  |
+| `Country` ×31, `Continent` ×17, `BonusCategory` ×8 | `slug`        | Test fixtures                                            | By design: slugs are generated from the name and never accepted (the admin Form Requests don't take one). The fixtures pass a slug that happens to equal the generated one. |
+| `WarmupSend`    | `status`                  | Fixture in `DeleteWarmupEmailsCommandTest`               | The column doesn't exist on `warmup_sends`; the fixture key is dead. Harmless; could be deleted from the test.                                               |
+
+### 10.5 Needs review: found in this pass, NOT changed (behaviour freeze)
+
+1. **[FIXED 2026-10-24 on your request]** **Forum reports never stored the reporter IP, and a re-report never reopened.**
+   `ForumPostController::report()` passes `reporter_ip` and `status` to `updateOrCreate()`, but
+   `ForumReport::$fillable` has neither, so both are silently dropped. Effects: every report is
+   stored with `reporter_ip = NULL`, so the abuse signal the column exists for is lost; and when the
+   same reporter re-reports a post whose report was dismissed or actioned, the row stays closed
+   instead of returning to `open` (on first insert the DB default `open` hides this). **Fix if
+   wanted:** add both to `$fillable` (`reporter_ip` is already `$hidden`). That is a behaviour
+   change, so it's yours to approve. Needs a test for both effects first.
+   **Done:** both columns added to `ForumReport::$fillable`. Two tests in `ForumPublicApiTest`
+   (`test_a_report_stores_the_reporter_ip_packed`, `test_reporting_again_after_a_dismissal_reopens_the_report`)
+   were written first and failed against the old code for exactly these two reasons. Suite 1,330 green; the guard no longer
+   reports `ForumReport`. Safe because the only mass-assignment writer is that endpoint, where both values are
+   server-chosen; moderation updates reports via the query builder, which never consults `$fillable`.
+   **Follow-up, also on your request:** a re-report now also clears `handled_by` / `handled_at`, so a reopened
+   report no longer names the moderator who closed it. Both columns were added to `$fillable` too, or `fill()` would
+   have dropped the nulls silently. `test_reporting_again_after_a_dismissal_reopens_the_report` failed first (old
+   moderator id and timestamp kept), then passed. On a first report nothing changes: both columns are NULL anyway.
+2. **All guest reports on one post collapse into one row.** Same method: the `updateOrCreate` key is
+   `(forum_post_id, forum_user_id)`, and for guests `forum_user_id` is NULL, so the second guest's
+   report overwrites the first one's reason and note. The comment only describes the member case.
+   Intended or not is a product decision.
+3. **`forum:rescore` comment vs. code.** The comment says "every ten minutes"; the code is
+   `->hourly()`. I changed neither: one of them is wrong, and which is a product call.
+4. **[DONE 2026-10-25 on your request]** **Job `$timeout` declarations (refines §5.2).** Four jobs declared none:
+   `ProcessNewsletterSubscription`, `SendNewsletterWelcomeEmail`, `SendVerificationPromotionJob`,
+   `SendRegistrationPromotionJob`. Declaring `$timeout = 60` matches production's worker default, but
+   **it is not a no-op locally**: `composer dev` runs `queue:listen --timeout=0` (unbounded), and a
+   job-level `$timeout` overrides the worker's. Recommended anyway, for the project rule, but
+   flagged because it changes dev behaviour.
+   **Done:** `public int $timeout = 60;` on all four, so every queued job now declares one. Checked first that
+   60 s is enough: each job is one send; the address lock in the two promotion jobs is a non-blocking `get()` held
+   for 180 s (`SEND_LOCK_SECONDS`), so a timed-out send can't outlive its lock; the SendGrid validation call is
+   capped at 3 s. Pinned by `tests/Feature/JobTimeoutTest.php` against the **redis** `retry_after` (1200). The
+   existing `ForumAccountMailTest` check reads `queue.default`, which is `sync` in tests, so it compares against its
+   90 s fallback. Suite 1,331 green. Locally under `queue:listen --timeout=0`, these four jobs are now killed after
+   60 s instead of running unbounded.
+5. **Mailgun/SendGrid credential-test service: decided, keep as is.** Re-read both `test()` methods.
+   They have diverged in substance: site resolution (picked vs. first active), a Mailgun-only
+   connection-test branch, a Mailgun-only 422, and different log keys. A shared service would need a
+   hook for each of those, which makes it a redesign rather than a move. Closes the open item in §4.6.
+
+### 10.6 Remaining roadmap (all optional, in order of value)
+
+| # | Item                                                                     | Risk   | Gate                                               |
+|---|--------------------------------------------------------------------------|--------|----------------------------------------------------|
+| 1 | ~~Decide 10.5 #1 (forum report fillable)~~ **done**                      | Low    | Approved and fixed 2026-10-24                      |
+| 2 | §2.5 production `sys` checks on a MySQL 8 snapshot                       | None   | Read-only, needs prod access                       |
+| 3 | ~~10.5 #4 job timeouts~~ **done**                                        | Low    | Approved and done 2026-10-25                       |
+| 4 | `pint.json` matching house style (§9 tooling note)                       | None   | Your decision                                      |
+| 5 | Drop the dead `status` key from the `DeleteWarmupEmailsCommandTest` fixture | None | Test-only tidy                                     |

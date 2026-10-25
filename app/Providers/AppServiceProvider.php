@@ -30,6 +30,7 @@ use App\Services\Mail\Transport\MailgunApiTransport;
 use App\Services\Mail\Transport\SendgridClickTrackingClient;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Eloquent\MassAssignmentException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Facades\Gate;
@@ -63,6 +64,31 @@ class AppServiceProvider extends ServiceProvider
         Model::handleLazyLoadingViolationUsing(static function (Model $model, string $relation): void {
             Log::warning('Lazy loaded ['.$relation.'] on ['.$model::class.'].');
         });
+
+        /*
+         * Silently-discarded attribute DETECTION, outside production only.
+         *
+         * `fill()` drops any key missing from `$fillable` without a word, which
+         * is how a UniOne key rotation once kept its old verification: the reset
+         * went through fill() and both columns were quietly thrown away. This
+         * logs the dropped keys instead, and the attributes are still dropped,
+         * exactly as before.
+         *
+         * The rethrow is load-bearing. Once a handler is registered, Eloquent
+         * calls it INSTEAD of throwing for a totally guarded model too, so
+         * without it that MassAssignmentException would turn into a silent
+         * discard. Rethrowing keeps that path byte-identical.
+         */
+        if (! $this->app->isProduction()) {
+            Model::preventSilentlyDiscardingAttributes();
+            Model::handleDiscardedAttributeViolationUsing(static function (Model $model, array $keys, MassAssignmentException $exception): void {
+                if ($model->totallyGuarded()) {
+                    throw $exception;
+                }
+
+                Log::warning('Discarded non-fillable ['.implode(', ', $keys).'] on ['.$model::class.'].');
+            });
+        }
 
         /*
          * Forum posting.

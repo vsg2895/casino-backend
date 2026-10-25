@@ -1,0 +1,25 @@
+{
+    "agents": [
+        "claude_code"
+    ],
+    "cloud": true,
+    "guidelines": true,
+    "mcp": true,
+    "nightwatch": false,
+    "packages": [
+        "spatie/laravel-medialibrary",
+        "spatie/laravel-permission",
+        "spatie/laravel-sluggable"
+    ],
+    "sail": false,
+    "skills": [
+        "infer-conventions",
+        "deploying-to-cloud",
+        "laravel-best-practices",
+        "testing-best-practices",
+        "tailwindcss-development",
+        "medialibrary-development",
+        "laravel-permission-development",
+        "sluggable-development"
+    ]
+}

@@ -41,6 +41,12 @@ class SendNewsletterWelcomeEmail implements ShouldQueue
     /** Priority queue this job runs on (worker: --queue=high,low). */
     public const string ON_QUEUE = 'high';
 
+    /**
+     * Below the queue's retry_after (1200 s). 60 is the worker default production
+     * already applied; declared so the job no longer depends on worker flags.
+     */
+    public int $timeout = 60;
+
     public function __construct(
         public readonly int $siteId,
         public readonly string $email,
