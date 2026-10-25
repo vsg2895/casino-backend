@@ -5,13 +5,19 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\UniOne;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\UniOne\BulkUniOneReceiversRequest;
+use App\Http\Requests\UniOne\ImportUniOneReceiversRequest;
+use App\Http\Requests\UniOne\StoreUniOneReceiverRequest;
+use App\Http\Requests\UniOne\UpdateUniOneReceiverRequest;
 use App\Http\Resources\UniOne\UniOneReceiverResource;
 use App\Models\UniOne\UniOneReceiver;
 use App\Services\UniOne\UniOneReceiverImportService;
 use App\Support\DayWindow;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -33,9 +39,9 @@ class UniOneReceiverController extends Controller
             'data' => UniOneReceiverResource::collection($receivers->items())->resolve(),
             'meta' => [
                 'current_page' => $receivers->currentPage(),
-                'last_page'    => $receivers->lastPage(),
-                'total'        => $receivers->total(),
-                'per_page'     => $receivers->perPage(),
+                'last_page' => $receivers->lastPage(),
+                'total' => $receivers->total(),
+                'per_page' => $receivers->perPage(),
             ],
         ]);
     }
@@ -79,7 +85,7 @@ class UniOneReceiverController extends Controller
 
         return response()->json([
             'data' => [
-                'total'     => (int) array_sum($byStatus->all()),
+                'total' => (int) array_sum($byStatus->all()),
                 'by_status' => $byStatus->map(static fn ($v): int => (int) $v),
                 // Also within the filtered set, so "never sent" agrees with the
                 // rows the table is showing rather than with the whole list.
@@ -89,16 +95,16 @@ class UniOneReceiverController extends Controller
         ]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreUniOneReceiverRequest $request): JsonResponse
     {
-        $receiver = UniOneReceiver::query()->create($this->validated($request, null));
+        $receiver = UniOneReceiver::query()->create($request->validated());
 
         return (new UniOneReceiverResource($receiver))->response()->setStatusCode(Response::HTTP_CREATED);
     }
 
-    public function update(Request $request, UniOneReceiver $uniOneReceiver): UniOneReceiverResource
+    public function update(UpdateUniOneReceiverRequest $request, UniOneReceiver $uniOneReceiver): UniOneReceiverResource
     {
-        $uniOneReceiver->fill($this->validated($request, $uniOneReceiver))->save();
+        $uniOneReceiver->fill($request->validated())->save();
 
         return new UniOneReceiverResource($uniOneReceiver->refresh());
     }
@@ -111,22 +117,17 @@ class UniOneReceiverController extends Controller
     }
 
     /** Bulk suppress / delete / set status. */
-    public function bulk(Request $request): JsonResponse
+    public function bulk(BulkUniOneReceiversRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'ids'    => ['required', 'array', 'min:1', 'max:5000'],
-            'ids.*'  => ['integer'],
-            'action' => ['required', Rule::in(['suppress', 'delete', 'status'])],
-            'status' => ['required_if:action,status', Rule::in(UniOneReceiver::STATUSES)],
-        ]);
+        $data = $request->validated();
 
         $affected = DB::transaction(function () use ($data): int {
             $query = UniOneReceiver::query()->whereIn('id', $data['ids']);
 
             return match ($data['action']) {
                 'suppress' => $query->update(['status' => UniOneReceiver::STATUS_SUPPRESSED]),
-                'delete'   => $query->delete(),
-                'status'   => $query->update(['status' => $data['status']]),
+                'delete' => $query->delete(),
+                'status' => $query->update(['status' => $data['status']]),
             };
         });
 
@@ -140,13 +141,8 @@ class UniOneReceiverController extends Controller
      * summary of rows/imported/duplicates/invalid. Warmup's own import is
      * untouched; this is new code over the shared spreadsheet reader.
      */
-    public function import(Request $request, UniOneReceiverImportService $importer): JsonResponse
+    public function import(ImportUniOneReceiversRequest $request, UniOneReceiverImportService $importer): JsonResponse
     {
-        $data = $request->validate([
-            // 20 MB matches the warmup import's ceiling; xlsx of this size is
-            // already hundreds of thousands of rows.
-            'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:20480'],
-        ]);
 
         $file = $request->file('file');
 
@@ -156,13 +152,13 @@ class UniOneReceiverController extends Controller
                 strtolower((string) $file->getClientOriginalExtension()),
             );
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('UniOne receiver import failed', [
+            Log::error('UniOne receiver import failed', [
                 'filename' => $file->getClientOriginalName(),
-                'error'    => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
-                'ok'      => false,
+                'ok' => false,
                 'message' => 'The file could not be read. Check that it is a valid .xlsx or .csv with an Email column.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
@@ -207,19 +203,19 @@ class UniOneReceiverController extends Controller
             });
 
             fclose($out);
-        }, 'unione-receivers-' . now()->format('Y-m-d') . '.csv', ['Content-Type' => 'text/csv']);
+        }, 'unione-receivers-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv']);
     }
 
     /** @return array<string, mixed> */
     private function filters(Request $request): array
     {
         return $request->validate([
-            'status'         => ['nullable', Rule::in(UniOneReceiver::STATUSES)],
+            'status' => ['nullable', Rule::in(UniOneReceiver::STATUSES)],
             'consent_source' => ['nullable', 'string', 'max:120'],
-            'from'           => ['nullable', 'date'],
-            'to'             => ['nullable', 'date', 'after_or_equal:from'],
-            'search'         => ['nullable', 'string', 'max:160'],
-            'per_page'       => ['nullable', 'integer', 'min:5', 'max:200'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'search' => ['nullable', 'string', 'max:160'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:200'],
 
             /*
              * The operator's OWN timezone, sent by the browser.
@@ -246,9 +242,9 @@ class UniOneReceiverController extends Controller
             // the pair below narrows the ones that have. Separate from
             // from/to above, which filter on when the address was ADDED —
             // conflating the two is the obvious trap on this screen.
-            'sent'      => ['nullable', Rule::in(['never', 'ever'])],
+            'sent' => ['nullable', Rule::in(['never', 'ever'])],
             'sent_from' => ['nullable', 'date'],
-            'sent_to'   => ['nullable', 'date', 'after_or_equal:sent_from'],
+            'sent_to' => ['nullable', 'date', 'after_or_equal:sent_from'],
             'last_status' => ['nullable', 'string', 'max:60'],
 
             // ── the "Counts" column ─────────────────────────────────────────
@@ -256,14 +252,14 @@ class UniOneReceiverController extends Controller
             // the other two counters the column displays.
             'min_sends' => ['nullable', 'integer', 'min:0', 'max:1000000'],
             'max_sends' => ['nullable', 'integer', 'min:0', 'max:1000000', 'gte:min_sends'],
-            'issues'    => ['nullable', Rule::in(['bounced', 'complained', 'clean'])],
+            'issues' => ['nullable', Rule::in(['bounced', 'complained', 'clean'])],
         ]);
     }
 
     /** @param array<string, mixed> $filters */
-    private function filtered(array $filters): \Illuminate\Database\Eloquent\Builder
+    private function filtered(array $filters): Builder
     {
-        $sent   = $filters['sent'] ?? null;
+        $sent = $filters['sent'] ?? null;
         $issues = $filters['issues'] ?? null;
 
         // A last-sent WINDOW only describes rows that have a last-sent date.
@@ -280,9 +276,9 @@ class UniOneReceiverController extends Controller
         $tz = $filters['tz'] ?? null;
 
         $addedFrom = DayWindow::startUtc($filters['from'] ?? null, $tz);
-        $addedTo   = DayWindow::endUtc($filters['to'] ?? null, $tz);
-        $sentFrom  = $window ? DayWindow::startUtc($filters['sent_from'] ?? null, $tz) : null;
-        $sentTo    = $window ? DayWindow::endUtc($filters['sent_to'] ?? null, $tz) : null;
+        $addedTo = DayWindow::endUtc($filters['to'] ?? null, $tz);
+        $sentFrom = $window ? DayWindow::startUtc($filters['sent_from'] ?? null, $tz) : null;
+        $sentTo = $window ? DayWindow::endUtc($filters['sent_to'] ?? null, $tz) : null;
 
         return UniOneReceiver::query()
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
@@ -304,24 +300,5 @@ class UniOneReceiverController extends Controller
             ->when($issues === 'complained', fn ($q) => $q->where('complaint_count', '>', 0))
             ->when($issues === 'clean', fn ($q) => $q->where('bounce_count', 0)->where('complaint_count', 0))
             ->search($filters['search'] ?? null);
-    }
-
-    /** @return array<string, mixed> */
-    private function validated(Request $request, ?UniOneReceiver $existing): array
-    {
-        return $request->validate([
-            'email' => [
-                'required', 'email', 'max:255',
-                Rule::unique('unione_receivers', 'email')->ignore($existing?->id)->whereNull('deleted_at'),
-            ],
-            'name'   => ['nullable', 'string', 'max:160'],
-            'status' => ['sometimes', Rule::in(UniOneReceiver::STATUSES)],
-            // Optional metadata now. Kept on the editor so an operator who DOES
-            // have a consent record can still put it on the row — the send path
-            // no longer requires it.
-            'consent_source' => ['nullable', 'string', 'max:120'],
-            'consent_at'     => ['nullable', 'date', 'before_or_equal:now'],
-            'notes'  => ['nullable', 'string', 'max:2000'],
-        ]);
     }
 }

@@ -4,25 +4,25 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\ManagesReceiverCampaign;
 use App\Http\Controllers\Concerns\ResolvesTestSubscriber;
+use App\Http\Controllers\Concerns\SendsAdminTestEmail;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\PreviewReceiverMessageRequest;
 use App\Http\Requests\Admin\SendMailgunKeyTestRequest;
 use App\Http\Requests\Admin\StoreMailgunKeyRequest;
 use App\Http\Requests\Admin\UpdateMailgunKeyRequest;
 use App\Http\Requests\Admin\UpdateMailgunReceiverSettingsRequest;
 use App\Http\Resources\MailgunKeyResource;
-use App\Http\Resources\MailgunReceiverResource;
 use App\Jobs\SendMailgunReceiverCampaignJob;
 use App\Mail\MailgunCredentialTestMail;
 use App\Models\EmailSchedule;
-use App\Models\Newsletter;
 use App\Models\MailgunKey;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\MailgunReceiverSelector;
-use App\Support\Mail\MailgunReceiverTemplate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -47,7 +47,7 @@ use Throwable;
  */
 class MailgunKeyController extends Controller
 {
-    use ResolvesTestSubscriber;
+    use ManagesReceiverCampaign, ResolvesTestSubscriber;
 
     /**
      * This screen's own connection-test template.
@@ -107,8 +107,8 @@ class MailgunKeyController extends Controller
 
         if ($blockers !== []) {
             return response()->json([
-                'message' => 'This credential is still in use by ' . implode(' and ', $blockers)
-                    . '. Point those at another credential first.',
+                'message' => 'This credential is still in use by '.implode(' and ', $blockers)
+                    .'. Point those at another credential first.',
             ], Response::HTTP_CONFLICT);
         }
 
@@ -128,7 +128,7 @@ class MailgunKeyController extends Controller
 
         $schedules = EmailSchedule::query()->where('mailgun_key_id', $mailgunKey->id)->pluck('name');
         if ($schedules->isNotEmpty()) {
-            $blockers[] = 'schedule "' . $schedules->implode('", "') . '"';
+            $blockers[] = 'schedule "'.$schedules->implode('", "').'"';
         }
 
         $verification = VerificationPromotionEmail::query()
@@ -149,7 +149,7 @@ class MailgunKeyController extends Controller
      * content a live send would produce — not placeholder text.
      *
      * Unlike the per-site test buttons (which always use the .env SMTP mailer,
-     * see {@see \App\Http\Controllers\Concerns\SendsAdminTestEmail}), this one
+     * see {@see SendsAdminTestEmail}), this one
      * must authenticate with the key under test — that is the whole point — so
      * it builds the per-credential Mailgun transport instead.
      *
@@ -184,7 +184,7 @@ class MailgunKeyController extends Controller
 
         if ($site === null) {
             return response()->json([
-                'ok'      => false,
+                'ok' => false,
                 'message' => 'No website is registered yet, so there is no template content to render.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
@@ -209,20 +209,20 @@ class MailgunKeyController extends Controller
         } catch (Throwable $e) {
             Log::warning('Mailgun key test failed', [
                 'mailgun_key_id' => $mailgunKey->id,
-                'site_id'         => $site->id,
-                'template'        => $type,
-                'to'              => $to,
-                'error'           => $e->getMessage(),
+                'site_id' => $site->id,
+                'template' => $type,
+                'to' => $to,
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
-                'ok'      => false,
-                'message' => 'Key test failed: ' . $e->getMessage(),
+                'ok' => false,
+                'message' => 'Key test failed: '.$e->getMessage(),
             ], Response::HTTP_BAD_GATEWAY);
         }
 
         return response()->json([
-            'ok'      => true,
+            'ok' => true,
             'message' => sprintf(
                 '%s template for %s sent to %s using "%s".',
                 $catalog->label($type),
@@ -259,18 +259,18 @@ class MailgunKeyController extends Controller
         } catch (Throwable $e) {
             Log::warning('Mailgun connection test failed', [
                 'mailgun_key_id' => $mailgunKey->id,
-                'to'             => $to,
-                'error'          => $e->getMessage(),
+                'to' => $to,
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
-                'ok'      => false,
-                'message' => 'Connection test failed: ' . $e->getMessage(),
+                'ok' => false,
+                'message' => 'Connection test failed: '.$e->getMessage(),
             ], Response::HTTP_BAD_GATEWAY);
         }
 
         return response()->json([
-            'ok'      => true,
+            'ok' => true,
             'message' => sprintf('Connection test sent to %s using "%s".', $to, $mailgunKey->name),
         ]);
     }
@@ -283,133 +283,44 @@ class MailgunKeyController extends Controller
      */
     public function receiverSettings(MailgunKey $mailgunKey, MailgunReceiverSelector $selector): JsonResponse
     {
-        $seed = $this->templateSeed();
-
-        return response()->json(['data' => [
-            'send_enabled'    => (bool) $mailgunKey->send_enabled,
-            'batch_size'      => (int) $mailgunKey->batch_size,
-            'selection_order' => (string) $mailgunKey->selection_order,
-            'cooldown_days'   => $mailgunKey->cooldown_days === null ? null : (int) $mailgunKey->cooldown_days,
-            // Which source lists this credential may mail; [] means all of them.
-            'receiver_sources' => $mailgunKey->campaignSourceLabels(),
-            'message_subject' => $mailgunKey->message_subject ?? $seed['subject'],
-            // The authored fields. A credential that has never been configured
-            // opens on the source site's promotion template rather than a blank
-            // form; one that HAS been configured gets exactly what was saved, so
-            // the seed can never overwrite authored copy. `message_html` is the
-            // rendered output and is NOT returned — nothing in the admin edits
-            // it directly any more.
-            'message_template' => $mailgunKey->message_template === null
-                ? $seed['template']
-                : MailgunReceiverTemplate::merged($mailgunKey->message_template),
-            // Named so the modal can say where the starting copy came from.
-            'template_source' => $seed['site_name'],
-            'last_run_at'     => $mailgunKey->last_run_at,
-            'eligible_count'  => $selector->eligible($mailgunKey),
-            'next_batch_count' => $selector->batchCount($mailgunKey),
-            'blocked_reason'  => SendMailgunReceiverCampaignJob::blockedReason($mailgunKey),
-        ]]);
+        return $this->receiverSettingsResponse(
+            $mailgunKey,
+            $selector,
+            SendMailgunReceiverCampaignJob::blockedReason(...),
+            ['send_enabled' => (bool) $mailgunKey->send_enabled],
+        );
     }
 
-    /**
-     * Save the targeting rule and message for this credential.
-     *
-     * `message_html` is rendered here rather than accepted from the client: the
-     * admin authors fields, the server owns the markup. That is what keeps the
-     * layout consistent across credentials and keeps arbitrary HTML — pasted,
-     * malformed or hostile — out of a 100k-recipient send.
-     */
+    /** Save the targeting rule and message for this credential. */
     public function updateReceiverSettings(
         UpdateMailgunReceiverSettingsRequest $request,
         MailgunKey $mailgunKey,
         MailgunReceiverSelector $selector,
     ): JsonResponse {
-        $validated = $request->validated();
-        $template = MailgunReceiverTemplate::merged($validated['message_template'] ?? null);
-
-        $mailgunKey->update([
-            ...$validated,
-            'message_template' => $template,
-            // An empty template stores an empty body, so blockedReason() reports
-            // "no message is configured" instead of the credential shipping a
-            // bare shell with nothing but an unsubscribe link in it.
-            'message_html'     => MailgunReceiverTemplate::isEmpty($template)
-                ? null
-                : MailgunReceiverTemplate::render($template),
-        ]);
-
-        return response()->json(['data' => [
-            'eligible_count'   => $selector->eligible($mailgunKey),
-            'next_batch_count' => $selector->batchCount($mailgunKey),
-            'blocked_reason'   => SendMailgunReceiverCampaignJob::blockedReason($mailgunKey->fresh()),
-        ]]);
+        return $this->saveReceiverSettings(
+            $request->validated(),
+            $mailgunKey,
+            $selector,
+            SendMailgunReceiverCampaignJob::blockedReason(...),
+        );
     }
 
-    /**
-     * Re-seed the form from the source site's promotion template.
-     *
-     * Separate from {@see receiverSettings()} because that one must NEVER
-     * overwrite authored copy, while this is the admin explicitly asking for it.
-     * Returns the fields only — nothing is written until they save.
-     */
+    /** Re-seed the form from the source site's promotion template. */
     public function receiverTemplateSource(MailgunKey $mailgunKey): JsonResponse
     {
-        return response()->json(['data' => $this->templateSeed()]);
+        return $this->receiverTemplateSourceResponse();
     }
 
-    /**
-     * The promotion template the receiver form starts from.
-     *
-     * Falls back to a blank template when there is no site to read one from — a
-     * fresh install, or every site deleted — so the modal still opens.
-     *
-     * @return array{subject: string, template: array<string, mixed>, site_name: string|null}
-     */
-    private function templateSeed(): array
+    /** Render the message as it would be sent, from unsaved fields. */
+    public function previewReceiverMessage(PreviewReceiverMessageRequest $request, MailgunKey $mailgunKey): JsonResponse
     {
-        return MailgunReceiverTemplate::seed();
+        return $this->receiverMessagePreviewResponse($request->validated());
     }
 
-    /**
-     * Render the message as it would be sent, from unsaved fields.
-     *
-     * Goes through the same renderer and the same wrapper as a real send — the
-     * unsubscribe block included — so what the admin approves in the preview is
-     * what the list receives. Only the unsubscribe destination differs: a preview
-     * has no receiver, so there is no token to address.
-     */
-    public function previewReceiverMessage(Request $request, MailgunKey $mailgunKey): JsonResponse
-    {
-        $validated = $request->validate(MailgunReceiverTemplate::rules());
-        $template = MailgunReceiverTemplate::merged($validated['message_template'] ?? null);
-
-        $html = view('mail.mailgun-receiver-message', [
-            'bodyHtml'        => MailgunReceiverTemplate::render($template),
-            'unsubscribeUrl'  => '#',
-            'backgroundColor' => $template['background_color'],
-            'mutedColor'      => $template['muted_text_color'],
-            'accentColor'     => $template['accent_color'],
-            'unsubscribeLabel' => $template['unsubscribe_label'],
-        ])->render();
-
-        return response()->json(['html' => $html]);
-    }
-
-    /**
-     * The exact receivers the next run would take.
-     *
-     * Resolved through the shared selector, so this listing and the send cannot
-     * disagree — the guarantee the brief asks for.
-     */
+    /** The exact receivers the next run would take. */
     public function previewReceiverBatch(MailgunKey $mailgunKey, MailgunReceiverSelector $selector): JsonResponse
     {
-        return response()->json([
-            'data' => MailgunReceiverResource::collection($selector->preview($mailgunKey, 100)),
-            'meta' => [
-                'eligible_count'   => $selector->eligible($mailgunKey),
-                'next_batch_count' => $selector->batchCount($mailgunKey),
-            ],
-        ]);
+        return $this->receiverBatchPreviewResponse($mailgunKey, $selector);
     }
 
     /**
@@ -423,7 +334,7 @@ class MailgunKeyController extends Controller
         $reason = SendMailgunReceiverCampaignJob::blockedReason($mailgunKey);
 
         if ($reason !== null) {
-            return response()->json(['ok' => false, 'message' => ucfirst($reason) . '.'], Response::HTTP_CONFLICT);
+            return response()->json(['ok' => false, 'message' => ucfirst($reason).'.'], Response::HTTP_CONFLICT);
         }
 
         SendMailgunReceiverCampaignJob::dispatch($mailgunKey->id);

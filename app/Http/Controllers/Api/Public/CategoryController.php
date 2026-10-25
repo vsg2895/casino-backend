@@ -12,6 +12,7 @@ use App\Models\Category;
 use App\Models\Country;
 use App\Models\Site;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 
 class CategoryController extends Controller
@@ -54,35 +55,33 @@ class CategoryController extends Controller
         $data = SiteCache::remember(
             $site->id,
             ['categories', 'casinos'],
-            'categories:index:site:' . $site->id . ':country:' . ($country ?? 'all'),
+            'categories:index:site:'.$site->id.':country:'.($country ?? 'all'),
             3600,
             function () use ($site, $country) {
-            // Country ids this filter means: the chosen country AND the
-            // Worldwide wildcard. Resolved once, outside the closure, so the
-            // lookup is not repeated for the existence check and the count.
-            $countryIds = $country === null ? null : Country::publicFilterIds($country);
+                // Country ids this filter means: the chosen country AND the
+                // Worldwide wildcard. Resolved once, outside the closure, so the
+                // lookup is not repeated for the existence check and the count.
+                $countryIds = $country === null ? null : Country::publicFilterIds($country);
 
-            // Only categories that have at least one active casino attached to THIS site,
-            // ordered by priority (sort_order), each with a per-site casino count.
-            $attachedToSite = function ($query) use ($site, $countryIds): void {
-                $query->where('casinos.active', true)
-                    ->whereHas('sites', function ($s) use ($site): void {
-                        $s->where('sites.id', $site->id)->where('casino_site.active', true);
-                    });
+                // Only categories that have at least one active casino attached to THIS site,
+                // ordered by priority (sort_order), each with a per-site casino count.
+                $attachedToSite = function ($query) use ($site, $countryIds): void {
+                    $query->where('casinos.active', true)
+                        ->attachedToSite($site->id);
 
-                // Same predicate drives BOTH the "which categories exist" filter
-                // and the count, so a category can never appear with a count of
-                // zero for the selected country.
-                if ($countryIds !== null) {
-                    self::scopeToCountries($query, $countryIds);
-                }
-            };
+                    // Same predicate drives BOTH the "which categories exist" filter
+                    // and the count, so a category can never appear with a count of
+                    // zero for the selected country.
+                    if ($countryIds !== null) {
+                        self::scopeToCountries($query, $countryIds);
+                    }
+                };
 
-            $categories = Category::query()
-                ->whereHas('casinos', $attachedToSite)
-                ->withCount(['casinos as casinos_count' => $attachedToSite])
-                ->ordered()
-                ->get();
+                $categories = Category::query()
+                    ->whereHas('casinos', $attachedToSite)
+                    ->withCount(['casinos as casinos_count' => $attachedToSite])
+                    ->ordered()
+                    ->get();
 
                 return CategoryResource::collection($categories)->resolve();
             },
@@ -136,8 +135,8 @@ class CategoryController extends Controller
             ['categories', 'casinos'],
             // per_page is part of the key: two callers asking for different
             // page sizes must not be served each other's slice.
-            'categories:show:site:' . $site->id . ':slug:' . $slug . ':page:' . $page
-                . ':per:' . $perPage . ':country:' . ($country ?? 'all'),
+            'categories:show:site:'.$site->id.':slug:'.$slug.':page:'.$page
+                .':per:'.$perPage.':country:'.($country ?? 'all'),
             3600,
             function () use ($site, $slug, $page, $perPage, $country) {
                 $category = Category::where('slug', $slug)->firstOrFail();
@@ -159,26 +158,26 @@ class CategoryController extends Controller
                     ])
                     ->paginate($perPage, ['*'], 'page', $page);
 
-                // `featuredSpecialOffer` is visibility-gated here for the same
-                // reason it is in Public\CasinoController: switching an offer off
-                // must remove its card from EVERY public surface, and an
-                // unconstrained load would keep serving the hidden offer on this
-                // catalog while the casino page correctly dropped it.
+                // `featuredSpecialOffer` is gated here exactly as it is in
+                // Public\CasinoController — switched on AND claimable: switching
+                // an offer off, or letting it expire, must remove its card from
+                // EVERY public surface, and a looser load would keep serving it
+                // on this catalog while the casino page correctly dropped it.
                 $paginator->getCollection()->load([
                     'categories',
-                    'featuredSpecialOffer' => fn ($query) => $query->where('active', true),
+                    'featuredSpecialOffer' => fn ($query) => $query->where('active', true)->claimable(),
                     // The listing card shows where each casino accepts players.
                     ...Casino::publicCountriesEagerLoad(),
                 ]);
 
                 return [
                     'category' => (new CategoryResource($category))->resolve(),
-                    'casinos'  => CasinoWithAttachmentResource::collection($paginator->getCollection())->resolve(),
-                    'meta'     => [
+                    'casinos' => CasinoWithAttachmentResource::collection($paginator->getCollection())->resolve(),
+                    'meta' => [
                         'current_page' => $paginator->currentPage(),
-                        'last_page'    => $paginator->lastPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
                     ],
                 ];
             },
@@ -197,14 +196,14 @@ class CategoryController extends Controller
      *    the filter now always carries at least two ids (the country and the
      *    Worldwide wildcard), so that duplication would corrupt the ordering and
      *    the pagination totals of the listing;
-     *  - it is the same construction {@see \App\Http\Controllers\Api\Public\CountryController}
+     *  - it is the same construction {@see CountryController}
      *    uses, which is what guarantees a chip count here and a country card
      *    there are computed from one definition of "in this country".
      *
      * An empty id list matches nothing, which is how an unknown `?country=` has
      * always behaved.
      *
-     * @param  \Illuminate\Database\Eloquent\Builder<Casino>  $query
+     * @param  Builder<Casino>  $query
      * @param  list<int>  $countryIds
      */
     private static function scopeToCountries($query, array $countryIds): void

@@ -9,6 +9,7 @@ use App\Http\Resources\SpecialOfferResource;
 use App\Models\Site;
 use App\Models\SpecialOffer;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -26,9 +27,9 @@ class SpecialOfferController extends Controller
         $limit = $request->integer('limit');
         $limit = $limit > 0 ? min($limit, 50) : null;
 
-        $cacheKey = 'special-offers:index:site:' . $site->id
-            . ':cat:' . ($category ?? 'all')
-            . ':limit:' . ($limit ?? 'all');
+        $cacheKey = 'special-offers:index:site:'.$site->id
+            .':cat:'.($category ?? 'all')
+            .':limit:'.($limit ?? 'all');
 
         $data = SiteCache::remember($site->id, ['special-offers'], $cacheKey, 3600, function () use ($site, $category, $limit) {
             // Listings are visibility-gated: switching an offer off removes its
@@ -40,6 +41,11 @@ class SpecialOfferController extends Controller
                 // anywhere. Offers with no expiry are unaffected, so this
                 // changes nothing until someone sets a date.
                 ->claimable()
+                // The casino's OWN switch, as /bonus and the casino page apply
+                // it: a globally deactivated operator's offers must not stay
+                // listed here once its casino page has gone. Listing only —
+                // show() stays reachable by direct link, see its docblock.
+                ->whereHas('casino', static fn ($q) => $q->where('casinos.active', true))
                 ->orderBy('special_offers.sort_order');
 
             if ($category !== null) {
@@ -78,7 +84,7 @@ class SpecialOfferController extends Controller
         /** @var Site $site */
         $site = app('current_site');
 
-        $data = SiteCache::remember($site->id, ['special-offers'], 'special-offers:show:site:' . $site->id . ':slug:' . $slug, 3600, function () use ($site, $slug) {
+        $data = SiteCache::remember($site->id, ['special-offers'], 'special-offers:show:site:'.$site->id.':slug:'.$slug, 3600, function () use ($site, $slug) {
             $offer = $this->baseQuery($site)->where('special_offers.slug', $slug)->firstOrFail();
 
             return (new SpecialOfferResource($offer))->resolve();
@@ -93,7 +99,7 @@ class SpecialOfferController extends Controller
      * Site scoping only — callers add the visibility filter when they are
      * building a listing.
      *
-     * @return \Illuminate\Database\Eloquent\Builder<SpecialOffer>
+     * @return Builder<SpecialOffer>
      */
     private function baseQuery(Site $site)
     {
@@ -102,8 +108,6 @@ class SpecialOfferController extends Controller
             // the bonus type — see SpecialOfferResource. Eager-loaded so a page
             // of offers costs one extra query rather than one per row.
             ->with(['casino', 'bonusCategory'])
-            ->whereHas('casino.sites', function ($q) use ($site): void {
-                $q->where('sites.id', $site->id)->where('casino_site.active', true);
-            });
+            ->casinoAttachedToSite($site->id);
     }
 }

@@ -44,7 +44,7 @@ class CasinoReviewController extends Controller
         $data = SiteCache::remember(
             $site->id,
             ['reviews', 'casinos'],
-            'reviews:index:site:' . $site->id . ':casino:' . $casino->id . ':page:' . $page,
+            'reviews:index:site:'.$site->id.':casino:'.$casino->id.':page:'.$page,
             3600,
             function () use ($site, $casino, $page) {
                 $query = CasinoReview::query()
@@ -65,7 +65,7 @@ class CasinoReviewController extends Controller
                 return [
                     'reviews' => PublicCasinoReviewResource::collection($paginator->getCollection())->resolve(),
                     'summary' => [
-                        'total'   => (int) ($summary->total ?? 0),
+                        'total' => (int) ($summary->total ?? 0),
                         // Rounded to one decimal for display; null when there is
                         // nothing to average, so the front end can tell "no
                         // reviews yet" from "rated 0".
@@ -73,9 +73,9 @@ class CasinoReviewController extends Controller
                     ],
                     'meta' => [
                         'current_page' => $paginator->currentPage(),
-                        'last_page'    => $paginator->lastPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
                     ],
                 ];
             },
@@ -120,7 +120,7 @@ class CasinoReviewController extends Controller
         $data = SiteCache::remember(
             $site->id,
             ['reviews', 'casinos'],
-            'reviews:feed:site:' . $site->id . ':page:' . $page . ':n:' . $perPage . ':p:' . $previewCount,
+            'reviews:feed:site:'.$site->id.':page:'.$page.':n:'.$perPage.':p:'.$previewCount,
             3600,
             function () use ($site, $page, $perPage, $previewCount) {
                 // Reviews whose casino is still published BY THIS SITE. Without
@@ -131,10 +131,7 @@ class CasinoReviewController extends Controller
                     ->forSite($site->id)
                     ->published()
                     ->whereHas('casino', function ($q) use ($site): void {
-                        $q->where('active', true)
-                            ->whereHas('sites', function ($s) use ($site): void {
-                                $s->where('sites.id', $site->id)->where('casino_site.active', true);
-                            });
+                        $q->where('active', true)->attachedToSite($site->id);
                     });
 
                 // One row per casino. Laravel wraps a grouped query in a
@@ -177,14 +174,14 @@ class CasinoReviewController extends Controller
 
                     $threads[] = [
                         'casino' => [
-                            'id'           => $casino->id,
-                            'name'         => $casino->name,
-                            'slug'         => $casino->slug,
-                            'image_path'   => $casino->image_path,
+                            'id' => $casino->id,
+                            'name' => $casino->name,
+                            'slug' => $casino->slug,
+                            'image_path' => $casino->image_path,
                             'banner_image' => $casino->banner_image,
                         ],
                         'summary' => [
-                            'total'   => $total,
+                            'total' => $total,
                             'average' => $row->reviews_average === null ? null : round((float) $row->reviews_average, 1),
                             // ISO-8601 string, not Carbon: this payload goes
                             // through SiteCache, which cannot round-trip a
@@ -211,15 +208,15 @@ class CasinoReviewController extends Controller
                 return [
                     'threads' => $threads,
                     'summary' => [
-                        'total'   => (int) ($overall->total ?? 0),
+                        'total' => (int) ($overall->total ?? 0),
                         'casinos' => (int) ($overall->casinos ?? 0),
                         'average' => $overall?->average === null ? null : round((float) $overall->average, 1),
                     ],
                     'meta' => [
                         'current_page' => $paginator->currentPage(),
-                        'last_page'    => $paginator->lastPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
                     ],
                 ];
             },
@@ -262,9 +259,9 @@ class CasinoReviewController extends Controller
 
         CasinoReview::create([
             ...$request->validated(),
-            'site_id'      => $site->id,
-            'casino_id'    => $casino->id,
-            'status'       => $autoPublish
+            'site_id' => $site->id,
+            'casino_id' => $casino->id,
+            'status' => $autoPublish
                 ? CasinoReview::STATUS_PUBLISHED
                 : CasinoReview::STATUS_PENDING,
             // Stamped in the same write rather than by a later setPublished()
@@ -284,9 +281,9 @@ class CasinoReviewController extends Controller
         }
 
         return response()->json([
-            'ok'        => true,
+            'ok' => true,
             'published' => $autoPublish,
-            'message'   => $autoPublish
+            'message' => $autoPublish
                 ? 'Thanks — your review is now live.'
                 : 'Thanks — your review has been submitted and will appear once approved.',
         ], $autoPublish ? Response::HTTP_CREATED : Response::HTTP_ACCEPTED);
@@ -304,9 +301,7 @@ class CasinoReviewController extends Controller
         return Casino::query()
             ->where('slug', $slug)
             ->where('active', true)
-            ->whereHas('sites', function ($q) use ($site): void {
-                $q->where('sites.id', $site->id)->where('casino_site.active', true);
-            })
+            ->attachedToSite($site->id)
             ->firstOrFail();
     }
 

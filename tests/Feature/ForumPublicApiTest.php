@@ -7,10 +7,12 @@ namespace Tests\Feature;
 use App\Models\ForumArticle;
 use App\Models\ForumCategory;
 use App\Models\ForumPost;
+use App\Models\ForumReport;
 use App\Models\ForumSection;
 use App\Models\ForumUser;
 use App\Models\Redirect;
 use App\Models\Site;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\Concerns\InteractsWithSites;
@@ -360,6 +362,59 @@ class ForumPublicApiTest extends TestCase
             ->assertCreated();
 
         $this->assertDatabaseHas('forum_reports', ['forum_post_id' => $post->id, 'status' => 'open']);
+    }
+
+    public function test_a_report_stores_the_reporter_ip_packed(): void
+    {
+        $post = ForumPost::create([
+            'site_id' => $this->site->id, 'forum_article_id' => $this->article->id,
+            'forum_user_id' => $this->member->id, 'body' => 'spammy', 'status' => ForumPost::STATUS_APPROVED,
+        ]);
+
+        // The IP was once silently dropped by mass assignment, so every report
+        // landed with reporter_ip NULL and the abuse signal was lost.
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.7'])
+            ->withHeaders($this->siteHeaders($this->key))
+            ->postJson($this->base() . "/forum/posts/{$post->id}/report", ['reason' => 'spam', 'website' => ''])
+            ->assertCreated()
+            ->assertExactJson(['data' => ['reported' => true, 'message' => 'Thanks — a moderator will take a look.']]);
+
+        $this->assertSame(
+            inet_pton('203.0.113.7'),
+            ForumReport::query()->where('forum_post_id', $post->id)->value('reporter_ip'),
+        );
+    }
+
+    public function test_reporting_again_after_a_dismissal_reopens_the_report(): void
+    {
+        $post = ForumPost::create([
+            'site_id' => $this->site->id, 'forum_article_id' => $this->article->id,
+            'forum_user_id' => $this->member->id, 'body' => 'spammy', 'status' => ForumPost::STATUS_APPROVED,
+        ]);
+        $url = $this->base() . "/forum/posts/{$post->id}/report";
+
+        $this->withHeaders($this->siteHeaders($this->key))
+            ->postJson($url, ['reason' => 'spam', 'website' => ''])
+            ->assertCreated();
+
+        // Exactly what ForumModerationService writes when a moderator approves the post.
+        ForumReport::query()->where('forum_post_id', $post->id)->update([
+            'status' => ForumReport::STATUS_DISMISSED,
+            'handled_by' => User::factory()->create()->id,
+            'handled_at' => now(),
+        ]);
+
+        $this->withHeaders($this->siteHeaders($this->key))
+            ->postJson($url, ['reason' => 'abuse', 'website' => ''])
+            ->assertCreated();
+
+        // Still one row (same reporter), back in the moderation queue, and no
+        // longer claiming to have been handled by the previous moderator.
+        $this->assertSame(1, ForumReport::query()->where('forum_post_id', $post->id)->count());
+        $this->assertDatabaseHas('forum_reports', [
+            'forum_post_id' => $post->id, 'reason' => 'abuse', 'status' => ForumReport::STATUS_OPEN,
+            'handled_by' => null, 'handled_at' => null,
+        ]);
     }
 
     // ── roles ────────────────────────────────────────────────────────────────

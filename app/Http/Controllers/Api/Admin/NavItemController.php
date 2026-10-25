@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\ReorderNavItemsRequest;
 use App\Http\Requests\Admin\StoreNavItemRequest;
 use App\Http\Requests\Admin\UpdateNavItemRequest;
 use App\Http\Resources\NavItemResource;
@@ -13,7 +14,6 @@ use App\Models\NavItem;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 
@@ -47,7 +47,7 @@ class NavItemController extends Controller
 
         $item = NavItem::create([
             ...$validated,
-            'site_id'  => $site->id,
+            'site_id' => $site->id,
             // Append to the end of its own menu unless a position was given, so
             // a new link never silently displaces an existing one.
             'position' => $validated['position'] ?? $this->nextPosition($site, $validated['location']),
@@ -84,12 +84,9 @@ class NavItemController extends Controller
      * Drag-and-drop produces a whole new order at once; saving it as N PATCHes
      * would leave the menu in a half-reordered state if one failed.
      */
-    public function reorder(Request $request, Site $site): JsonResponse
+    public function reorder(ReorderNavItemsRequest $request, Site $site): JsonResponse
     {
-        $validated = $request->validate([
-            'ids'   => ['required', 'array', 'min:1', 'max:200'],
-            'ids.*' => ['integer'],
-        ]);
+        $validated = $request->validated();
 
         // Scoped to this site: an id from another site's menu must not be
         // repositionable through this route.

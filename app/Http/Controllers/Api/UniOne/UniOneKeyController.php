@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\UniOne;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\UniOne\RecheckUniOneDomainRequest;
+use App\Http\Requests\UniOne\StoreUniOneKeyRequest;
+use App\Http\Requests\UniOne\UniOneDomainDnsRequest;
+use App\Http\Requests\UniOne\UpdateUniOneKeyRequest;
 use App\Http\Resources\UniOne\UniOneApiKeyResource;
 use App\Models\UniOne\UniOneApiKey;
 use App\Services\UniOne\UniOneClient;
 use App\Services\UniOne\UniOneKeyService;
 use App\Services\UniOne\UniOneWebhookRegistrar;
+use App\Support\UniOne\UniOneResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -30,8 +35,8 @@ class UniOneKeyController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $filters = $request->validate([
-            'key_type'  => ['nullable', Rule::in(UniOneApiKey::TYPES)],
-            'region'    => ['nullable', Rule::in(UniOneApiKey::REGIONS)],
+            'key_type' => ['nullable', Rule::in(UniOneApiKey::TYPES)],
+            'region' => ['nullable', Rule::in(UniOneApiKey::REGIONS)],
             'is_active' => ['nullable', 'boolean'],
         ]);
 
@@ -45,32 +50,43 @@ class UniOneKeyController extends Controller
         return UniOneApiKeyResource::collection($query->get());
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreUniOneKeyRequest $request): JsonResponse
     {
-        $key = UniOneApiKey::query()->create($this->validated($request, null));
+        $key = UniOneApiKey::query()->create($request->validated());
 
         $this->keys->forget($key->id);
 
         return (new UniOneApiKeyResource($key))->response()->setStatusCode(Response::HTTP_CREATED);
     }
 
-    public function update(Request $request, UniOneApiKey $uniOneKey): UniOneApiKeyResource
+    public function update(UpdateUniOneKeyRequest $request, UniOneApiKey $uniOneKey): UniOneApiKeyResource
     {
-        $data = $this->validated($request, $uniOneKey);
+        $data = $request->validated();
 
         // Replace, never reveal: an empty api_key means "leave it alone", which
         // is what lets the edit form open without ever holding the secret.
-        if (($data['api_key'] ?? '') === '') {
+        $replacesSecret = ($data['api_key'] ?? '') !== '';
+
+        if (! $replacesSecret) {
             unset($data['api_key']);
-        } else {
-            // A replaced key invalidates its own verification — the new
-            // credential has not been proven, and an unverified key cannot be
-            // default (see UniOneKeyService::makeDefault).
-            $data['last_verified_at'] = null;
-            $data['last_verify_status'] = null;
         }
 
-        $uniOneKey->fill($data)->save();
+        $uniOneKey->fill($data);
+
+        if ($replacesSecret) {
+            // A replaced key invalidates its own verification — the new
+            // credential has not been proven, and an unverified key cannot be
+            // made default (see UniOneKeyService::makeDefault).
+            //
+            // forceFill, not fill(): neither column is fillable, on purpose, so
+            // that only verify() can mark a key proven. Passed through fill()
+            // this reset was silently discarded and a rotated key stayed
+            // "verified". `is_default` is deliberately untouched: a rotated
+            // default keeps sending, it just shows as unverified until checked.
+            $uniOneKey->forceFill(['last_verified_at' => null, 'last_verify_status' => null]);
+        }
+
+        $uniOneKey->save();
 
         // Busted on EVERY write, or a rotated key keeps sending with the old
         // credential until the TTL expires.
@@ -114,11 +130,11 @@ class UniOneKeyController extends Controller
 
         return response()->json([
             'data' => [
-                'ok'     => $result['ok'],
+                'ok' => $result['ok'],
                 'status' => $result['status'],
                 // Account details from /system/info.json — never the key.
-                'info'   => $result['info'],
-                'key'    => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
+                'info' => $result['info'],
+                'key' => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
             ],
         ], $result['ok'] ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
@@ -149,9 +165,9 @@ class UniOneKeyController extends Controller
 
         return response()->json([
             'data' => [
-                'ok'      => $result['ok'],
+                'ok' => $result['ok'],
                 'message' => $result['message'],
-                'key'     => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
+                'key' => (new UniOneApiKeyResource($uniOneKey->refresh()))->resolve(),
             ],
         ], $result['ok'] ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
@@ -172,19 +188,16 @@ class UniOneKeyController extends Controller
         return $this->passthrough((new UniOneClient($uniOneKey))->domains());
     }
 
-    public function domainDns(Request $request, UniOneApiKey $uniOneKey): JsonResponse
+    public function domainDns(UniOneDomainDnsRequest $request, UniOneApiKey $uniOneKey): JsonResponse
     {
-        $data = $request->validate(['domain' => ['required', 'string', 'max:255']]);
+        $data = $request->validated();
 
         return $this->passthrough((new UniOneClient($uniOneKey))->domainDnsRecords($data['domain']));
     }
 
-    public function recheckDomain(Request $request, UniOneApiKey $uniOneKey): JsonResponse
+    public function recheckDomain(RecheckUniOneDomainRequest $request, UniOneApiKey $uniOneKey): JsonResponse
     {
-        $data = $request->validate([
-            'domain' => ['required', 'string', 'max:255'],
-            'check'  => ['required', Rule::in(['dkim', 'verification'])],
-        ]);
+        $data = $request->validated();
 
         $client = new UniOneClient($uniOneKey);
 
@@ -198,34 +211,13 @@ class UniOneKeyController extends Controller
     public function suppressions(Request $request, UniOneApiKey $uniOneKey): JsonResponse
     {
         $filters = $request->validate([
-            'cause'  => ['nullable', 'string', 'max:40'],
+            'cause' => ['nullable', 'string', 'max:40'],
             'source' => ['nullable', 'string', 'max:40'],
             'cursor' => ['nullable', 'string', 'max:255'],
-            'limit'  => ['nullable', 'integer', 'min:1', 'max:100'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         return $this->passthrough((new UniOneClient($uniOneKey))->suppressions($filters));
-    }
-
-    /** @return array<string, mixed> */
-    private function validated(Request $request, ?UniOneApiKey $existing): array
-    {
-        return $request->validate([
-            'name'     => ['required', 'string', 'max:120'],
-            // Required on create, optional on update — see update().
-            'api_key'  => [$existing === null ? 'required' : 'nullable', 'string', 'max:500'],
-            'key_type' => ['required', Rule::in(UniOneApiKey::TYPES)],
-            'project_id' => ['nullable', 'required_if:key_type,project', 'string', 'max:64'],
-            'region'   => ['required', Rule::in(UniOneApiKey::REGIONS)],
-            'base_url' => ['nullable', 'string', 'max:255', 'url'],
-            'is_active' => ['sometimes', 'boolean'],
-            'default_from_email' => ['nullable', 'email', 'max:255'],
-            'default_from_name'  => ['nullable', 'string', 'max:120'],
-            'track_links' => ['sometimes', 'boolean'],
-            'track_read'  => ['sometimes', 'boolean'],
-            'timeout_seconds' => ['sometimes', 'integer', 'min:5', 'max:120'],
-            'notes' => ['nullable', 'string', 'max:2000'],
-        ]);
     }
 
     /**
@@ -235,13 +227,13 @@ class UniOneKeyController extends Controller
      * and an operator authenticating a domain needs UniOne's exact wording and
      * DNS values rather than a paraphrase.
      */
-    private function passthrough(\App\Support\UniOne\UniOneResponse $response): JsonResponse
+    private function passthrough(UniOneResponse $response): JsonResponse
     {
         return response()->json([
-            'ok'      => $response->ok,
-            'data'    => $response->raw,
+            'ok' => $response->ok,
+            'data' => $response->raw,
             'message' => $response->message,
-            'code'    => $response->apiErrorCode,
+            'code' => $response->apiErrorCode,
         ], $response->ok ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 }

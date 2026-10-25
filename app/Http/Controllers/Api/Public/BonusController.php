@@ -82,7 +82,7 @@ class BonusController extends Controller
              * a front end that now reads those fields — a chip row with no
              * icons and no counts, for no reason anybody could see in the code.
              */
-            'bonus:index:v2:site:' . $site->id . ':limit:' . $limit,
+            'bonus:index:v2:site:'.$site->id.':limit:'.$limit,
             3600,
             function () use ($site, $limit) {
                 /*
@@ -92,18 +92,14 @@ class BonusController extends Controller
                  * each type holds, and that number has to mean the same thing
                  * as the cards below it: active, claimable, filed under this
                  * type, owned by a casino attached to and active on THIS site.
-                 * Stated as one closure so the count and the listing cannot
-                 * drift into answering two different questions — a chip reading
-                 * "8" above a section showing offers from a different rule is
-                 * the bug this shape exists to prevent.
+                 * Stated once, as SpecialOffer::scopeVisibleInBonusArea(), so the
+                 * count, the listing and the category page cannot drift into
+                 * answering different questions — a chip reading "8" above a
+                 * section showing offers from a different rule is the bug this
+                 * shape exists to prevent.
                  */
                 $visibleOnThisSite = function ($query) use ($site): void {
-                    $query->where('special_offers.active', true)
-                        ->claimable()
-                        ->whereHas('casino.sites', function ($q) use ($site): void {
-                            $q->where('sites.id', $site->id)->where('casino_site.active', true);
-                        })
-                        ->whereHas('casino', fn ($q) => $q->where('casinos.active', true));
+                    $query->visibleInBonusArea($site->id);
                 };
 
                 $categories = BonusCategory::query()
@@ -113,16 +109,10 @@ class BonusController extends Controller
                     // report — not the capped list loaded below it.
                     ->withCount(['specialOffers as offers_count' => $visibleOnThisSite])
                     ->with(['specialOffers' => function ($query) use ($site, $limit): void {
-                        $query->where('special_offers.active', true)
-                            ->claimable()
-                            // Scoped to THIS site through the offer's casino, the
-                            // same way the offers listing does it — an offer whose
-                            // casino is not on this domain is not this domain's to
-                            // advertise.
-                            ->whereHas('casino.sites', function ($q) use ($site): void {
-                                $q->where('sites.id', $site->id)->where('casino_site.active', true);
-                            })
-                            ->whereHas('casino', fn ($q) => $q->where('casinos.active', true))
+                        // Scoped to THIS site through the offer's casino, the same
+                        // way the offers listing does it — an offer whose casino
+                        // is not on this domain is not this domain's to advertise.
+                        $query->visibleInBonusArea($site->id)
                             ->with(['casino', 'bonusCategory'])
                             ->orderBy('sort_order');
 
@@ -137,18 +127,18 @@ class BonusController extends Controller
                     // Empty sections are not rendered, so they are not returned.
                     ->filter(fn (BonusCategory $category) => $category->specialOffers->isNotEmpty())
                     ->map(fn (BonusCategory $category) => [
-                        'id'          => $category->id,
-                        'name'        => $category->name,
-                        'slug'        => $category->slug,
+                        'id' => $category->id,
+                        'name' => $category->name,
+                        'slug' => $category->slug,
                         'description' => $category->description,
                         // The chip artwork. Null until an icon is set, which the
                         // front end renders as a label-only chip.
-                        'icon_path'   => $category->icon_path,
-                        'position'    => $category->position,
+                        'icon_path' => $category->icon_path,
+                        'position' => $category->position,
                         // Everything under this heading on this site, not the
                         // `offers` below — those are capped at `limit`.
                         'offers_count' => (int) $category->offers_count,
-                        'offers'      => SpecialOfferResource::collection($category->specialOffers)->resolve(),
+                        'offers' => SpecialOfferResource::collection($category->specialOffers)->resolve(),
                     ])
                     ->values()
                     ->all();
@@ -187,39 +177,34 @@ class BonusController extends Controller
         $data = SiteCache::remember(
             $site->id,
             ['bonus', 'special-offers'],
-            'bonus:show:v2:site:' . $site->id . ':slug:' . $slug . ':page:' . $page,
+            'bonus:show:v2:site:'.$site->id.':slug:'.$slug.':page:'.$page,
             3600,
             function () use ($site, $slug, $page) {
                 $category = BonusCategory::query()->active()->where('slug', $slug)->firstOrFail();
 
                 $paginator = $category->specialOffers()
-                    ->where('special_offers.active', true)
-                    ->claimable()
-                    ->whereHas('casino.sites', function ($q) use ($site): void {
-                        $q->where('sites.id', $site->id)->where('casino_site.active', true);
-                    })
-                    ->whereHas('casino', fn ($q) => $q->where('casinos.active', true))
+                    ->visibleInBonusArea($site->id)
                     ->with(['casino', 'bonusCategory'])
                     ->orderBy('special_offers.sort_order')
                     ->paginate(self::OFFERS_PER_PAGE, ['*'], 'page', $page);
 
                 return [
                     'category' => [
-                        'id'          => $category->id,
-                        'name'        => $category->name,
-                        'slug'        => $category->slug,
+                        'id' => $category->id,
+                        'name' => $category->name,
+                        'slug' => $category->slug,
                         'description' => $category->description,
                         // Same icon the chip that led here carries, so the page
                         // confirms which heading was pressed.
-                        'icon_path'   => $category->icon_path,
-                        'position'    => $category->position,
+                        'icon_path' => $category->icon_path,
+                        'position' => $category->position,
                     ],
                     'offers' => SpecialOfferResource::collection($paginator->getCollection())->resolve(),
-                    'meta'   => [
+                    'meta' => [
                         'current_page' => $paginator->currentPage(),
-                        'last_page'    => $paginator->lastPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
                     ],
                 ];
             },

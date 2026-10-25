@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\BulkCasinoReviewsRequest;
+use App\Http\Requests\Admin\UpdateCasinoReviewVisibilityRequest;
 use App\Http\Resources\CasinoReviewResource;
 use App\Jobs\InvalidateCasinoCache;
 use App\Models\CasinoReview;
@@ -29,6 +31,7 @@ use Illuminate\Http\Response;
 class CasinoReviewController extends Controller
 {
     private const int DEFAULT_PER_PAGE = 25;
+
     private const int MAX_PER_PAGE = 100;
 
     public function index(Request $request): AnonymousResourceCollection
@@ -67,9 +70,9 @@ class CasinoReviewController extends Controller
      * routes, so the two can never drift apart — and so the UI can bind it to a
      * toggle.
      */
-    public function setVisibility(Request $request, CasinoReview $casinoReview): CasinoReviewResource
+    public function setVisibility(UpdateCasinoReviewVisibilityRequest $request, CasinoReview $casinoReview): CasinoReviewResource
     {
-        $validated = $request->validate(['published' => ['required', 'boolean']]);
+        $validated = $request->validated();
 
         $casinoReview->setPublished((bool) $validated['published']);
 
@@ -108,13 +111,9 @@ class CasinoReviewController extends Controller
      * stamp `published_at` per row, and the affected sites have to be collected
      * so each one is invalidated exactly once. The 500 cap keeps that bounded.
      */
-    public function bulk(Request $request): JsonResponse
+    public function bulk(BulkCasinoReviewsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'action' => ['required', 'string', 'in:publish,hide,delete'],
-            'ids'    => ['required', 'array', 'min:1', 'max:500'],
-            'ids.*'  => ['integer'],
-        ]);
+        $validated = $request->validated();
 
         $reviews = CasinoReview::whereIn('id', $validated['ids'])->get();
         $siteIds = [];
@@ -125,8 +124,8 @@ class CasinoReviewController extends Controller
 
             match ($validated['action']) {
                 'publish' => $review->setPublished(true),
-                'hide'    => $review->setPublished(false),
-                'delete'  => $review->delete(),
+                'hide' => $review->setPublished(false),
+                'delete' => $review->delete(),
             };
 
             // A change matters to the public only if the row was visible before

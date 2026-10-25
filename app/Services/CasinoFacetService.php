@@ -60,8 +60,8 @@ final class CasinoFacetService
             }
 
             $out[] = [
-                'facet'  => $facet,
-                'label'  => $configured->get($facet)?->label
+                'facet' => $facet,
+                'label' => $configured->get($facet)?->label
                     ?: FacetConfig::DEFAULT_LABELS[$facet],
                 'values' => $values,
             ];
@@ -142,9 +142,9 @@ final class CasinoFacetService
             FacetConfig::FACET_COUNTRY => $this->relationValues(
                 $casinoIds, 'casino_country', 'country_id', 'countries', 'slug', 'name', true,
             ),
-            FacetConfig::FACET_LICENCE       => $this->jsonValues($casinoIds, 'licences'),
+            FacetConfig::FACET_LICENCE => $this->jsonValues($casinoIds, 'licences'),
             FacetConfig::FACET_PAYMENT_METHOD => $this->jsonValues($casinoIds, 'payment_methods'),
-            FacetConfig::FACET_PROVIDER      => $this->jsonValues($casinoIds, 'game_providers'),
+            FacetConfig::FACET_PROVIDER => $this->jsonValues($casinoIds, 'game_providers'),
             default => [],
         };
     }
@@ -157,7 +157,6 @@ final class CasinoFacetService
             ->where('pivot.site_id', $site->id)
             ->where('pivot.active', true)
             ->where('casinos.active', true)
-            ->whereNull('casinos.deleted_at')
             ->pluck('casinos.id')
             ->all();
     }
@@ -178,18 +177,18 @@ final class CasinoFacetService
         bool $activeOnly = false,
     ): array {
         $query = DB::table($pivot)
-            ->join($table, $table . '.id', '=', $pivot . '.' . $foreignKey)
-            ->whereIn($pivot . '.casino_id', $casinoIds)
-            ->groupBy($table . '.' . $valueColumn, $table . '.' . $labelColumn)
-            ->orderBy($table . '.' . $labelColumn)
+            ->join($table, $table.'.id', '=', $pivot.'.'.$foreignKey)
+            ->whereIn($pivot.'.casino_id', $casinoIds)
+            ->groupBy($table.'.'.$valueColumn, $table.'.'.$labelColumn)
+            ->orderBy($table.'.'.$labelColumn)
             ->select([
-                $table . '.' . $valueColumn . ' as value',
-                $table . '.' . $labelColumn . ' as label',
-                DB::raw('COUNT(DISTINCT ' . $pivot . '.casino_id) as count'),
+                $table.'.'.$valueColumn.' as value',
+                $table.'.'.$labelColumn.' as label',
+                DB::raw('COUNT(DISTINCT '.$pivot.'.casino_id) as count'),
             ]);
 
         if ($activeOnly) {
-            $query->where($table . '.active', true);
+            $query->where($table.'.active', true);
         }
 
         return $query->get()

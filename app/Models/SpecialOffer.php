@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Services\OfferSlugRedirectService;
 use Database\Factories\SpecialOfferFactory;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -45,11 +46,11 @@ class SpecialOffer extends Model
     protected function casts(): array
     {
         return [
-            'noindex'    => 'boolean',
+            'noindex' => 'boolean',
             'expires_at' => 'date',
-            'rating'     => 'integer',
+            'rating' => 'integer',
             'sort_order' => 'integer',
-            'active'     => 'boolean',
+            'active' => 'boolean',
         ];
     }
 
@@ -78,7 +79,7 @@ class SpecialOffer extends Model
      * stopped arriving.
      *
      * What changed is that the rename now leaves a trail.
-     * {@see \App\Services\OfferSlugRedirectService} writes a 301 from the old
+     * {@see OfferSlugRedirectService} writes a 301 from the old
      * path to the new one on every site the offer appears on, re-points any
      * redirect that already led to the old path, and removes one that would
      * shadow the new one. So the address tracks the title — which is what an
@@ -231,7 +232,7 @@ class SpecialOffer extends Model
                 ->exists()
         ) {
             $suffix++;
-            $slug = $base . '-' . $suffix;
+            $slug = $base.'-'.$suffix;
         }
 
         return $slug;
@@ -289,11 +290,11 @@ class SpecialOffer extends Model
          * which is the right limit: that is a title to fix, not a string to
          * guess at.
          */
-        if ($prefix === '' || $slug === $prefix || str_contains('-' . $slug . '-', '-' . $prefix . '-')) {
+        if ($prefix === '' || $slug === $prefix || str_contains('-'.$slug.'-', '-'.$prefix.'-')) {
             return $slug;
         }
 
-        return $prefix . '-' . $slug;
+        return $prefix.'-'.$slug;
     }
 
     public function bonusCategory(): BelongsTo
@@ -320,6 +321,29 @@ class SpecialOffer extends Model
         return $query->where(static function (Builder $q): void {
             $q->whereNull('expires_at')->orWhereDate('expires_at', '>=', now()->toDateString());
         });
+    }
+
+    /**
+     * Offers whose casino a site publishes. See Casino::scopeAttachedToSite().
+     */
+    public function scopeCasinoAttachedToSite(Builder $query, int $siteId): Builder
+    {
+        return $query->whereHas('casino', static fn (Builder $casino): Builder => $casino->attachedToSite($siteId));
+    }
+
+    /**
+     * Offers the Bonus area shows on a site: switched on, claimable, and owned
+     * by a casino that is both active and published by that site.
+     *
+     * Stricter than the /special-offers listing, which does not check the
+     * casino's own `active` flag. The two are kept apart on purpose.
+     */
+    public function scopeVisibleInBonusArea(Builder $query, int $siteId): Builder
+    {
+        return $query->where('special_offers.active', true)
+            ->claimable()
+            ->casinoAttachedToSite($siteId)
+            ->whereHas('casino', static fn (Builder $casino): Builder => $casino->where('casinos.active', true));
     }
 
     /** True once the offer's stated end date has passed. */

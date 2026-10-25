@@ -1,5 +1,8 @@
 <?php
 
+declare(strict_types=1);
+
+use App\Models\SiteRevalidation;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -49,13 +52,12 @@ Schedule::command('promotions:dispatch-due')
 Schedule::command('promotions:dispatch-verification')
     ->everyMinute();
 
-// Provision upcoming monthly partitions for the promotion history table.
 // Mailgun receiver sends. Hourly rather than every minute: the cooldown is
 // expressed in DAYS, so a finer tick would only re-check a set that cannot have
 // changed. No withoutOverlapping() — the command only dispatches, and the
 // duplicate guard lives in the database, so a stranded lock would be a bigger
 // risk than an overlapping tick.
-//Schedule::command('mailgun:dispatch-receivers')->hourly();
+// Schedule::command('mailgun:dispatch-receivers')->hourly();
 
 // Collect news facts from the configured RSS feeds.
 //
@@ -75,11 +77,10 @@ if (config('news.scheduled')) {
     Schedule::command('news:scrape')->hourly();
 }
 
+// Provision upcoming monthly partitions for the promotion history table.
 Schedule::command('promotions:manage-history-partitions')
     ->monthlyOn(1, '04:30')
     ->withoutOverlapping();
-
-//Schedule::command('test:command')->everyMinute();
 
 // Delete token rows that have already expired. Purely housekeeping: an expired
 // token is rejected by Sanctum whether the row still exists, so this
@@ -92,7 +93,7 @@ Schedule::command('sanctum:prune-expired --hours=24')->daily();
 // days is well past the point where an old attempt tells anyone anything, and
 // keeping them forever would make the history query slower every week.
 Schedule::call(function (): void {
-    App\Models\SiteRevalidation::where('created_at', '<', now()->subDays(30))->delete();
+    SiteRevalidation::where('created_at', '<', now()->subDays(30))->delete();
 })->daily()->name('prune-site-revalidations');
 
 // Retire validation logs past their window. These rows carry visitor email

@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\ReorderCategoriesRequest;
 use App\Http\Requests\Admin\StoreCategoryRequest;
 use App\Http\Requests\Admin\UpdateCategoryRequest;
 use App\Http\Resources\CategoryResource;
 use App\Jobs\InvalidateCasinoCache;
 use App\Models\Category;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
 
@@ -66,12 +66,9 @@ class CategoryController extends Controller
      * One transaction: a half-applied reorder leaves duplicate positions, which
      * is the exact state this endpoint exists to prevent.
      */
-    public function reorder(Request $request): JsonResponse
+    public function reorder(ReorderCategoriesRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids'   => ['required', 'array', 'min:1', 'max:200'],
-            'ids.*' => ['integer', 'distinct', 'exists:categories,id'],
-        ]);
+        $validated = $request->validated();
 
         /** @var list<int> $ids */
         $ids = array_map('intval', $validated['ids']);
@@ -98,7 +95,7 @@ class CategoryController extends Controller
 
         return response()->json([
             'reordered' => count($ids),
-            'data'      => CategoryResource::collection(
+            'data' => CategoryResource::collection(
                 Category::withCount('casinos')->ordered()->get()
             )->resolve(),
         ]);

@@ -6,36 +6,39 @@ namespace App\Providers;
 
 use App\Models\BonusCategory;
 use App\Models\Casino;
-use App\Models\CmsPage;
 use App\Models\CasinoReview;
 use App\Models\Category;
-use App\Models\SpecialOffer;
+use App\Models\CmsPage;
 use App\Models\ForumArticle;
 use App\Models\ForumPost;
 use App\Models\Site;
+use App\Models\SpecialOffer;
+use App\Observers\CasinoObserver;
 use App\Observers\ForumArticleObserver;
 use App\Observers\ForumPostObserver;
-use App\Observers\SiteForumFlagObserver;
-use App\Observers\CasinoObserver;
+use App\Observers\Search\BonusCategorySearchObserver;
 use App\Observers\Search\CasinoReviewSearchObserver;
 use App\Observers\Search\CasinoSearchObserver;
-use App\Observers\Search\BonusCategorySearchObserver;
 use App\Observers\Search\CategorySearchObserver;
 use App\Observers\Search\CmsPageSearchObserver;
 use App\Observers\Search\SpecialOfferSearchObserver;
+use App\Observers\SiteForumFlagObserver;
 use App\Policies\CmsPagePolicy;
-use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Repositories\CmsPageRepository;
+use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Services\Mail\Transport\MailgunApiTransport;
 use App\Services\Mail\Transport\SendgridClickTrackingClient;
-use Illuminate\Cache\RateLimiting\Limit;
-use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Eloquent\MassAssignmentException;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Validation\Rules\Password;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\Mailer\Bridge\Sendgrid\Transport\SendgridTransportFactory;
 use Symfony\Component\Mailer\Transport\Dsn;
@@ -50,20 +53,43 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         /*
-         * Public newsletter subscribe limiter.
+         * Lazy-loading DETECTION, outside production only.
          *
-         * ONE named limiter returning TWO limits, rather than two stacked
-         * `throttle:` middlewares. Stacking them looks equivalent and is not:
-         * both derive their cache key from the same route signature + IP, so
-         * they share a counter and every request costs TWO hits — the measured
-         * effect was a 5/minute limit that actually admitted three.
-         *
-         * The distinct `by()` keys here keep the two windows independent.
-         *
-         * Keyed on IP because the endpoint is unauthenticated, and throttled at
-         * all because it now spends a paid SendGrid validation credit per new
-         * address — `verify.site` does no rate limiting of its own.
+         * Logged, never thrown: a custom violation handler replaces Eloquent's
+         * exception, so no request or test outcome changes — an N+1 that slips
+         * into a resource or listing simply leaves a warning naming the model
+         * and relation. Production keeps lazy loading untouched.
          */
+        Model::preventLazyLoading(! $this->app->isProduction());
+        Model::handleLazyLoadingViolationUsing(static function (Model $model, string $relation): void {
+            Log::warning('Lazy loaded ['.$relation.'] on ['.$model::class.'].');
+        });
+
+        /*
+         * Silently-discarded attribute DETECTION, outside production only.
+         *
+         * `fill()` drops any key missing from `$fillable` without a word, which
+         * is how a UniOne key rotation once kept its old verification: the reset
+         * went through fill() and both columns were quietly thrown away. This
+         * logs the dropped keys instead, and the attributes are still dropped,
+         * exactly as before.
+         *
+         * The rethrow is load-bearing. Once a handler is registered, Eloquent
+         * calls it INSTEAD of throwing for a totally guarded model too, so
+         * without it that MassAssignmentException would turn into a silent
+         * discard. Rethrowing keeps that path byte-identical.
+         */
+        if (! $this->app->isProduction()) {
+            Model::preventSilentlyDiscardingAttributes();
+            Model::handleDiscardedAttributeViolationUsing(static function (Model $model, array $keys, MassAssignmentException $exception): void {
+                if ($model->totallyGuarded()) {
+                    throw $exception;
+                }
+
+                Log::warning('Discarded non-fillable ['.implode(', ', $keys).'] on ['.$model::class.'].');
+            });
+        }
+
         /*
          * Forum posting.
          *
@@ -77,7 +103,7 @@ class AppServiceProvider extends ServiceProvider
          * grind that never trips a per-minute window. Each `by()` key is
          * distinct, because limiters sharing a key share a counter and every
          * request then costs two hits — the same bug already documented on the
-         * subscribe limiter above, where a 5/minute limit actually admitted
+         * subscribe limiter below, where a 5/minute limit actually admitted
          * three.
          */
         RateLimiter::for('forum-post', static function ($request): array {
@@ -102,8 +128,8 @@ class AppServiceProvider extends ServiceProvider
          * can do anything else, and a real person registers once.
          */
         RateLimiter::for('forum-register', static fn ($request): array => [
-            Limit::perMinute(2)->by('forum-register-min:' . $request->ip()),
-            Limit::perDay(10)->by('forum-register-day:' . $request->ip()),
+            Limit::perMinute(2)->by('forum-register-min:'.$request->ip()),
+            Limit::perDay(10)->by('forum-register-day:'.$request->ip()),
         ]);
 
         /*
@@ -120,9 +146,24 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        /*
+         * Public newsletter subscribe limiter.
+         *
+         * ONE named limiter returning TWO limits, rather than two stacked
+         * `throttle:` middlewares. Stacking them looks equivalent and is not:
+         * both derive their cache key from the same route signature + IP, so
+         * they share a counter and every request costs TWO hits — the measured
+         * effect was a 5/minute limit that actually admitted three.
+         *
+         * The distinct `by()` keys here keep the two windows independent.
+         *
+         * Keyed on IP because the endpoint is unauthenticated, and throttled at
+         * all because it now spends a paid SendGrid validation credit per new
+         * address — `verify.site` does no rate limiting of its own.
+         */
         RateLimiter::for('subscribe', static fn ($request): array => [
-            Limit::perMinute(5)->by('subscribe-min:' . $request->ip()),
-            Limit::perHour(20)->by('subscribe-hour:' . $request->ip()),
+            Limit::perMinute(5)->by('subscribe-min:'.$request->ip()),
+            Limit::perHour(20)->by('subscribe-hour:'.$request->ip()),
         ]);
 
         /*
@@ -193,7 +234,7 @@ class AppServiceProvider extends ServiceProvider
         $resetUrl = static function (object $notifiable, string $token): string {
             $base = rtrim((string) config('app.frontend_url'), '/');
 
-            return $base . '/reset-password?' . http_build_query([
+            return $base.'/reset-password?'.http_build_query([
                 'token' => $token,
                 // Carried in the link because the reset form must submit the
                 // address the token was issued for; the broker verifies the pair.
@@ -219,9 +260,9 @@ class AppServiceProvider extends ServiceProvider
         ResetPassword::toMailUsing(static function (object $notifiable, string $token) use ($resetUrl): MailMessage {
             $minutes = config('auth.passwords.users.expire', 60);
 
-            return (new MailMessage())
+            return (new MailMessage)
                 ->mailer((string) config('mail.password_reset_mailer'))
-                ->subject('Reset your ' . config('app.name') . ' password')
+                ->subject('Reset your '.config('app.name').' password')
                 ->line('You are receiving this email because a password reset was requested for your admin account.')
                 ->action('Reset password', $resetUrl($notifiable, $token))
                 ->line("This link expires in {$minutes} minutes.")
