@@ -299,6 +299,35 @@ class WarmupSendTest extends TestCase
             ->assertJson(['total' => 1]);
     }
 
+    public function test_history_endpoint_narrows_to_one_run(): void
+    {
+        $this->actingAsAdmin();
+        $older = WarmupSend::create(['template' => EmailTemplateCatalog::TYPE_PROMOTION]);
+        $last = WarmupSend::create(['template' => EmailTemplateCatalog::TYPE_PROMOTION]);
+
+        foreach ([[$older, 'old@example.com', 'failed'], [$last, 'ok@example.com', 'sent'], [$last, 'bad@example.com', 'failed']] as [$run, $email, $status]) {
+            WarmupSendRecipient::create([
+                'warmup_send_id' => $run->id,
+                'email'          => $email,
+                'template'       => EmailTemplateCatalog::TYPE_PROMOTION,
+                'status'         => $status,
+                'error'          => $status === 'failed' ? '550 mailbox unavailable' : null,
+                'sent_at'        => now(),
+            ]);
+        }
+
+        // What the "Last send" banner's failed list asks for: that run's failures only.
+        $this->getJson("/api/v1/admin/warmup-emails/history?send_id={$last->id}&status=failed")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.email', 'bad@example.com')
+            ->assertJsonPath('data.0.error', '550 mailbox unavailable');
+
+        $this->getJson("/api/v1/admin/warmup-emails/history/count?send_id={$last->id}")
+            ->assertOk()
+            ->assertJson(['total' => 2]);
+    }
+
     public function test_the_site_template_is_read_once_per_batch_not_once_per_recipient(): void
     {
         // WarmupMailResolver memoises the resolved template for the batch. Without

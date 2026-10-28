@@ -18,6 +18,7 @@ use App\Services\UniOne\UniOneSendService;
 use App\Services\UniOne\UniOneTemplateService;
 use App\Support\UniOne\UniOneErrors;
 use App\Support\UniOne\UniOneResponse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -140,31 +141,60 @@ class UniOneSendController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->validate([
-            'status' => ['nullable', 'string', 'max:12'],
-            'key_id' => ['nullable', 'integer'],
-            'search' => ['nullable', 'string', 'max:160'],
-            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
-        ]);
+        $filters = $this->listFilters($request);
 
-        $sends = UniOneSend::query()
-            ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->when($filters['key_id'] ?? null, fn ($q, $v) => $q->where('unione_api_key_id', $v))
-            ->search($filters['search'] ?? null)
+        $sends = $this->filtered($filters)
             ->with('key:id,name,key_type,region')
             ->orderByDesc('id')
             // Without the two LONGTEXT message bodies, which no response
-            // returns — see UniOneSend::LIST_COLUMNS.
-            ->paginate($filters['per_page'] ?? 25, UniOneSend::LIST_COLUMNS);
+            // returns — see UniOneSend::LIST_COLUMNS. simplePaginate: no
+            // COUNT here, the screen's total comes from count().
+            ->simplePaginate($filters['per_page'] ?? 25, UniOneSend::LIST_COLUMNS);
 
         return response()->json([
             'data' => UniOneSendResource::collection($sends->items())->resolve(),
             'meta' => [
                 'current_page' => $sends->currentPage(),
-                'last_page' => $sends->lastPage(),
-                'total' => $sends->total(),
+                'per_page' => (int) $sends->perPage(),
+                'has_more' => $sends->hasMorePages(),
             ],
         ]);
+    }
+
+    /** Runs matching the current filters, as a dedicated COUNT. Sizes the paginator. */
+    public function count(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filtered($this->listFilters($request))->count()]);
+    }
+
+    /**
+     * The run history's validated filters, shared by index() and count().
+     *
+     * @return array<string, mixed>
+     */
+    private function listFilters(Request $request): array
+    {
+        return $request->validate([
+            'status' => ['nullable', 'string', 'max:12'],
+            'key_id' => ['nullable', 'integer'],
+            'search' => ['nullable', 'string', 'max:160'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+    }
+
+    /**
+     * The filter conditions, and nothing else — one definition for the listing
+     * and its count.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Builder<UniOneSend>
+     */
+    private function filtered(array $filters): Builder
+    {
+        return UniOneSend::query()
+            ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->when($filters['key_id'] ?? null, fn ($q, $v) => $q->where('unione_api_key_id', $v))
+            ->search($filters['search'] ?? null);
     }
 
     /** Row detail: the chunks, plus every failed address and its reason. */

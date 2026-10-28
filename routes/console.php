@@ -59,22 +59,24 @@ Schedule::command('promotions:dispatch-verification')
 // risk than an overlapping tick.
 // Schedule::command('mailgun:dispatch-receivers')->hourly();
 
-// Collect news facts from the configured RSS feeds.
+// Collect news facts from the configured RSS feeds, then rewrite them.
 //
 // CONFIG-GUARDED, and off by default: ingestion starts when an operator sets
-// NEWS_SCRAPE_SCHEDULED=true, never because a deploy shipped the code. Hourly
-// because the feeds publish a handful of items a day between them and a finer
-// tick would re-read a document that cannot have changed.
+// NEWS_SCRAPE_SCHEDULED=true, never because a deploy shipped the code. The
+// rewrite is under the same switch — with no scrape there is nothing to
+// rewrite, and a rewrite schedule alone would be a key spending on nothing.
 //
-// Deliberately no withoutOverlapping(): the run only reads feeds and writes
-// drafts, and the duplicate guard is the (site_id, slug) unique index in the
-// database rather than a cache lock. A stranded mutex would silently mute this
-// command for a day, which is a worse failure than an overlapping tick.
+// Hourly, ten minutes apart, so the rewrite picks up what that hour's scrape
+// filed. withoutOverlapping() with a 50-minute lock rather than the default
+// 24 hours: a run that died holding the mutex must not mute the command for a
+// day. A rewrite of ten items is bounded by its delay and timeouts well inside
+// that window.
 //
-// `news:rewrite` is NOT scheduled. It spends money per article, so it stays a
-// deliberate command an operator runs after reading what was collected.
+// news:rewrite never publishes: everything it writes stays `active = false`
+// until an editor approves it.
 if (config('news.scheduled')) {
-    Schedule::command('news:scrape')->hourly();
+    Schedule::command('news:scrape')->hourlyAt(7)->withoutOverlapping(50);
+    Schedule::command('news:rewrite --limit=10')->hourlyAt(17)->withoutOverlapping(50);
 }
 
 // Provision upcoming monthly partitions for the promotion history table.

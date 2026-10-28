@@ -31,19 +31,25 @@ class UniOneReceiverController extends Controller
     {
         $filters = $this->filters($request);
 
+        // simplePaginate: no COUNT here — the screen's total comes from count().
         $receivers = $this->filtered($filters)
             ->orderByDesc('id')
-            ->paginate($filters['per_page'] ?? self::PER_PAGE);
+            ->simplePaginate($filters['per_page'] ?? self::PER_PAGE);
 
         return response()->json([
             'data' => UniOneReceiverResource::collection($receivers->items())->resolve(),
             'meta' => [
                 'current_page' => $receivers->currentPage(),
-                'last_page' => $receivers->lastPage(),
-                'total' => $receivers->total(),
-                'per_page' => $receivers->perPage(),
+                'per_page' => (int) $receivers->perPage(),
+                'has_more' => $receivers->hasMorePages(),
             ],
         ]);
+    }
+
+    /** Receivers matching the current filters, as a dedicated COUNT. Sizes the paginator. */
+    public function count(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filtered($this->filters($request))->count()]);
     }
 
     /** Headline numbers for the screen, including how many could be mailed now. */

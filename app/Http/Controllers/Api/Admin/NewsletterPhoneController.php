@@ -90,7 +90,7 @@ class NewsletterPhoneController extends Controller
             $query->orderBy('id', $sortDirection);
         }
 
-        return NewsletterPhoneResource::collection($query->paginate($perPage));
+        return NewsletterPhoneResource::collection($query->simplePaginate($perPage));
     }
 
     /**
@@ -401,7 +401,7 @@ class NewsletterPhoneController extends Controller
             // with an identical created_at.
             ->orderByDesc('id');
 
-        return PhoneSmsHistoryResource::collection($query->paginate($perPage));
+        return PhoneSmsHistoryResource::collection($query->simplePaginate($perPage));
     }
 
     /**

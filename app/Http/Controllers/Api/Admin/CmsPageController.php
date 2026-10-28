@@ -64,6 +64,14 @@ class CmsPageController extends Controller
         return CmsPageResource::collection($this->service->paginate($perPage, $siteId));
     }
 
+    /** Pages matching the site filter, as a dedicated COUNT. Same policy as index(). */
+    public function count(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', CmsPage::class);
+
+        return response()->json(['total' => $this->service->count($request->integer('site_id') ?: null)]);
+    }
+
     public function store(StoreCmsPageRequest $request): JsonResponse
     {
         // Authorization handled by StoreCmsPageRequest::authorize().

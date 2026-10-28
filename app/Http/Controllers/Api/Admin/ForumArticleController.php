@@ -16,6 +16,7 @@ use App\Models\Site;
 use App\Support\DayWindow;
 use App\Support\Forum\ForumContent;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -43,7 +44,44 @@ class ForumArticleController extends Controller
 
     public function index(Request $request, Site $site): JsonResponse
     {
-        $filters = $request->validate([
+        $filters = $this->articleFilters($request);
+
+        // simplePaginate: no COUNT here — the screen's total comes from count().
+        $articles = $this->filteredArticles($site, $filters)
+            ->with(['category:id,name,slug', 'author:id,name'])
+            ->orderByDesc('pinned')
+            ->orderByDesc('id')
+            ->simplePaginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
+
+        return response()->json([
+            'data' => collect($articles->items())->map(fn (ForumArticle $a): array => [
+                ...(new ForumArticleResource($a))->withRealAuthor()->resolve(),
+                'status'     => $a->status,
+                'created_at' => $a->created_at?->toISOString(),
+            ])->all(),
+            'meta' => [
+                'current_page' => $articles->currentPage(),
+                'per_page'     => (int) $articles->perPage(),
+                'has_more'     => $articles->hasMorePages(),
+            ],
+        ]);
+    }
+
+    /** Discussions matching the current filters, as a dedicated COUNT. Sizes the paginator. */
+    public function count(Request $request, Site $site): JsonResponse
+    {
+        return response()->json(['total' => $this->filteredArticles($site, $this->articleFilters($request))->count()]);
+    }
+
+    /**
+     * The listing's validated filters. Shared by index() and count(), so a value
+     * one rejects the other rejects too.
+     *
+     * @return array<string, mixed>
+     */
+    private function articleFilters(Request $request): array
+    {
+        return $request->validate([
             'category_id' => ['nullable', 'integer'],
             'status'      => ['nullable', 'string', 'in:draft,published,archived'],
             'pinned'      => ['nullable', 'boolean'],
@@ -72,13 +110,23 @@ class ForumArticleController extends Controller
                 }
             }],
         ]);
+    }
 
+    /**
+     * The filter conditions, and nothing else. ONE definition shared by the
+     * listing and the count, so the paginator can never disagree with its rows.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Builder<ForumArticle>
+     */
+    private function filteredArticles(Site $site, array $filters): Builder
+    {
         // Resolved in the operator's zone, then compared against the UTC column.
         $tz = $filters['tz'] ?? null;
         $createdFrom = DayWindow::startUtc($filters['from'] ?? null, $tz);
         $createdTo = DayWindow::endUtc($filters['to'] ?? null, $tz);
 
-        $articles = ForumArticle::query()
+        return ForumArticle::query()
             ->where('site_id', $site->id)
             ->when($filters['category_id'] ?? null, fn ($q, $id) => $q->where('forum_category_id', $id))
             ->when($filters['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
@@ -87,25 +135,7 @@ class ForumArticleController extends Controller
             ->when($createdTo, fn ($q, $d) => $q->where('created_at', '<=', $d))
             // Title only, not body: the admin is looking for a thread they
             // named, and a LIKE over MEDIUMTEXT would scan every row.
-            ->when($filters['search'] ?? null, fn ($q, $t) => $q->where('title', 'like', '%' . $t . '%'))
-            ->with(['category:id,name,slug', 'author:id,name'])
-            ->orderByDesc('pinned')
-            ->orderByDesc('id')
-            ->paginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
-
-        return response()->json([
-            'data' => collect($articles->items())->map(fn (ForumArticle $a): array => [
-                ...(new ForumArticleResource($a))->withRealAuthor()->resolve(),
-                'status'     => $a->status,
-                'created_at' => $a->created_at?->toISOString(),
-            ])->all(),
-            'meta' => [
-                'current_page' => $articles->currentPage(),
-                'last_page'    => $articles->lastPage(),
-                'total'        => $articles->total(),
-                'per_page'     => $articles->perPage(),
-            ],
-        ]);
+            ->when($filters['search'] ?? null, fn ($q, $t) => $q->where('title', 'like', '%' . $t . '%'));
     }
 
     public function show(Site $site, ForumArticle $forumArticle): JsonResponse

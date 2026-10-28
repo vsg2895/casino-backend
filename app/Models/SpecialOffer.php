@@ -116,38 +116,17 @@ class SpecialOffer extends Model
     }
 
     /**
-     * The fewest words of prose that make an offer page worth indexing.
-     *
-     * Not a number pulled from the air: the median description across the live
-     * offers was 33 words, and Search Console reported six of them as "Crawled
-     * — currently not indexed". Google was right. A page whose body is a title,
-     * a button and two sentences has nothing to rank, and submitting thirty of
-     * them spends crawl budget that the eleven finished ones need.
-     */
-    public const int MIN_INDEXABLE_WORDS = 80;
-
-    /**
-     * Whether this offer's page is worth putting in front of Google.
+     * Whether this offer's page may be indexed.
      *
      * THE POINT of this living on the model rather than in a page template: the
      * robots tag, the sitemap and anything server-side that needs the same
-     * answer all read one definition. Two implementations of "is this thin"
-     * would drift, and the first symptom would be a sitemap promising a page
+     * answer all read one definition, so a sitemap can never promise a page
      * that serves noindex — the contradiction Search Console reports.
      *
-     * Three ways to qualify, in order:
-     *
-     *   1. An explicit admin `noindex` always wins. Someone decided; nothing
-     *      computed overrules a decision.
-     *   2. Real prose — MIN_INDEXABLE_WORDS or more in `description`.
-     *   3. Filled bonus terms. An offer with the wagering requirement, the
-     *      minimum deposit or the withdrawal cap written out is genuinely
-     *      useful even with a short description: those numbers are the thing a
-     *      player came to find, and they are unique to this offer.
-     *
-     * `bonus_code` deliberately does NOT qualify. A coupon string says nothing
-     * about what the offer is worth, and letting it count would mark a one-word
-     * page indexable.
+     * Every offer page is indexable unless an admin set `noindex` on it. It
+     * used to also require 80+ words of description or filled bonus terms
+     * (wagering, minimum deposit, max cashout), which kept most offers out of
+     * the index; the owner chose to index every bonus page instead (Oct 2026).
      *
      * Note what this is NOT: it is not `active`. An inactive offer is hidden
      * for a different reason and its page serves the stricter
@@ -155,19 +134,7 @@ class SpecialOffer extends Model
      */
     public function isIndexable(): bool
     {
-        if ($this->noindex) {
-            return false;
-        }
-
-        $prose = trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags((string) $this->description))) ?? '');
-
-        if (str_word_count($prose) >= self::MIN_INDEXABLE_WORDS) {
-            return true;
-        }
-
-        return filled($this->wagering_requirement)
-            || filled($this->min_deposit)
-            || filled($this->max_cashout);
+        return ! $this->noindex;
     }
 
     /**

@@ -7,7 +7,6 @@ namespace Tests\Feature;
 use App\Models\Article;
 use App\Models\Site;
 use App\Services\News\NewsFeedParser;
-use App\Services\News\NewsRewriteService;
 use App\Services\News\NewsScrapeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -16,7 +15,8 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * News ingestion: the collector, the rewriter, and the boundaries on both.
+ * News ingestion: the collector and its boundaries. The rewriter has its own
+ * suite, NewsRewriteTest.
  *
  * Every test runs against a saved fixture rather than a live feed. The suite
  * calls Http::preventStrayRequests(), so a test that reached the internet would
@@ -271,99 +271,6 @@ class NewsScrapeTest extends TestCase
         $this->assertSame(1, $totals['failed']);
     }
 
-    // ── the rewriter ─────────────────────────────────────────────────────────
-
-    private function fakeAnthropic(array $fields): void
-    {
-        config(['services.anthropic.key' => 'test-key']);
-
-        Http::fake([
-            'api.anthropic.com/*' => Http::response([
-                'content' => [['type' => 'text', 'text' => json_encode($fields)]],
-            ]),
-        ]);
-    }
-
-    private function draft(): Article
-    {
-        return Article::create([
-            'site_id' => $this->site->id,
-            'type'    => Article::TYPE_NEWS,
-            'title'   => 'Regulator renews eight operator licences',
-            'slug'    => 'regulator-renews-eight-operator-licences',
-            'excerpt' => 'The regulator has renewed the licences of eight operators following its periodic review.',
-            'body'    => null,
-            'active'  => false,
-            'noindex' => true,
-            'source_ref'  => 'igamingbusiness:1',
-            'source_name' => 'iGaming Business',
-            'source_url'  => 'https://igamingbusiness.com/example/',
-            'published_at' => now()->subDay(),
-        ]);
-    }
-
-    public function test_the_rewriter_replaces_the_copy_but_not_the_approval_state(): void
-    {
-        $draft = $this->draft();
-        $this->fakeAnthropic([
-            'title'   => 'Eight licences renewed after review',
-            'excerpt' => 'What the renewal means for players choosing where to deposit.',
-            'body'    => '<p>Original copy.</p><p>Second paragraph.</p>',
-            'meta_title'       => 'Eight licences renewed',
-            'meta_description' => 'What the renewal means for players.',
-        ]);
-
-        $totals = app(NewsRewriteService::class)->run(10);
-
-        $draft->refresh();
-        $this->assertSame(1, $totals['rewritten']);
-        $this->assertSame('Eight licences renewed after review', $draft->title);
-        $this->assertStringContainsString('Original copy.', (string) $draft->body);
-        $this->assertNotNull($draft->meta_title);
-        // Derived on save, never supplied by the model.
-        $this->assertNotNull($draft->read_minutes);
-
-        // Original copy now, so it may be indexed.
-        $this->assertFalse($draft->noindex);
-
-        // Approval stays a human act — the one thing a rewrite must not touch.
-        $this->assertFalse($draft->active);
-
-        // The URL is rebuilt from OUR title, replacing the provisional slug the
-        // collector derived from the source's headline. Only possible because
-        // dedup lives on `source_ref`, and safe because the article has never
-        // been public.
-        $this->assertSame('eight-licences-renewed-after-review', $draft->slug);
-        $this->assertSame('igamingbusiness:1', $draft->source_ref, 'the dedup key is never rewritten');
-    }
-
-    public function test_an_article_already_rewritten_is_not_sent_again(): void
-    {
-        $this->draft()->update(['body' => '<p>Already written.</p>']);
-        $this->fakeAnthropic(['title' => 'Should never be used', 'body' => '<p>x</p>']);
-
-        $totals = app(NewsRewriteService::class)->run(10);
-
-        $this->assertSame(0, $totals['rewritten']);
-        Http::assertNothingSent();
-    }
-
-    public function test_a_refusal_leaves_the_draft_for_a_human_rather_than_publishing_it(): void
-    {
-        $draft = $this->draft();
-        // An empty title is how the prompt asks the model to decline.
-        $this->fakeAnthropic(['title' => '', 'body' => '']);
-
-        $totals = app(NewsRewriteService::class)->run(10);
-
-        $draft->refresh();
-        $this->assertSame(0, $totals['rewritten']);
-        $this->assertSame(1, $totals['failed']);
-        $this->assertNull($draft->body, 'a refusal must leave the draft retryable');
-        $this->assertFalse($draft->active);
-        $this->assertTrue($draft->noindex, 'a draft that still holds the source wording stays unindexable');
-    }
-
     // ── covers ───────────────────────────────────────────────────────────────
 
     /**
@@ -423,16 +330,5 @@ class NewsScrapeTest extends TestCase
     private function svgFor(\App\Services\News\NewsCoverGenerator $covers, string $slug, string $headline): string
     {
         return Storage::disk('public')->get($covers->generate($slug, $headline));
-    }
-
-    public function test_the_rewriter_refuses_to_run_without_a_key(): void
-    {
-        $this->draft();
-        config(['services.anthropic.key' => '']);
-
-        $totals = app(NewsRewriteService::class)->run(10);
-
-        $this->assertSame(0, $totals['rewritten']);
-        Http::assertNothingSent();
     }
 }

@@ -493,12 +493,18 @@ class ForumPublicApiTest extends TestCase
 
         $this->getJson('/api/v1/admin/forum-members?role=moderator')
             ->assertOk()
-            ->assertJsonPath('meta.total', 1)
+            ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.display_name', 'Member');
+        $this->getJson('/api/v1/admin/forum-members/count?role=moderator')
+            ->assertOk()
+            ->assertJsonPath('total', 1);
 
         $this->getJson('/api/v1/admin/forum-members?search=plain')
             ->assertOk()
-            ->assertJsonPath('meta.total', 1);
+            ->assertJsonCount(1, 'data');
+        $this->getJson('/api/v1/admin/forum-members/count?search=plain')
+            ->assertOk()
+            ->assertJsonPath('total', 1);
     }
 
     // ── Part 1: the Forum → Reviews redirect ─────────────────────────────────

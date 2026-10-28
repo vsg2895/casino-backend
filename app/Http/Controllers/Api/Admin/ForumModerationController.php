@@ -12,6 +12,7 @@ use App\Models\ForumPost;
 use App\Models\ForumReport;
 use App\Models\ForumUser;
 use App\Services\Forum\ForumModerationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -40,23 +41,10 @@ class ForumModerationController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
-            'status' => ['nullable', 'string', 'in:'.implode(',', ForumPost::STATUSES)],
-            'reported' => ['nullable', 'boolean'],
-            'search' => ['nullable', 'string', 'max:120'],
-            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
-        ]);
+        $data = $this->queueFilters($request);
 
-        $posts = ForumPost::query()
-            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
-            ->where('status', $data['status'] ?? ForumPost::STATUS_PENDING)
-            ->when($data['reported'] ?? false, fn ($q) => $q->whereHas('reports', fn ($r) => $r->open()))
-            // Free text over bodies. Deliberately NOT indexed: the queue is
-            // small by construction (it is the backlog, not the archive) and an
-            // index on a TEXT column would cost every insert to serve a search
-            // that runs a few times a day.
-            ->when($data['search'] ?? null, fn ($q, $term) => $q->where('body', 'like', '%'.$term.'%'))
+        // simplePaginate: no COUNT here — the screen's total comes from queueCount().
+        $posts = $this->filteredQueue($data)
             ->with([
                 'author:id,display_name,slug,email,status,posts_count,approved_posts_count,created_at',
                 'article:id,title,slug,forum_category_id',
@@ -64,7 +52,7 @@ class ForumModerationController extends Controller
             ])
             ->withCount(['reports as open_reports_count' => fn ($q) => $q->open()])
             ->orderByDesc('id')
-            ->paginate($data['per_page'] ?? self::PER_PAGE);
+            ->simplePaginate($data['per_page'] ?? self::PER_PAGE);
 
         return response()->json([
             'data' => collect($posts->items())->map(fn (ForumPost $p): array => [
@@ -100,11 +88,52 @@ class ForumModerationController extends Controller
             ])->all(),
             'meta' => [
                 'current_page' => $posts->currentPage(),
-                'last_page' => $posts->lastPage(),
-                'total' => $posts->total(),
-                'per_page' => $posts->perPage(),
+                'per_page' => (int) $posts->perPage(),
+                'has_more' => $posts->hasMorePages(),
             ],
         ]);
+    }
+
+    /** Queue entries matching the current filters, as a dedicated COUNT. Sizes the paginator. */
+    public function queueCount(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filteredQueue($this->queueFilters($request))->count()]);
+    }
+
+    /**
+     * The queue's validated filters, shared by index() and queueCount().
+     *
+     * @return array<string, mixed>
+     */
+    private function queueFilters(Request $request): array
+    {
+        return $request->validate([
+            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
+            'status' => ['nullable', 'string', 'in:'.implode(',', ForumPost::STATUSES)],
+            'reported' => ['nullable', 'boolean'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+    }
+
+    /**
+     * The queue's conditions, and nothing else — one definition for the listing
+     * and its count, so the paginator can never disagree with the rows.
+     *
+     * @param  array<string, mixed>  $data
+     * @return Builder<ForumPost>
+     */
+    private function filteredQueue(array $data): Builder
+    {
+        return ForumPost::query()
+            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
+            ->where('status', $data['status'] ?? ForumPost::STATUS_PENDING)
+            ->when($data['reported'] ?? false, fn ($q) => $q->whereHas('reports', fn ($r) => $r->open()))
+            // Free text over bodies. Deliberately NOT indexed: the queue is
+            // small by construction (it is the backlog, not the archive) and an
+            // index on a TEXT column would cost every insert to serve a search
+            // that runs a few times a day.
+            ->when($data['search'] ?? null, fn ($q, $term) => $q->where('body', 'like', '%'.$term.'%'));
     }
 
     /**
@@ -124,21 +153,12 @@ class ForumModerationController extends Controller
      */
     public function memberIndex(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
-            'status' => ['nullable', 'string', 'in:'.implode(',', ForumPost::STATUSES)],
-            'member_id' => ['nullable', 'integer', 'exists:forum_users,id'],
-            'search' => ['nullable', 'string', 'max:120'],
-            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
-        ]);
+        $data = $this->memberPostFilters($request);
 
-        $posts = ForumPost::query()
-            ->whereNotNull('forum_user_id')
-            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
-            // No default: absent means EVERY status, unlike the queue.
-            ->when($data['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->when($data['member_id'] ?? null, fn ($q, $id) => $q->where('forum_user_id', $id))
-            ->when($data['search'] ?? null, fn ($q, $term) => $q->where('body', 'like', '%'.$term.'%'))
+        // simplePaginate: no COUNT here — the screen's total comes from
+        // memberIndexCount(). The per-status tab totals below are a different
+        // question (every status, not this filter) and stay here.
+        $posts = $this->filteredMemberPosts($data)
             ->with([
                 'author:id,display_name,slug,email,status,posts_count,approved_posts_count,created_at',
                 'article:id,title,slug,forum_category_id',
@@ -146,7 +166,7 @@ class ForumModerationController extends Controller
             ])
             ->withCount(['reports as open_reports_count' => fn ($q) => $q->open()])
             ->orderByDesc('id')
-            ->paginate($data['per_page'] ?? self::PER_PAGE);
+            ->simplePaginate($data['per_page'] ?? self::PER_PAGE);
 
         // Totals for the status tabs, scoped by the SAME site filter but not by
         // the status one — a tab that counted only its own selection would read
@@ -189,12 +209,52 @@ class ForumModerationController extends Controller
             ])->all(),
             'meta' => [
                 'current_page' => $posts->currentPage(),
-                'last_page' => $posts->lastPage(),
-                'total' => $posts->total(),
-                'per_page' => $posts->perPage(),
+                'per_page' => (int) $posts->perPage(),
+                'has_more' => $posts->hasMorePages(),
                 'by_status' => $counts->map(static fn ($v): int => (int) $v),
             ],
         ]);
+    }
+
+    /** Member posts matching the current filters, as a dedicated COUNT. Sizes the paginator. */
+    public function memberIndexCount(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filteredMemberPosts($this->memberPostFilters($request))->count()]);
+    }
+
+    /**
+     * The member-posts browse's validated filters, shared by memberIndex() and
+     * memberIndexCount().
+     *
+     * @return array<string, mixed>
+     */
+    private function memberPostFilters(Request $request): array
+    {
+        return $request->validate([
+            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
+            'status' => ['nullable', 'string', 'in:'.implode(',', ForumPost::STATUSES)],
+            'member_id' => ['nullable', 'integer', 'exists:forum_users,id'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+    }
+
+    /**
+     * The browse's conditions, and nothing else — one definition for the
+     * listing and its count.
+     *
+     * @param  array<string, mixed>  $data
+     * @return Builder<ForumPost>
+     */
+    private function filteredMemberPosts(array $data): Builder
+    {
+        return ForumPost::query()
+            ->whereNotNull('forum_user_id')
+            ->when($data['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
+            // No default: absent means EVERY status, unlike the queue.
+            ->when($data['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->when($data['member_id'] ?? null, fn ($q, $id) => $q->where('forum_user_id', $id))
+            ->when($data['search'] ?? null, fn ($q, $term) => $q->where('body', 'like', '%'.$term.'%'));
     }
 
     /** Badge counts for the sidebar and the screen's tabs. */
@@ -269,28 +329,14 @@ class ForumModerationController extends Controller
      */
     public function members(Request $request): JsonResponse
     {
-        $filters = $request->validate([
-            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
-            'status' => ['nullable', 'string', 'in:active,muted,banned'],
-            'role' => ['nullable', 'string', 'in:'.implode(',', ForumUser::ROLES)],
-            'verified' => ['nullable', 'boolean'],
-            'search' => ['nullable', 'string', 'max:120'],
-            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
-        ]);
+        $filters = $this->memberFilters($request);
 
-        $members = ForumUser::query()
-            ->when($filters['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
-            ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->when($filters['role'] ?? null, fn ($q, $v) => $q->where('role', $v))
-            ->when(isset($filters['verified']), fn ($q) => (bool) $filters['verified']
-                ? $q->whereNotNull('email_verified_at')
-                : $q->whereNull('email_verified_at'))
-            ->when($filters['search'] ?? null, fn ($q, $t) => $q->where(
-                fn ($w) => $w->where('display_name', 'like', "%{$t}%")->orWhere('email', 'like', "%{$t}%"),
-            ))
+        // simplePaginate, not paginate: the screen takes its total from
+        // membersCount() below, so a COUNT here would be a second one.
+        $members = $this->filteredMembers($filters)
             ->with('site:id,name,slug')
             ->orderByDesc('id')
-            ->paginate($filters['per_page'] ?? self::PER_PAGE);
+            ->simplePaginate($filters['per_page'] ?? self::PER_PAGE);
 
         return response()->json([
             'data' => collect($members->items())->map(fn (ForumUser $m): array => [
@@ -321,11 +367,62 @@ class ForumModerationController extends Controller
             ])->all(),
             'meta' => [
                 'current_page' => $members->currentPage(),
-                'last_page' => $members->lastPage(),
-                'total' => $members->total(),
-                'per_page' => $members->perPage(),
+                'per_page' => (int) $members->perPage(),
+                'has_more' => $members->hasMorePages(),
             ],
         ]);
+    }
+
+    /**
+     * Members matching the current filters, as a dedicated COUNT.
+     *
+     * Built from {@see filteredMembers()} — the same conditions the listing
+     * uses — with no eager load and no ordering. It sizes the Users screen's
+     * paginator and its total badge.
+     */
+    public function membersCount(Request $request): JsonResponse
+    {
+        return response()->json(['total' => $this->filteredMembers($this->memberFilters($request))->count()]);
+    }
+
+    /**
+     * The Users screen's validated filters. Shared by the listing and the count,
+     * so a value one rejects the other rejects too.
+     *
+     * @return array<string, mixed>
+     */
+    private function memberFilters(Request $request): array
+    {
+        return $request->validate([
+            'site_id' => ['nullable', 'integer', 'exists:sites,id'],
+            'status' => ['nullable', 'string', 'in:active,muted,banned'],
+            'role' => ['nullable', 'string', 'in:'.implode(',', ForumUser::ROLES)],
+            'verified' => ['nullable', 'boolean'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+        ]);
+    }
+
+    /**
+     * The member filter conditions, and nothing else. ONE definition shared by
+     * the listing and the count, so the paginator can never disagree with the
+     * rows it pages over.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Builder<ForumUser>
+     */
+    private function filteredMembers(array $filters): Builder
+    {
+        return ForumUser::query()
+            ->when($filters['site_id'] ?? null, fn ($q, $id) => $q->where('site_id', $id))
+            ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->when($filters['role'] ?? null, fn ($q, $v) => $q->where('role', $v))
+            ->when(isset($filters['verified']), fn ($q) => (bool) $filters['verified']
+                ? $q->whereNotNull('email_verified_at')
+                : $q->whereNull('email_verified_at'))
+            ->when($filters['search'] ?? null, fn ($q, $t) => $q->where(
+                fn ($w) => $w->where('display_name', 'like', "%{$t}%")->orWhere('email', 'like', "%{$t}%"),
+            ));
     }
 
     /** Change a member's role. See {@see ForumModerationService::setMemberRole()}. */
@@ -346,7 +443,9 @@ class ForumModerationController extends Controller
             ->where('forum_user_id', $forumUser->id)
             ->with(['article:id,title,slug'])
             ->orderByDesc('id')
-            ->paginate(self::PER_PAGE);
+            // simplePaginate: the drawer shows the latest page and no total,
+            // so a COUNT of everything the member wrote would be read by nobody.
+            ->simplePaginate(self::PER_PAGE);
 
         return response()->json([
             'data' => collect($posts->items())->map(fn (ForumPost $p): array => [
@@ -359,8 +458,8 @@ class ForumModerationController extends Controller
             ])->all(),
             'meta' => [
                 'current_page' => $posts->currentPage(),
-                'last_page' => $posts->lastPage(),
-                'total' => $posts->total(),
+                'per_page' => (int) $posts->perPage(),
+                'has_more' => $posts->hasMorePages(),
             ],
         ]);
     }

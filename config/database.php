@@ -21,6 +21,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Slow Request Warning
+    |--------------------------------------------------------------------------
+    |
+    | When one request (or one queued job) spends longer than this many
+    | milliseconds in the database IN TOTAL, a warning is logged naming the
+    | route or command. Logging only: nothing is aborted or changed. 0 or a
+    | negative value turns it off. See AppServiceProvider::boot().
+    |
+    */
+
+    'slow_query_threshold_ms' => (int) env('DB_SLOW_QUERY_THRESHOLD_MS', 500),
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Connections
     |--------------------------------------------------------------------------
     |

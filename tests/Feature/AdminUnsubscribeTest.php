@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use App\Models\Unsubscribe;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
 
@@ -25,7 +26,11 @@ class AdminUnsubscribeTest extends TestCase
             ->assertOk()
             ->assertJsonCount(2, 'data')
             ->assertJsonPath('data.0.site.id', $site->id)
-            ->assertJsonStructure(['data' => [['id', 'email', 'type', 'unsubscribed_at']], 'meta' => ['total']]);
+            ->assertJsonStructure(['data' => [['id', 'email', 'type', 'unsubscribed_at']], 'meta' => ['current_page', 'per_page']])
+            // Simple-paginated: the screen's total comes from /count.
+            ->assertJsonMissingPath('meta.total');
+
+        $this->getJson('/api/v1/admin/unsubscribes/count')->assertOk()->assertExactJson(['total' => 2]);
     }
 
     public function test_index_filters_by_type_and_site_and_search(): void
@@ -82,6 +87,32 @@ class AdminUnsubscribeTest extends TestCase
         $res->assertOk();
         $this->assertStringContainsString('text/csv', (string) $res->headers->get('content-type'));
         $this->assertStringContainsString('csv@example.com', $res->streamedContent());
+    }
+
+    /**
+     * cursor() ignores with(), so this export used to run one `sites` query per
+     * row. Sites are now eager-loaded per chunk: a fixed number of queries no
+     * matter how many rows, with every row still naming its own site.
+     */
+    public function test_export_loads_sites_without_a_query_per_row(): void
+    {
+        $this->actingAsAdmin();
+        [$siteA] = $this->siteWithKey();
+        [$siteB] = $this->siteWithKey();
+        foreach (range(1, 6) as $i) {
+            Unsubscribe::record(($i % 2 ? $siteA : $siteB)->id, "row{$i}@example.com", Unsubscribe::TYPE_PROMOTION);
+        }
+
+        $response = $this->get('/api/v1/admin/unsubscribes/export');
+        DB::enableQueryLog();
+        $csv = $response->streamedContent();
+        $siteQueries = collect(DB::getQueryLog())->filter(fn (array $q) => str_contains($q['query'], '"sites"'));
+
+        $this->assertCount(1, $siteQueries);
+        $siteByEmail = collect(explode("\n", trim($csv)))->skip(1)
+            ->mapWithKeys(fn (string $line) => [str_getcsv($line)[0] => str_getcsv($line)[2]]);
+        $this->assertSame($siteA->name, $siteByEmail['row1@example.com']);
+        $this->assertSame($siteB->name, $siteByEmail['row2@example.com']);
     }
 
     public function test_endpoints_require_auth(): void

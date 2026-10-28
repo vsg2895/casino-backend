@@ -45,7 +45,8 @@ class CasinoReviewController extends Controller
             $this->filtered($request)
                 ->with(['site:id,name', 'casino:id,name,slug'])
                 ->latest('id')
-                ->paginate($perPage),
+                // No COUNT here: the screen's total comes from count() below.
+                ->simplePaginate($perPage),
         );
     }
 

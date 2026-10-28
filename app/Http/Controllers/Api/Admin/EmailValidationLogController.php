@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\EmailValidationLogResource;
 use App\Models\EmailValidationLog;
 use App\Support\CsvExport;
+use App\Support\EagerCursor;
 use App\Support\Validation\ValidationOutcome;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -47,7 +48,11 @@ class EmailValidationLogController extends Controller
             // A stable tiebreak: two rows can share a timestamp or a score, and
             // without this the paginator can repeat or skip one between pages.
             ->orderByDesc('id')
-            ->paginate(min(200, max(10, $request->integer('per_page', 25))));
+            // simplePaginate, not paginate: the screen takes its total from
+            // `count` below, so paginate()'s own COUNT(*) over the whole
+            // filtered log was a second scan nobody read. No meta.total or
+            // meta.last_page in this response.
+            ->simplePaginate(min(200, max(10, $request->integer('per_page', 25))));
 
         return EmailValidationLogResource::collection($logs);
     }
@@ -95,7 +100,9 @@ class EmailValidationLogController extends Controller
 
     public function export(Request $request): StreamedResponse
     {
-        $rows = $this->filtered($request)->with('site:id,name,slug')->latest('id')->cursor();
+        // EagerCursor, not ->cursor(): cursor() drops the with() and would run
+        // one sites query per exported row.
+        $rows = EagerCursor::of($this->filtered($request)->with('site:id,name,slug')->latest('id'));
 
         return CsvExport::download(
             'email-validation-' . now()->format('Y-m-d') . '.csv',

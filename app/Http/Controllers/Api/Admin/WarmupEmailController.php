@@ -64,7 +64,7 @@ class WarmupEmailController extends Controller
             // this, paging repeats some rows and skips others.
             ->orderByDesc('id');
 
-        return WarmupEmailResource::collection($query->paginate($perPage));
+        return WarmupEmailResource::collection($query->simplePaginate($perPage));
     }
 
     /**
@@ -273,7 +273,7 @@ class WarmupEmailController extends Controller
             ->with('site:id,name,domain')
             ->newest();
 
-        return WarmupSendRecipientResource::collection($query->paginate($perPage));
+        return WarmupSendRecipientResource::collection($query->simplePaginate($perPage));
     }
 
     /**
@@ -323,6 +323,7 @@ class WarmupEmailController extends Controller
             ->search($request->query('search'))
             ->forSite($request->query('site_id'))
             ->forTemplate($request->query('template'))
+            ->forRun($request->query('send_id'))
             ->withStatus($request->query('status'))
             ->sentFrom($request->query('sent_from'), $tz)
             ->sentUntil($request->query('sent_to'), $tz);

@@ -92,6 +92,19 @@ class WarmupSendRecipient extends Model
         return $query->where('email', 'like', $escaped . '%');
     }
 
+    /**
+     * Narrow to one run — what the "Last send" banner's failed list reads, so
+     * the rows it shows are exactly the ones its `failed_count` counted.
+     */
+    public function scopeForRun(Builder $query, mixed $sendId): Builder
+    {
+        if (! is_scalar($sendId) || trim((string) $sendId) === '') {
+            return $query;
+        }
+
+        return $query->where('warmup_send_id', (int) $sendId);
+    }
+
     /** Narrow to one site, one template or one outcome — the history filters. */
     public function scopeForSite(Builder $query, mixed $siteId): Builder
     {

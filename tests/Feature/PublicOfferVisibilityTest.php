@@ -79,6 +79,33 @@ class PublicOfferVisibilityTest extends TestCase
             ->assertJsonPath('data.slug', $offer->slug);
     }
 
+    // ── is_indexable ──────────────────────────────────────────────────────
+
+    public function test_a_short_offer_without_terms_is_still_indexable(): void
+    {
+        [$site, $key] = $this->siteWithKey();
+        $offer = SpecialOffer::factory()->for($this->attachedCasino($site))->create([
+            'description'          => 'Ten free spins on sign-up.',
+            'wagering_requirement' => null,
+            'min_deposit'          => null,
+            'max_cashout'          => null,
+        ]);
+
+        $this->getJson($this->publicBase($site).'/special-offers/'.$offer->slug, $this->siteHeaders($key))
+            ->assertOk()
+            ->assertJsonPath('data.is_indexable', true);
+    }
+
+    public function test_an_admin_noindex_keeps_an_offer_out_of_the_index(): void
+    {
+        [$site, $key] = $this->siteWithKey();
+        $offer = SpecialOffer::factory()->for($this->attachedCasino($site))->create(['noindex' => true]);
+
+        $this->getJson($this->publicBase($site).'/special-offers/'.$offer->slug, $this->siteHeaders($key))
+            ->assertOk()
+            ->assertJsonPath('data.is_indexable', false);
+    }
+
     // ── /categories/{slug} featured offer ─────────────────────────────────
 
     private function categoryCasinoWithFeatured(Site $site, array $offerAttrs): Casino

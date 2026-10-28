@@ -31,7 +31,7 @@ class PromotionEmailHistoryController extends Controller
             ->orderByDesc('sent_date')
             ->orderByDesc('id');
 
-        return PromotionEmailHistoryResource::collection($query->paginate(50)->withQueryString());
+        return PromotionEmailHistoryResource::collection($query->simplePaginate(50)->withQueryString());
     }
 
     /**

@@ -27,13 +27,22 @@ class SiteRevalidationController extends Controller
     {
         $perPage = min(max($request->integer('per_page') ?: 20, 1), 100);
 
+        // No COUNT here: the screen's total comes from count() below.
         return SiteRevalidationResource::collection(
             SiteRevalidation::query()
                 ->where('site_id', $site->id)
                 ->latest('created_at')
                 ->latest('id')
-                ->paginate($perPage),
+                ->simplePaginate($perPage),
         );
+    }
+
+    /** This site's revalidation log size, as a dedicated COUNT. */
+    public function count(Site $site): JsonResponse
+    {
+        return response()->json([
+            'total' => SiteRevalidation::query()->where('site_id', $site->id)->count(),
+        ]);
     }
 
     /**

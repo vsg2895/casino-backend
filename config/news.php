@@ -142,15 +142,31 @@ return [
          */
     ],
 
+    /**
+     * `news:rewrite` — turns the stored facts into original copy with Google
+     * Gemini. Used in exactly one place; nothing else calls the model.
+     */
     'rewrite' => [
         /**
-         * Cheap by default. This runs per article and the job is constrained
-         * rewriting of supplied facts, not open-ended reasoning.
+         * No fallback. A missing key stops the command with an explanation. The
+         * key is sent as a request header, never in the URL, and is never
+         * logged or echoed.
          */
-        'model'      => env('NEWS_REWRITE_MODEL', 'claude-haiku-4-5-20251001'),
-        'max_tokens' => 2000,
-        'timeout'    => 60,
-        /** Articles per `news:rewrite` run unless --limit says otherwise. */
-        'batch'      => 10,
+        'api_key' => env('GEMINI_API_KEY'),
+
+        /** Cheap by default: constrained rewriting of supplied facts, per article. */
+        'model' => env('NEWS_REWRITE_MODEL', 'gemini-2.5-flash'),
+
+        /** Seconds between requests — the free tier's per-minute quota. */
+        'delay_seconds' => 5,
+
+        /**
+         * The most of the source's six-word runs (headline + teaser) that may
+         * appear verbatim in the output before the rewrite is rejected.
+         */
+        'max_overlap' => 0.15,
+
+        /** Seconds before one model request is abandoned. */
+        'timeout' => 60,
     ],
 ];

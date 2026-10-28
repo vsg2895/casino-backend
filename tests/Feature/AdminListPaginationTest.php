@@ -39,10 +39,10 @@ class AdminListPaginationTest extends TestCase
         $first = $this->getJson('/api/v1/admin/casinos')->assertOk();
 
         $first->assertJsonCount(15, 'data');
-        $first->assertJsonPath('meta.total', 16);
-        // The paginator is drawn from this. It read 1 before the fix, which is
-        // exactly why page two did not exist.
-        $first->assertJsonPath('meta.last_page', 2);
+        // Simple-paginated: the listing says only that a next page exists, and
+        // the paginator is drawn from the dedicated count — 16 rows, two pages.
+        $this->assertNotNull($first->json('links.next'), 'page two must be reachable');
+        $this->getJson('/api/v1/admin/casinos/count')->assertOk()->assertExactJson(['total' => 16]);
 
         $second = $this->getJson('/api/v1/admin/casinos?page=2')->assertOk();
 
@@ -70,7 +70,7 @@ class AdminListPaginationTest extends TestCase
             ->assertOk()
             ->assertJsonCount(5, 'data')
             ->assertJsonPath('meta.per_page', 5)
-            ->assertJsonPath('meta.last_page', 4);
+            ->assertJsonMissingPath('meta.last_page');
     }
 
     public function test_the_casino_page_size_is_capped(): void

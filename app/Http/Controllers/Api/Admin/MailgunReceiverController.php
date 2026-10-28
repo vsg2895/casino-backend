@@ -45,7 +45,7 @@ class MailgunReceiverController extends Controller
         );
 
         return MailgunReceiverResource::collection(
-            $this->filtered($request)->latest('id')->paginate($perPage),
+            $this->filtered($request)->latest('id')->simplePaginate($perPage),
         );
     }
 

@@ -57,6 +57,12 @@ class ArticleResource extends JsonResource
             'meta_description' => $this->meta_description,
             'canonical_url'   => $this->canonical_url,
             'noindex'         => (bool) $this->noindex,
+            // Admin listing only — see ArticleController::index(). True while a
+            // scraped draft still holds the source's headline and teaser.
+            'awaiting_rewrite' => $this->when(
+                array_key_exists('awaiting_rewrite', $this->resource->getAttributes()),
+                fn () => (bool) $this->resource->getAttributes()['awaiting_rewrite'],
+            ),
             'updated_at'      => $this->updated_at?->toISOString(),
         ];
     }

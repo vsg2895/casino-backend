@@ -45,7 +45,7 @@ class VerifyEmailSendController extends Controller
                 // reads.
                 ->with('site:id,name,domain')
                 ->newest()
-                ->paginate($perPage),
+                ->simplePaginate($perPage),
         );
     }
 

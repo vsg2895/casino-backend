@@ -30,9 +30,11 @@ use App\Services\Mail\Transport\MailgunApiTransport;
 use App\Services\Mail\Transport\SendgridClickTrackingClient;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\MassAssignmentException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -64,6 +66,36 @@ class AppServiceProvider extends ServiceProvider
         Model::handleLazyLoadingViolationUsing(static function (Model $model, string $relation): void {
             Log::warning('Lazy loaded ['.$relation.'] on ['.$model::class.'].');
         });
+
+        /*
+         * Slow-request WARNING, every environment.
+         *
+         * Fires once per request (once per job: the queue worker resets the
+         * total after each one) when the time spent in the database passes the
+         * threshold. It only logs, so no outcome changes, which is why it may run
+         * in production too.
+         *
+         * The ROUTE PATTERN is logged, never the URL: verify and unsubscribe
+         * tokens travel in the path, and those are secrets that must not reach a
+         * log. No SQL or bindings either, for the same reason (subscriber emails).
+         */
+        $slowQueryThreshold = (int) config('database.slow_query_threshold_ms');
+        if ($slowQueryThreshold > 0) {
+            DB::whenQueryingForLongerThan($slowQueryThreshold, function (Connection $connection) use ($slowQueryThreshold): void {
+                // A matched route means HTTP; artisan and queue workers have none.
+                $request = $this->app->make('request');
+                $route = $request->route();
+
+                Log::warning('Slow database work in one request', [
+                    'total_ms'     => round($connection->totalQueryDuration(), 1),
+                    'threshold_ms' => $slowQueryThreshold,
+                    'connection'   => $connection->getName(),
+                    'route'        => $route !== null
+                        ? $request->method() . ' ' . $route->uri()
+                        : 'console: ' . ($_SERVER['argv'][1] ?? '?'),
+                ]);
+            });
+        }
 
         /*
          * Silently-discarded attribute DETECTION, outside production only.

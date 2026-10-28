@@ -6,7 +6,6 @@ namespace App\Console\Commands;
 
 use App\Jobs\SendScheduledPromotionJob;
 use App\Models\EmailSchedule;
-use App\Support\ClockFacts;
 use Carbon\CarbonInterface;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;

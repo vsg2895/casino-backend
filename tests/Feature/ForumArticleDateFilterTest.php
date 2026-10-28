@@ -82,11 +82,22 @@ class ForumArticleDateFilterTest extends TestCase
         return $article->refresh();
     }
 
+    /**
+     * Rows the listing returns for this window, checked against its count.
+     *
+     * The listing is simple-paginated and carries no `meta.total`; the screen
+     * sizes itself from `/count`. Both apply the window, so both are asserted.
+     */
     private function total(array $query): int
     {
-        $url = "/api/v1/admin/sites/{$this->site->id}/forum-articles?" . http_build_query($query);
+        $base = "/api/v1/admin/sites/{$this->site->id}/forum-articles";
+        $qs = http_build_query($query);
+        $rows = count($this->getJson("{$base}?{$qs}")->assertOk()->json('data'));
+        $counted = (int) $this->getJson("{$base}/count?{$qs}")->assertOk()->json('total');
 
-        return (int) $this->getJson($url)->assertOk()->json('meta.total');
+        $this->assertSame($rows, $counted, 'the listing and its count must apply the same window');
+
+        return $rows;
     }
 
     public function test_a_post_after_local_midnight_belongs_to_the_operators_day(): void

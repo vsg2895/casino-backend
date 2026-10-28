@@ -251,6 +251,22 @@ Keys that `fill()` drops because they are not in `$fillable` are logged the same
 still throws. Grep the same output for `Discarded non-fillable`. Today it reports only test
 fixtures; its first production catch was `ForumReport` (`REFACTOR_PLAN.md` §10.5).
 
+`cursor()` **drops `with()`**: each model is hydrated alone, so `Model::with('site')->cursor()`
+runs one `sites` query per row, and lazy-loading detection does not flag it (Eloquent only
+flags models fetched in a multi-row result). Stream with `App\Support\EagerCursor::of($query)`
+instead; it keeps the single query and order and eager-loads per chunk.
+
+Admin listings that have a `…/count` endpoint use `simplePaginate()`, not `paginate()`.
+The screen calls `/count` beside every listing request and sizes its paginator from it, so
+a `paginate()` there would count the same filtered set twice. The listing and the count
+must share one `filtered()` builder. The list of endpoints is in `docs/API.md` (Admin API),
+and `tests/Feature/SimplePaginatedListingsTest.php` fails if one reverts to counting.
+
+Every environment logs `Slow database work in one request` when one request or one queued
+job spends more than `database.slow_query_threshold_ms` (default 500, env
+`DB_SLOW_QUERY_THRESHOLD_MS`, 0 disables) in the database. It names the route **pattern**,
+never the URL, because verify/unsubscribe tokens travel in the path.
+
 ## SEO obligations
 
 Every publicly exposed casino/offer/page must carry `slug`, `meta_title`,

@@ -141,7 +141,10 @@ class ForumModerationTest extends TestCase
 
         $this->getJson('/api/v1/admin/forum-posts')
             ->assertOk()
-            ->assertJsonPath('meta.total', 1);
+            ->assertJsonCount(1, 'data');
+        $this->getJson('/api/v1/admin/forum-posts/count')
+            ->assertOk()
+            ->assertExactJson(['total' => 1]);
     }
 
     public function test_banning_a_member_revokes_their_sessions(): void

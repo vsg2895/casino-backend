@@ -34,8 +34,10 @@ class CasinoController extends Controller
         $perPage = $request->integer('per_page') ?: self::PER_PAGE;
         $perPage = min(max($perPage, 1), self::MAX_PER_PAGE);
 
+        // simplePaginate, not paginate: the screen sizes its paginator from
+        // count() below, so a COUNT here would be the same one run twice.
         return new CasinoCollection(
-            Casino::with('categories')->latest()->paginate($perPage)
+            Casino::with('categories')->latest()->simplePaginate($perPage)
         );
     }
 

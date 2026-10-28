@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Models\EmailValidationLog;
 use App\Models\Site;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
 
@@ -66,6 +67,37 @@ class EmailValidationLogAdminTest extends TestCase
     }
 
     // ── THE query the screen exists for ──────────────────────────────────────
+
+    /**
+     * The listing is simple-paginated: the screen reads its total from `count`,
+     * so the listing must not pay for a COUNT(*) of its own. Paging still works
+     * through `links.next`.
+     */
+    public function test_the_listing_runs_no_count_and_still_pages(): void
+    {
+        foreach (range(1, 12) as $i) {
+            $this->log(['email' => "row{$i}@x.test"]);
+        }
+
+        DB::enableQueryLog();
+        $first = $this->getJson('/api/v1/admin/email-validation?per_page=10')->assertOk();
+        $counts = collect(DB::getQueryLog())->filter(fn (array $q) => str_contains(strtolower($q['query']), 'count('));
+
+        $this->assertCount(0, $counts);
+        $first->assertJsonCount(10, 'data')
+            ->assertJsonMissingPath('meta.total')
+            ->assertJsonMissingPath('meta.last_page')
+            ->assertJsonPath('meta.current_page', 1);
+        $this->assertNotNull($first->json('links.next'));
+
+        $this->getJson('/api/v1/admin/email-validation?per_page=10&page=2')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('links.next', null);
+
+        // The total the screen shows still comes from here.
+        $this->getJson('/api/v1/admin/email-validation/count')->assertOk()->assertJsonPath('total', 12);
+    }
 
     public function test_the_tuning_query_is_expressible(): void
     {
@@ -264,6 +296,29 @@ class EmailValidationLogAdminTest extends TestCase
         // questions the screen does.
         $this->assertStringContainsString('Disposable', $csv);
         $this->assertStringContainsString('Role', $csv);
+    }
+
+    /**
+     * cursor() ignores with(), so this export used to run one `sites` query per
+     * row. It now eager-loads per chunk, and each row still names its site.
+     */
+    public function test_the_csv_export_loads_sites_without_a_query_per_row(): void
+    {
+        [$other] = $this->siteWithKey();
+        foreach (range(1, 6) as $i) {
+            $this->log(['email' => "row{$i}@x.test", 'site_id' => ($i % 2 ? $this->site : $other)->id]);
+        }
+
+        $response = $this->get('/api/v1/admin/email-validation/export')->assertOk();
+        DB::enableQueryLog();
+        $csv = $response->streamedContent();
+        $siteQueries = collect(DB::getQueryLog())->filter(fn (array $q) => str_contains($q['query'], '"sites"'));
+
+        $this->assertCount(1, $siteQueries);
+        $siteByEmail = collect(explode("\n", trim($csv)))->skip(1)
+            ->mapWithKeys(fn (string $line) => [str_getcsv($line)[2] => str_getcsv($line)[1]]);
+        $this->assertSame($this->site->name, $siteByEmail['row1@x.test']);
+        $this->assertSame($other->name, $siteByEmail['row2@x.test']);
     }
 
     public function test_the_screen_is_read_only(): void

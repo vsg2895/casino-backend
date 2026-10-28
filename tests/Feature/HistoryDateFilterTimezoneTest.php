@@ -81,11 +81,24 @@ class HistoryDateFilterTimezoneTest extends TestCase
         ]);
     }
 
+    /**
+     * Rows the listing returns for this window, checked against the screen's
+     * own COUNT endpoint.
+     *
+     * The listings are simple-paginated and carry no `meta.total`; the screen
+     * sizes itself from `{$url}/count`. Both are asserted, because both apply
+     * the window: a listing and a count that disagreed would show a paginator
+     * that does not match its rows.
+     */
     private function total(string $url, array $query): int
     {
-        return (int) $this->getJson($url . '?' . http_build_query($query))
-            ->assertOk()
-            ->json('meta.total');
+        $qs = http_build_query($query);
+        $rows = count($this->getJson("{$url}?{$qs}")->assertOk()->json('data'));
+        $counted = (int) $this->getJson("{$url}/count?{$qs}")->assertOk()->json('total');
+
+        $this->assertSame($rows, $counted, "{$url}: the listing and its count must apply the same window");
+
+        return $rows;
     }
 
     /**

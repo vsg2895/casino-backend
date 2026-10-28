@@ -56,11 +56,21 @@ class UniOneReceiverDateFilterTest extends TestCase
         return $receiver->refresh();
     }
 
+    /**
+     * Rows the listing returns for this window, checked against its count.
+     *
+     * The listing is simple-paginated and carries no `meta.total`; the screen
+     * sizes itself from `/count`. Both apply the window, so both are asserted.
+     */
     private function total(array $query): int
     {
-        return (int) $this->getJson(self::ENDPOINT . '?' . http_build_query($query))
-            ->assertOk()
-            ->json('meta.total');
+        $qs = http_build_query($query);
+        $rows = count($this->getJson(self::ENDPOINT . '?' . $qs)->assertOk()->json('data'));
+        $counted = (int) $this->getJson(self::ENDPOINT . '/count?' . $qs)->assertOk()->json('total');
+
+        $this->assertSame($rows, $counted, 'the listing and its count must apply the same window');
+
+        return $rows;
     }
 
     // ── The operator's day ───────────────────────────────────────────────────
@@ -155,7 +165,7 @@ class UniOneReceiverDateFilterTest extends TestCase
 
         $query = http_build_query(['sent_from' => '2026-10-20', 'tz' => self::TZ]);
 
-        $listing = (int) $this->getJson(self::ENDPOINT . '?' . $query)->assertOk()->json('meta.total');
+        $listing = (int) $this->getJson(self::ENDPOINT . '/count?' . $query)->assertOk()->json('total');
         $stats = (int) $this->getJson(self::ENDPOINT . '/stats?' . $query)->assertOk()->json('data.total');
 
         $this->assertSame(1, $listing);

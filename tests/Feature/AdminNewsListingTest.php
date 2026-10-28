@@ -97,10 +97,15 @@ class AdminNewsListingTest extends TestCase
         // Five rows in hand, six in the section — the counts below describe the
         // section, which is the whole point of them coming from the server.
         $this->assertCount(5, $res->json('data'));
-        $res->assertJsonPath('meta.total', 6)
+        $res->assertJsonPath('meta.has_more', true)
             ->assertJsonPath('meta.published_count', 3)
             ->assertJsonPath('meta.most_popular_count', 1)
             ->assertJsonPath('meta.featured_count', 2);
+
+        // The section's size — what sizes the paginator — is the dedicated count.
+        $this->getJson("/api/v1/admin/sites/{$site->id}/articles/count?type=news")
+            ->assertOk()
+            ->assertExactJson(['total' => 6]);
     }
 
     public function test_the_counts_do_not_leak_across_sites_or_sections(): void
@@ -126,9 +131,41 @@ class AdminNewsListingTest extends TestCase
 
         $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")
             ->assertOk()
-            ->assertJsonPath('meta.total', 1)
+            ->assertJsonCount(1, 'data')
             ->assertJsonPath('meta.published_count', 1)
             ->assertJsonPath('meta.featured_count', 1);
+
+        $this->getJson("/api/v1/admin/sites/{$site->id}/articles/count?type=news")
+            ->assertOk()
+            ->assertExactJson(['total' => 1]);
+    }
+
+    public function test_a_scraped_draft_awaiting_its_rewrite_is_flagged(): void
+    {
+        /*
+         * Until `news:rewrite` has run, a scraped row's title and excerpt are the
+         * SOURCE's words. The flag is what stops an editor publishing them, and
+         * it is computed in SQL because the listing never selects the body.
+         */
+        [$site] = $this->siteWithKey(['news_enabled' => true]);
+        $this->actingAsAdmin();
+
+        $this->newsFor($site->id, 'Scraped waiting', '2026-09-20 10:00:00')
+            ->update(['source_ref' => 'feed:1', 'body' => null]);
+        $this->newsFor($site->id, 'Scraped rewritten', '2026-09-19 10:00:00')
+            ->update(['source_ref' => 'feed:2', 'body' => '<p>Original.</p>']);
+        // Hand-written with no body yet: nothing to rewrite, so not flagged.
+        $this->newsFor($site->id, 'Hand-written draft', '2026-09-18 10:00:00');
+
+        $rows = collect($this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")->assertOk()->json('data'))
+            ->pluck('awaiting_rewrite', 'title');
+
+        $this->assertSame([
+            'Scraped waiting'    => true,
+            'Scraped rewritten'  => false,
+            'Hand-written draft' => false,
+        ], $rows->all());
+        $this->assertArrayNotHasKey('body', $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")->json('data.0'));
     }
 
     public function test_the_listing_is_newest_first(): void
@@ -161,8 +198,7 @@ class AdminNewsListingTest extends TestCase
         // The screen reads this back into the control, so it must echo what was
         // asked for and not the server's own default.
         $res->assertJsonPath('meta.per_page', 5);
-        $res->assertJsonPath('meta.total', 20);
-        $res->assertJsonPath('meta.last_page', 4);
+        $res->assertJsonPath('meta.has_more', true);
     }
 
     public function test_the_default_page_size_is_used_when_none_is_asked_for(): void

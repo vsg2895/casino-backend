@@ -6,18 +6,27 @@ namespace App\Repositories;
 
 use App\Models\CmsPage;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Contracts\Pagination\Paginator;
 
 class CmsPageRepository implements CmsPageRepositoryInterface
 {
-    /** @return LengthAwarePaginator<int, CmsPage> */
-    public function paginate(int $perPage = 20, ?int $siteId = null): LengthAwarePaginator
+    /** @return Paginator<int, CmsPage> */
+    public function paginate(int $perPage = 20, ?int $siteId = null): Paginator
     {
+        // simplePaginate: no COUNT here, the screen's total comes from count().
         return CmsPage::query()
             ->when($siteId !== null, fn ($q) => $q->forSite($siteId))
             ->with('site')
             ->orderBy('title')
-            ->paginate($perPage);
+            ->simplePaginate($perPage);
+    }
+
+    public function count(?int $siteId = null): int
+    {
+        // The same site condition as paginate(), and nothing else.
+        return CmsPage::query()
+            ->when($siteId !== null, fn ($q) => $q->forSite($siteId))
+            ->count();
     }
 
     public function findById(int $id): ?CmsPage

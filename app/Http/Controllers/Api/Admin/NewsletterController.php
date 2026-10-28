@@ -46,7 +46,7 @@ class NewsletterController extends Controller
             // repeats some rows and skips others.
             ->orderByDesc('id');
 
-        return NewsletterResource::collection($query->paginate($perPage));
+        return NewsletterResource::collection($query->simplePaginate($perPage));
     }
 
     /**

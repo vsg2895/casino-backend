@@ -371,13 +371,16 @@ class NewsSectionTest extends TestCase
         $first = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news")->assertOk();
 
         $this->assertCount(15, $first->json('data'));
-        $this->assertSame(18, $first->json('meta.total'));
-        $this->assertSame(2, $first->json('meta.last_page'));
+        $this->assertTrue($first->json('meta.has_more'));
         $this->assertSame(15, $first->json('meta.per_page'));
+        $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles/count?type=news")
+            ->assertOk()
+            ->assertExactJson(['total' => 18]);
 
         $second = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news&page=2")->assertOk();
 
         $this->assertCount(3, $second->json('data'));
+        $this->assertFalse($second->json('meta.has_more'));
 
         // No row appears on both pages — an off-by-one in the ordering is the
         // failure that looks like duplicated content rather than a broken pager.
@@ -410,7 +413,9 @@ class NewsSectionTest extends TestCase
         $res = $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news")->assertOk();
 
         $this->assertCount(15, $res->json('data'), 'still one page of rows');
-        $this->assertSame(18, $res->json('meta.total'));
+        $this->getJson("/api/v1/admin/sites/{$this->site->id}/articles/count?type=news")
+            ->assertOk()
+            ->assertExactJson(['total' => 18]);
         // Both conditions, matching Article::scopeVisible().
         $this->assertSame(16, $res->json('meta.published_count'));
     }

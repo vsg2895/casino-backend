@@ -39,9 +39,16 @@ class EmailScheduleController extends Controller
     {
         $perPage = min(max($request->integer('per_page') ?: self::PER_PAGE, 1), self::MAX_PER_PAGE);
 
+        // No COUNT here: the screen's total comes from count() below.
         return EmailScheduleResource::collection(
-            EmailSchedule::with(['site', 'sendgridKey', 'mailgunKey'])->latest()->paginate($perPage),
+            EmailSchedule::with(['site', 'sendgridKey', 'mailgunKey'])->latest()->simplePaginate($perPage),
         );
+    }
+
+    /** Total schedules, as a dedicated COUNT. The listing has no filters, so neither has this. */
+    public function count(): JsonResponse
+    {
+        return response()->json(['total' => EmailSchedule::query()->count()]);
     }
 
     public function store(StoreEmailScheduleRequest $request): JsonResponse

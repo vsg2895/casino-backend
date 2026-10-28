@@ -8,7 +8,7 @@ use App\Models\CmsPage;
 use App\Models\Site;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Support\LegalPageContent;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Contracts\Pagination\Paginator;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class CmsPageService
@@ -17,10 +17,15 @@ class CmsPageService
         private readonly CmsPageRepositoryInterface $repository,
     ) {}
 
-    /** @return LengthAwarePaginator<int, CmsPage> */
-    public function paginate(int $perPage = 50, ?int $siteId = null): LengthAwarePaginator
+    /** @return Paginator<int, CmsPage> */
+    public function paginate(int $perPage = 50, ?int $siteId = null): Paginator
     {
         return $this->repository->paginate($perPage, $siteId);
+    }
+
+    public function count(?int $siteId = null): int
+    {
+        return $this->repository->count($siteId);
     }
 
     public function findOrFail(int $id): CmsPage

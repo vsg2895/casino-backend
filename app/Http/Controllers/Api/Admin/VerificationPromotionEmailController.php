@@ -72,7 +72,7 @@ class VerificationPromotionEmailController extends Controller
             $this->filteredHistory($request)
                 ->with('site:id,name,domain')
                 ->newest()
-                ->paginate($perPage),
+                ->simplePaginate($perPage),
         );
     }
 

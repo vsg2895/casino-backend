@@ -8,6 +8,7 @@ use App\Models\ForumUser;
 use App\Models\Site;
 use App\Models\UniOne\UniOneReceiver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithSites;
 use Tests\TestCase;
 
@@ -77,10 +78,16 @@ class FilteredCountsTest extends TestCase
 
         $query = '?status=' . UniOneReceiver::STATUS_BOUNCED;
 
+        // The listing is simple-paginated; its total — what the paginator is
+        // drawn from — is the dedicated count, which must agree with both the
+        // rows and the stats header.
         $listing = $this->getJson('/api/v1/admin/unione/receivers' . $query)->assertOk();
+        $count = $this->getJson('/api/v1/admin/unione/receivers/count' . $query)->assertOk();
         $stats = $this->getJson('/api/v1/admin/unione/receivers/stats' . $query)->assertOk();
 
-        $this->assertSame($listing->json('meta.total'), $stats->json('data.total'));
+        $this->assertCount(2, $listing->json('data'));
+        $this->assertSame(2, $count->json('total'));
+        $this->assertSame($count->json('total'), $stats->json('data.total'));
     }
 
     public function test_the_last_status_options_stay_whole_under_a_filter(): void
@@ -105,10 +112,9 @@ class FilteredCountsTest extends TestCase
     public function test_the_members_listing_reports_the_filtered_total(): void
     {
         /*
-         * The Users screen reads its count straight from this `meta.total`
-         * rather than asking a second endpoint — so what the badge claims is
-         * exactly what the paginator was built from, and the two can never
-         * drift apart.
+         * The Users screen's listing is simple-paginated, so its badge and
+         * paginator both read `forum-members/count`. That count has to apply
+         * the listing's filters, and the listing must not run a COUNT itself.
          */
         $this->actingAsAdmin();
         $site = Site::factory()->create();
@@ -127,12 +133,21 @@ class FilteredCountsTest extends TestCase
             'email' => 'bob@example.test', 'password' => bcrypt('secret'),
         ])->forceFill(['slug' => 'bob', 'status' => ForumUser::STATUS_BANNED])->save();
 
-        $this->getJson('/api/v1/admin/forum-members')
+        $this->getJson('/api/v1/admin/forum-members/count')
             ->assertOk()
-            ->assertJsonPath('meta.total', 2);
+            ->assertExactJson(['total' => 2]);
 
-        $this->getJson('/api/v1/admin/forum-members?status=' . ForumUser::STATUS_BANNED)
+        $this->getJson('/api/v1/admin/forum-members/count?status=' . ForumUser::STATUS_BANNED)
             ->assertOk()
-            ->assertJsonPath('meta.total', 1);
+            ->assertExactJson(['total' => 1]);
+
+        DB::enableQueryLog();
+        $this->getJson('/api/v1/admin/forum-members?per_page=5')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('meta.has_more', false)
+            ->assertJsonMissingPath('meta.total');
+        $counts = array_filter(DB::getQueryLog(), fn (array $q): bool => str_contains(strtolower($q['query']), 'count('));
+        $this->assertSame([], array_values($counts), 'the listing must leave counting to forum-members/count');
     }
 }

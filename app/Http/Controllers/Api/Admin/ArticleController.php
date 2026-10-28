@@ -12,9 +12,11 @@ use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
 use App\Models\Site;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Guides for one site.
@@ -59,23 +61,31 @@ class ArticleController extends Controller
 
         $type = $this->type($request);
 
-        $base = fn () => Article::query()->where('site_id', $site->id)->ofType($type);
+        $base = fn () => $this->listed($site, $type);
 
         // The order the public section renders in, so the list an editor reads
         // is the page a visitor reads. Both sections are chronological now —
         // see Article::scopeInListingOrder().
+        //
+        // simplePaginate: no COUNT of the whole section here — the screen's
+        // total comes from count() below.
         $articles = $base()
             ->with('newsCategory')
             ->inListingOrder()
-            ->paginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
+            ->simplePaginate($filters['per_page'] ?? self::PER_PAGE, [
+                ...self::LIST_COLUMNS,
+                // Scraped and not yet rewritten: title and excerpt are still the
+                // SOURCE's words. Computed in SQL so the listing still never
+                // ships the body just to answer a yes/no question.
+                DB::raw('(source_ref IS NOT NULL AND body IS NULL) AS awaiting_rewrite'),
+            ]);
 
         return response()->json([
             'data' => ArticleResource::collection($articles->items())->resolve(),
             'meta' => [
                 'current_page' => $articles->currentPage(),
-                'last_page'    => $articles->lastPage(),
-                'total'        => $articles->total(),
-                'per_page'     => $articles->perPage(),
+                'per_page'     => (int) $articles->perPage(),
+                'has_more'     => $articles->hasMorePages(),
                 // Both conditions, matching Article::scopeVisible() — the same
                 // rule the public API applies, so the banner cannot claim an
                 // entry is live that a visitor cannot reach.
@@ -99,6 +109,23 @@ class ArticleController extends Controller
                 'featured_count'     => $base()->visible()->featured()->count(),
             ],
         ]);
+    }
+
+    /** Every entry of this site's section, as a dedicated COUNT. Sizes the paginator. */
+    public function count(Request $request, Site $site): JsonResponse
+    {
+        return response()->json(['total' => $this->listed($site, $this->type($request))->count()]);
+    }
+
+    /**
+     * The section's rows, and nothing else. Shared by the listing, its
+     * counters and count(), so the paginator and the rows can never disagree.
+     *
+     * @return Builder<Article>
+     */
+    private function listed(Site $site, string $type): Builder
+    {
+        return Article::query()->where('site_id', $site->id)->ofType($type);
     }
 
     public function show(Request $request, Site $site, Article $article): JsonResponse

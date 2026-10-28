@@ -122,6 +122,7 @@ Route::prefix('v1')->group(function () {
 
         // Cache health. "revalidate" and "revalidations" are literal segments
         // under {site}, which is a model binding — no ordering hazard.
+        Route::get('sites/{site}/revalidations/count', [SiteRevalidationController::class, 'count']);
         Route::get('sites/{site}/revalidations', [SiteRevalidationController::class, 'index']);
         Route::post('sites/{site}/revalidate', [SiteRevalidationController::class, 'store']);
 
@@ -155,6 +156,8 @@ Route::prefix('v1')->group(function () {
         Route::put('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'update']);
         Route::delete('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'destroy']);
 
+        // Literal before `articles/{article}`, or "count" is read as an id.
+        Route::get('sites/{site}/articles/count', [AdminArticleController::class, 'count']);
         Route::get('sites/{site}/articles', [AdminArticleController::class, 'index']);
         Route::post('sites/{site}/articles', [AdminArticleController::class, 'store']);
         Route::get('sites/{site}/articles/{article}', [AdminArticleController::class, 'show']);
@@ -291,6 +294,8 @@ Route::prefix('v1')->group(function () {
          * a post id.
          */
         Route::get('forum-posts/counts', [ForumModerationController::class, 'counts']);
+        // The queue's filtered total (sizes its paginator); `counts` above is the badges.
+        Route::get('forum-posts/count', [ForumModerationController::class, 'queueCount']);
         Route::post('forum-posts/act', [ForumModerationController::class, 'act']);
         Route::get('forum-posts', [ForumModerationController::class, 'index']);
 
@@ -299,8 +304,10 @@ Route::prefix('v1')->group(function () {
          * Member-authored posts, every status. A literal segment declared
          * before `forum-members/{forumUser}` so it is not read as an id.
          */
+        Route::get('forum-member-posts/count', [ForumModerationController::class, 'memberIndexCount']);
         Route::get('forum-member-posts', [ForumModerationController::class, 'memberIndex']);
 
+        Route::get('forum-members/count', [ForumModerationController::class, 'membersCount']);
         Route::get('forum-members', [ForumModerationController::class, 'members']);
         Route::get('forum-members/{forumUser}/posts', [ForumModerationController::class, 'memberPosts']);
         Route::patch('forum-members/{forumUser}/role', [ForumModerationController::class, 'memberRole']);
@@ -316,6 +323,8 @@ Route::prefix('v1')->group(function () {
         Route::put('sites/{site}/forum-categories/{forumCategory}', [ForumTaxonomyController::class, 'updateCategory']);
         Route::delete('sites/{site}/forum-categories/{forumCategory}', [ForumTaxonomyController::class, 'destroyCategory']);
 
+        // Literal before `forum-articles/{forumArticle}`, or "count" is read as an id.
+        Route::get('sites/{site}/forum-articles/count', [ForumArticleController::class, 'count']);
         Route::get('sites/{site}/forum-articles', [ForumArticleController::class, 'index']);
         Route::post('sites/{site}/forum-articles', [ForumArticleController::class, 'store']);
         Route::get('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'show']);
@@ -509,6 +518,8 @@ Route::prefix('v1')->group(function () {
         // Templates available to that test (drives the admin dropdown).
         Route::get('email-template-types', [EmailTemplateTypeController::class, 'index']);
 
+        // Literal before the resource, or `schedules/{schedule}` swallows "count".
+        Route::get('schedules/count', [EmailScheduleController::class, 'count']);
         Route::apiResource('schedules', EmailScheduleController::class)
             ->only(['index', 'store', 'update', 'destroy']);
         Route::post('schedules/{schedule}/run', [EmailScheduleController::class, 'run']);
@@ -550,6 +561,8 @@ Route::prefix('v1')->group(function () {
             ->only(['index', 'store', 'update', 'destroy']);
 
         // CMS / Legal pages (per-site content — authorized via CmsPagePolicy)
+        // Literal before the resource, or `pages/{page}` swallows "count".
+        Route::get('pages/count', [AdminCmsPageController::class, 'count']);
         Route::apiResource('pages', AdminCmsPageController::class);
     });
 
@@ -819,6 +832,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('receivers/export', [UniOneReceiverController::class, 'export']);
         Route::post('receivers/import', [UniOneReceiverController::class, 'import']);
         Route::post('receivers/bulk', [UniOneReceiverController::class, 'bulk']);
+        Route::get('receivers/count', [UniOneReceiverController::class, 'count']);
         Route::get('receivers', [UniOneReceiverController::class, 'index']);
         Route::post('receivers', [UniOneReceiverController::class, 'store']);
         Route::put('receivers/{uniOneReceiver}', [UniOneReceiverController::class, 'update']);
@@ -829,6 +843,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('sends/preview', [UniOneSendController::class, 'preview']);
         Route::post('sends/test', [UniOneSendController::class, 'test']);
         Route::get('sends/export', [UniOneSendController::class, 'export']);
+        Route::get('sends/count', [UniOneSendController::class, 'count']);
         Route::get('sends', [UniOneSendController::class, 'index']);
         Route::post('sends', [UniOneSendController::class, 'store']);
         Route::get('sends/{uniOneSend}', [UniOneSendController::class, 'show']);

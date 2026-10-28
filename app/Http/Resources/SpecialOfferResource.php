@@ -80,10 +80,9 @@ class SpecialOfferResource extends JsonResource
             ],
             'seo'        => $this->seoBlock(),
             /*
-             * Whether this offer's page is worth indexing — prose of at least
-             * SpecialOffer::MIN_INDEXABLE_WORDS, or filled bonus terms, and no
-             * explicit admin noindex. Computed server-side so the robots tag
-             * and the sitemap cannot disagree about it.
+             * Whether this offer's page may be indexed — true unless an admin
+             * set noindex (SpecialOffer::isIndexable). Computed server-side so
+             * the robots tag and the sitemap cannot disagree about it.
              */
             'is_indexable' => $this->resource->isIndexable(),
         ];

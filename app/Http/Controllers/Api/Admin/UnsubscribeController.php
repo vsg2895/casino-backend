@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UnsubscribeResource;
 use App\Models\Unsubscribe;
 use App\Support\CsvExport;
+use App\Support\EagerCursor;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,7 +29,7 @@ class UnsubscribeController extends Controller
             ->with('site')
             ->orderByDesc('unsubscribed_at');
 
-        return UnsubscribeResource::collection($query->paginate(50)->withQueryString());
+        return UnsubscribeResource::collection($query->simplePaginate(50)->withQueryString());
     }
 
     /**
@@ -81,11 +82,14 @@ class UnsubscribeController extends Controller
 
     public function export(Request $request): StreamedResponse
     {
-        $rows = Unsubscribe::with('site')
-            ->when($request->integer('site_id') ?: null, fn ($q, $id) => $q->where('site_id', $id))
-            ->when($this->validType($request), fn ($q, $type) => $q->where('type', $type))
-            ->orderByDesc('unsubscribed_at')
-            ->cursor()
+        // EagerCursor, not ->cursor(): cursor() drops the with('site') and
+        // would run one sites query per exported row.
+        $rows = EagerCursor::of(
+            Unsubscribe::with('site')
+                ->when($request->integer('site_id') ?: null, fn ($q, $id) => $q->where('site_id', $id))
+                ->when($this->validType($request), fn ($q, $type) => $q->where('type', $type))
+                ->orderByDesc('unsubscribed_at'),
+        )
             ->map(fn (Unsubscribe $u) => [
                 $u->email,
                 $u->type,
