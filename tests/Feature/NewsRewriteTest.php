@@ -20,9 +20,9 @@ use Tests\TestCase;
  * `news:rewrite`: scraped facts in, original copy out — and the checks that
  * stop a rewrite which is really the source's wording from being saved.
  *
- * The model is never called. Every reply is an Http::fake() in Gemini's
- * response shape, and Sleep is faked so the retry backoff and the delay
- * between items cost no wall-clock time.
+ * The model is never called. Every reply is an Http::fake() in the shape of
+ * Gemini's Interactions API, and Sleep is faked so the retry backoff and the
+ * delay between items cost no wall-clock time.
  */
 class NewsRewriteTest extends TestCase
 {
@@ -99,7 +99,10 @@ class NewsRewriteTest extends TestCase
     {
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
-                ['candidates' => [['content' => ['parts' => [['text' => $text]]]]]],
+                ['steps' => [
+                    ['type' => 'thought', 'signature' => 'x'],
+                    ['type' => 'model_output', 'content' => [['type' => 'text', 'text' => $text]]],
+                ]],
                 $status,
             ),
         ]);
@@ -215,8 +218,10 @@ class NewsRewriteTest extends TestCase
         Http::assertSent(fn (Request $request) => $request->hasHeader('x-goog-api-key', 'test-key')
             && ! str_contains($request->url(), 'test-key')
             && ! str_contains($request->url(), 'key=')
-            && str_contains($request->url(), '/models/gemini-test:generateContent')
-            && $request['generationConfig']['responseMimeType'] === 'application/json');
+            && str_ends_with($request->url(), '/v1beta/interactions')
+            && $request['model'] === 'gemini-test'
+            && $request['response_mime_type'] === 'application/json'
+            && $request['response_format']['required'] === ['title', 'excerpt', 'body_html']);
     }
 
     // ── what is refused ──────────────────────────────────────────────────────
@@ -281,6 +286,23 @@ class NewsRewriteTest extends TestCase
         $this->assertUntouched($draft);
         // Retried before giving up — 429/5xx are routine on the free tier.
         Http::assertSentCount(3);
+    }
+
+    public function test_an_api_error_reports_googles_reason(): void
+    {
+        $draft = $this->draft();
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(
+                ['error' => ['code' => 404, 'message' => 'This model is no longer available to new users.']],
+                404,
+            ),
+        ]);
+
+        $result = $this->rewrite($draft);
+
+        $this->assertSame('failed', $result['status']);
+        $this->assertSame('model API returned HTTP 404: This model is no longer available to new users.', $result['reason']);
+        $this->assertUntouched($draft);
     }
 
     public function test_a_dry_run_calls_the_model_but_writes_nothing(): void
@@ -367,11 +389,11 @@ class NewsRewriteTest extends TestCase
         $this->draft(['source_ref' => 'a:1', 'slug' => 'first', 'published_at' => now()->subDays(2)]);
         $this->draft(['source_ref' => 'a:2', 'slug' => 'second']);
 
-        $ok = ['candidates' => [['content' => ['parts' => [['text' => json_encode([
+        $ok = ['steps' => [['type' => 'model_output', 'content' => [['type' => 'text', 'text' => json_encode([
             'title'     => self::NEW_TITLE,
             'excerpt'   => 'A periodic review ended with eight renewals.',
             'body_html' => $this->originalBody(),
-        ])]]]]]];
+        ])]]]]];
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::sequence()

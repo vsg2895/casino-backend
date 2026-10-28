@@ -173,7 +173,7 @@ return [
         'api_key' => env('GEMINI_API_KEY'),
 
         /** Cheap by default: constrained rewriting of supplied facts, per article. */
-        'model' => env('NEWS_REWRITE_MODEL', 'gemini-2.5-flash'),
+        'model' => env('NEWS_REWRITE_MODEL', 'gemini-3.1-flash-lite'),
 
         /** Seconds between requests — the free tier's per-minute quota. */
         'delay_seconds' => 5,

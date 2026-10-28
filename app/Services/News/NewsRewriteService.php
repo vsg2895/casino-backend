@@ -56,7 +56,23 @@ use Throwable;
  */
 class NewsRewriteService
 {
-    private const string ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent';
+    /**
+     * Google's Interactions API. Not `models/{model}:generateContent`: Google
+     * answers that with 404 for keys created after it closed the older models
+     * to new users, while this endpoint serves every current model.
+     */
+    private const string ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+
+    /** The fields the model must return, enforced by the API, not only asked for. */
+    private const array REPLY_SCHEMA = [
+        'type'       => 'object',
+        'properties' => [
+            'title'     => ['type' => 'string'],
+            'excerpt'   => ['type' => 'string'],
+            'body_html' => ['type' => 'string'],
+        ],
+        'required' => ['title', 'excerpt', 'body_html'],
+    ];
 
     /** What the body may contain. No links, no images, no h1 — the page owns those. */
     private const string BODY_TAGS = '<p><h2><ul><ol><li><strong><em>';
@@ -245,26 +261,30 @@ class NewsRewriteService
             // 429 is routine on the free tier; three tries with a backoff long
             // enough for the per-minute quota to recover.
             ->retry(3, 8000, throw: false)
-            ->post(sprintf(self::ENDPOINT, rawurlencode((string) config('news.rewrite.model'))), [
-                'systemInstruction' => ['parts' => [['text' => self::PROMPT]]],
-                'contents'          => [[
-                    'role'  => 'user',
-                    'parts' => [['text' => $this->facts($headline, $teaser)]],
-                ]],
-                'generationConfig' => [
-                    'responseMimeType' => 'application/json',
-                    'temperature'      => self::TEMPERATURE,
-                ],
+            ->post(self::ENDPOINT, [
+                'model'              => (string) config('news.rewrite.model'),
+                'system_instruction' => self::PROMPT,
+                'input'              => $this->facts($headline, $teaser),
+                'generation_config'  => ['temperature' => self::TEMPERATURE],
+                'response_mime_type' => 'application/json',
+                'response_format'    => self::REPLY_SCHEMA,
             ]);
 
         if (! $response->successful()) {
-            return 'model API returned HTTP ' . $response->status();
+            // Google's own explanation ("no longer available", "high demand")
+            // is what tells an operator what to change. It never holds the key.
+            $why = $this->plain($response->json('error.message'));
+
+            return 'model API returned HTTP ' . $response->status()
+                . ($why !== '' ? ': ' . Str::limit($why, 200) : '');
         }
 
-        // Every non-thought text part, joined: thinking models may split a reply.
-        $text = collect((array) $response->json('candidates.0.content.parts', []))
-            ->reject(fn ($part) => is_array($part) && ($part['thought'] ?? false) === true)
-            ->map(fn ($part) => is_array($part) ? (string) ($part['text'] ?? '') : '')
+        // The text of every model_output step, joined; thought steps carry no
+        // text and are skipped.
+        $text = collect((array) $response->json('steps', []))
+            ->filter(fn ($step) => is_array($step) && ($step['type'] ?? null) === 'model_output')
+            ->flatMap(fn (array $step) => (array) ($step['content'] ?? []))
+            ->map(fn ($part) => is_array($part) && ($part['type'] ?? 'text') === 'text' ? (string) ($part['text'] ?? '') : '')
             ->implode('');
 
         $json = json_decode(trim($text), true);
