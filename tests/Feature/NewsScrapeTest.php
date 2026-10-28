@@ -9,6 +9,7 @@ use App\Models\Site;
 use App\Services\News\NewsFeedParser;
 use App\Services\News\NewsScrapeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -50,6 +51,10 @@ class NewsScrapeTest extends TestCase
         config([
             'news.site_slug' => 'winpalack',
             'news.delay_seconds' => 0,
+            // The fixture's items are fixed September dates, so the age limit
+            // and the daily pruning are off here and tested on their own below.
+            'news.max_age_hours' => 0,
+            'news.prune_oldest_day' => false,
             'news.sources' => [[
                 'key'     => 'fixture',
                 'name'    => 'Fixture Feed',
@@ -325,6 +330,104 @@ class NewsScrapeTest extends TestCase
             $this->svgFor($covers, 'e', 'Regulator fines an operator'),
             $this->svgFor($covers, 'f', 'Regulator fines another operator'),
         );
+    }
+
+    // ── the rolling window ───────────────────────────────────────────────────
+
+    public function test_only_the_last_days_items_are_taken(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00'));
+        config(['news.max_age_hours' => 24]);
+        $this->fakeFeed();
+
+        app(NewsScrapeService::class)->run();
+
+        $dates = Article::pluck('published_at');
+        $this->assertNotEmpty($dates);
+        $this->assertLessThan(3, $dates->count(), 'the fixture carries older items too');
+        foreach ($dates as $date) {
+            $this->assertTrue($date->greaterThanOrEqualTo(now()->subDay()));
+        }
+    }
+
+    private function oldNews(string $slug, string $publishedAt, string $createdAt = '2026-09-01 00:00:00'): Article
+    {
+        Storage::disk('public')->put("news/{$slug}.svg", '<svg/>');
+        $article = Article::create([
+            'site_id' => $this->site->id, 'type' => Article::TYPE_NEWS, 'title' => $slug, 'slug' => $slug,
+            'body' => 'Body', 'active' => true, 'published_at' => $publishedAt,
+            'hero_image_path' => "news/{$slug}.svg", 'source_ref' => "old:{$slug}",
+        ]);
+        $article->forceFill(['created_at' => $createdAt])->save();
+
+        return $article;
+    }
+
+    public function test_a_run_that_brings_in_news_deletes_the_oldest_day_and_its_covers(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00'));
+        config(['news.prune_oldest_day' => true]);
+        $this->oldNews('sep11-a', '2026-09-11 08:00:00');
+        $this->oldNews('sep11-b', '2026-09-11 22:00:00');
+        $this->oldNews('sep12', '2026-09-12 09:00:00');
+        $this->fakeFeed();
+
+        $totals = app(NewsScrapeService::class)->run();
+
+        $this->assertSame(2, $totals['pruned']);
+        $this->assertNull(Article::where('slug', 'sep11-a')->first());
+        $this->assertNull(Article::where('slug', 'sep11-b')->first());
+        Storage::disk('public')->assertMissing('news/sep11-a.svg');
+        Storage::disk('public')->assertMissing('news/sep11-b.svg');
+        // The next day survives, and so does everything this run brought in.
+        $this->assertNotNull(Article::where('slug', 'sep12')->first());
+        $this->assertSame(3 + 1, Article::count());
+    }
+
+    /** With the hourly schedule on, a second run the same day must not take another day. */
+    public function test_only_one_day_is_deleted_per_day(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00'));
+        config(['news.prune_oldest_day' => true]);
+        $this->oldNews('sep11', '2026-09-11 08:00:00');
+        $this->oldNews('sep12', '2026-09-12 09:00:00');
+        // Taken by an earlier run this morning.
+        $this->oldNews('this-morning', '2026-09-23 06:00:00', '2026-09-23 07:07:00');
+        $this->fakeFeed();
+
+        $totals = app(NewsScrapeService::class)->run();
+
+        $this->assertSame(0, $totals['pruned']);
+        $this->assertNotNull(Article::where('slug', 'sep11')->first());
+    }
+
+    public function test_a_run_with_nothing_new_deletes_nothing(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00'));
+        config(['news.prune_oldest_day' => true]);
+        $this->fakeFeed();
+        app(NewsScrapeService::class)->run(prune: false);
+        $this->oldNews('sep11', '2026-09-11 08:00:00');
+
+        $totals = app(NewsScrapeService::class)->run();
+
+        $this->assertSame(0, $totals['created']);
+        $this->assertSame(0, $totals['pruned']);
+        $this->assertNotNull(Article::where('slug', 'sep11')->first());
+    }
+
+    public function test_a_dry_run_reports_the_oldest_day_but_deletes_nothing(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00'));
+        config(['news.prune_oldest_day' => true]);
+        $this->oldNews('sep11', '2026-09-11 08:00:00');
+        $this->fakeFeed();
+
+        $totals = app(NewsScrapeService::class)->run(dryRun: true);
+
+        $this->assertSame(1, $totals['pruned']);
+        $this->assertNotNull(Article::where('slug', 'sep11')->first());
+        Storage::disk('public')->assertExists('news/sep11.svg');
     }
 
     private function svgFor(\App\Services\News\NewsCoverGenerator $covers, string $slug, string $headline): string

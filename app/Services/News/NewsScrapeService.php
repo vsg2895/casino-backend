@@ -8,6 +8,7 @@ use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
 use App\Models\Site;
 use App\Support\SiteCache;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -51,11 +52,11 @@ class NewsScrapeService
     ) {}
 
     /**
-     * Run every enabled source.
+     * Run every enabled source, then drop the oldest day — see pruneOldestDay().
      *
-     * @return array{created: int, skipped: int, failed: int, sources: list<array<string, mixed>>}
+     * @return array{created: int, skipped: int, failed: int, pruned: int, sources: list<array<string, mixed>>}
      */
-    public function run(bool $dryRun = false, ?callable $report = null): array
+    public function run(bool $dryRun = false, ?callable $report = null, bool $prune = true): array
     {
         $say = $report ?? static fn (string $line, string $level = 'line') => null;
 
@@ -64,11 +65,12 @@ class NewsScrapeService
         if ($site === null) {
             $say('No site with slug ' . config('news.site_slug') . ' — nothing written.', 'error');
 
-            return ['created' => 0, 'skipped' => 0, 'failed' => 0, 'sources' => []];
+            return ['created' => 0, 'skipped' => 0, 'failed' => 0, 'pruned' => 0, 'sources' => []];
         }
 
-        $totals = ['created' => 0, 'skipped' => 0, 'failed' => 0, 'sources' => []];
+        $totals = ['created' => 0, 'skipped' => 0, 'failed' => 0, 'pruned' => 0, 'sources' => []];
         $touched = [];
+        $createdIds = [];
         $sources = array_values(array_filter(config('news.sources', []), static fn (array $s) => $s['enabled'] ?? false));
 
         if ($sources === []) {
@@ -90,12 +92,22 @@ class NewsScrapeService
             $totals['failed']  += $result['failed'];
             $totals['sources'][] = $result;
             $touched = [...$touched, ...$result['slugs']];
+            $createdIds = [...$createdIds, ...$result['ids']];
+        }
+
+        // Only when today's news came in: a run that found nothing new must
+        // not shrink the feed with nothing to replace what it removes.
+        if ($prune && config('news.prune_oldest_day', true) && $totals['created'] > 0) {
+            $pruned = $this->pruneOldestDay($site, $createdIds, $dryRun, $say);
+            $totals['pruned'] = count($pruned);
+            $touched = [...$touched, ...$pruned];
         }
 
         // Drafts are invisible to the public, so nothing needs expiring for a
         // dry run or for a run that wrote nothing. Done anyway when rows were
-        // created, because the admin's listing reads through the same cache.
-        if (! $dryRun && $totals['created'] > 0) {
+        // created, because the admin's listing reads through the same cache —
+        // and when live posts were pruned, their pages must stop serving.
+        if (! $dryRun && ($totals['created'] > 0 || $totals['pruned'] > 0)) {
             $this->refresh($site, $touched);
         }
 
@@ -103,15 +115,92 @@ class NewsScrapeService
     }
 
     /**
+     * Delete every news post of the oldest day on the site: the rolling window
+     * that keeps the feed to recent news. Returns the slugs it deleted (or, on
+     * a dry run, would delete).
+     *
+     * Each row is deleted as a MODEL, never with a bulk query, so
+     * Article::deleted fires and the cover file goes with it.
+     *
+     * ONCE PER DAY. A scraped row created earlier today means an earlier run
+     * already took today's news, and so already removed a day — without this,
+     * the hourly schedule would delete 24 days a day.
+     *
+     * Never touched: the rows this run created, posts from the last day, and
+     * posts with no date (a hand-written draft has nothing to age by).
+     *
+     * @param list<int> $createdIds
+     * @return list<string>
+     */
+    private function pruneOldestDay(Site $site, array $createdIds, bool $dryRun, callable $say): array
+    {
+        $news = fn () => Article::query()
+            ->where('site_id', $site->id)
+            ->ofType(Article::TYPE_NEWS)
+            ->whereNotIn('id', $createdIds);
+
+        $alreadyRanToday = Article::withTrashed()
+            ->where('site_id', $site->id)
+            ->ofType(Article::TYPE_NEWS)
+            ->whereNotNull('source_ref')
+            ->whereNotIn('id', $createdIds)
+            ->where('created_at', '>=', now()->startOfDay())
+            ->exists();
+
+        if ($alreadyRanToday) {
+            $say('Oldest day already removed today — nothing deleted.', 'line');
+
+            return [];
+        }
+
+        $oldest = $news()->whereNotNull('published_at')->orderBy('published_at')->value('published_at');
+
+        if ($oldest === null) {
+            return [];
+        }
+
+        $day = Carbon::parse($oldest)->startOfDay();
+
+        if ($day->greaterThanOrEqualTo(now()->subDay()->startOfDay())) {
+            $say('Every post is from the last day — nothing deleted.', 'line');
+
+            return [];
+        }
+
+        $doomed = $news()
+            ->whereBetween('published_at', [$day, $day->copy()->endOfDay()])
+            ->get();
+
+        $slugs = [];
+
+        foreach ($doomed as $article) {
+            if (! $dryRun) {
+                $article->delete();
+            }
+
+            $slugs[] = (string) $article->slug;
+        }
+
+        $say(sprintf(
+            '%s %d news post(s) from %s, the oldest day.',
+            $dryRun ? 'Would delete' : 'Deleted',
+            count($slugs),
+            $day->toDateString(),
+        ), 'warn');
+
+        return $slugs;
+    }
+
+    /**
      * One source: check permission, fetch, parse, write.
      *
      * @param  array<string, mixed>  $source
-     * @return array{key: string, created: int, skipped: int, failed: int, slugs: list<string>}
+     * @return array{key: string, created: int, skipped: int, failed: int, slugs: list<string>, ids: list<int>}
      */
     private function runSource(Site $site, array $source, bool $dryRun, callable $say): array
     {
         $key  = (string) $source['key'];
-        $out  = ['key' => $key, 'created' => 0, 'skipped' => 0, 'failed' => 0, 'slugs' => []];
+        $out  = ['key' => $key, 'created' => 0, 'skipped' => 0, 'failed' => 0, 'slugs' => [], 'ids' => []];
         $url  = (string) $source['url'];
 
         $say("· {$key}", 'line');
@@ -159,6 +248,26 @@ class NewsScrapeService
             $out['skipped']++;
         }
 
+        // The last day's news only. Counted rather than listed: a feed carries
+        // dozens of older items on every run, and naming each one is noise.
+        $maxAgeHours = (int) config('news.max_age_hours', 24);
+
+        if ($maxAgeHours > 0) {
+            $cutoff = now()->subHours($maxAgeHours);
+            $fresh = array_values(array_filter(
+                $parsed['items'],
+                static fn (array $item): bool => $item['published_at']->greaterThanOrEqualTo($cutoff),
+            ));
+            $old = count($parsed['items']) - count($fresh);
+
+            if ($old > 0) {
+                $say("  {$old} older than {$maxAgeHours}h — skipped", 'line');
+                $out['skipped'] += $old;
+            }
+
+            $parsed['items'] = $fresh;
+        }
+
         foreach ($parsed['items'] as $item) {
             try {
                 if ($this->exists($site, $item['source_ref'], $item['slug'])) {
@@ -174,7 +283,7 @@ class NewsScrapeService
                     continue;
                 }
 
-                $this->create($site, $item);
+                $out['ids'][] = (int) $this->create($site, $item)->id;
                 $out['created']++;
                 $out['slugs'][] = $item['slug'];
                 $say("  + {$item['slug']}", 'info');

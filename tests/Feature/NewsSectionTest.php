@@ -9,6 +9,7 @@ use App\Models\Site;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\Concerns\InteractsWithSites;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -351,6 +352,39 @@ class NewsSectionTest extends TestCase
         $this->deleteJson("/api/v1/admin/sites/{$this->site->id}/articles/{$id}?type=news")
             ->assertNoContent();
         $this->assertSame([], $this->feed());
+    }
+
+    public function test_deleting_a_news_post_in_the_admin_deletes_its_cover(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('uploads/image/cover.webp', 'x');
+        $post = Article::create([
+            'site_id' => $this->site->id, 'type' => Article::TYPE_NEWS, 'title' => 'With a cover',
+            'body' => 'Body', 'hero_image_path' => 'uploads/image/cover.webp',
+        ]);
+
+        $this->actingAsAdmin();
+        $this->deleteJson("/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news")
+            ->assertNoContent();
+
+        Storage::disk('public')->assertMissing('uploads/image/cover.webp');
+    }
+
+    /** One upload pasted into two posts: deleting the first must not break the second. */
+    public function test_a_cover_another_post_still_uses_is_kept(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('uploads/image/shared.webp', 'x');
+        [$first, $second] = collect(['One', 'Two'])->map(fn (string $title) => Article::create([
+            'site_id' => $this->site->id, 'type' => Article::TYPE_NEWS, 'title' => $title,
+            'body' => 'Body', 'hero_image_path' => 'uploads/image/shared.webp',
+        ]))->all();
+
+        $first->delete();
+        Storage::disk('public')->assertExists('uploads/image/shared.webp');
+
+        $second->delete();
+        Storage::disk('public')->assertMissing('uploads/image/shared.webp');
     }
 
     /**

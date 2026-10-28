@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -99,6 +100,44 @@ class Article extends Model
             $article->stampPublishDateOnGoingLive();
             $article->stampMostPopularPick();
         });
+
+        // Deleting an article deletes its cover file — see deleteCoverFile().
+        // `deleted` fires for a soft delete as well as a force delete, and for
+        // every path that deletes a MODEL: the admin's Delete button and
+        // news:scrape's daily pruning alike.
+        static::deleted(function (self $article): void {
+            $article->deleteCoverFile();
+        });
+    }
+
+    /**
+     * Remove this article's cover from the public disk.
+     *
+     * Only files this application wrote: a drawn cover (`news/…`) or an admin
+     * upload (`uploads/…`). An absolute URL points at somebody else's server
+     * and is left alone.
+     *
+     * Kept when another article still uses the same path — an editor can paste
+     * one upload's path into a second article, and deleting the first must not
+     * break the second. Soft-deleted rows do not count: their cover is gone
+     * with them.
+     */
+    public function deleteCoverFile(): void
+    {
+        $path = ltrim(trim((string) $this->hero_image_path), '/');
+
+        if ($path === '' || ! (str_starts_with($path, 'news/') || str_starts_with($path, 'uploads/'))) {
+            return;
+        }
+
+        $sharedElsewhere = self::query()
+            ->whereKeyNot($this->getKey())
+            ->where('hero_image_path', $this->hero_image_path)
+            ->exists();
+
+        if (! $sharedElsewhere) {
+            Storage::disk('public')->delete($path);
+        }
     }
 
     /**

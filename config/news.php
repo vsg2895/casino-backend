@@ -48,6 +48,24 @@ return [
     'min_teaser_chars' => 40,
 
     /**
+     * Only items the source published within this many hours are taken, so a
+     * run collects the last day's news rather than the feed's whole backlog.
+     * 0 takes everything the feed still lists.
+     */
+    'max_age_hours' => (int) env('NEWS_MAX_AGE_HOURS', 24),
+
+    /**
+     * A rolling window: the first `news:scrape` of a day that brings in new
+     * items deletes every news post of the OLDEST day on the site — today's
+     * news in, the oldest day out. Covers are deleted with them.
+     *
+     * Once per day, not once per run: with the hourly schedule on, a run every
+     * hour would otherwise delete 24 days a day. Posts from the last day are
+     * never deleted, and neither are posts with no date.
+     */
+    'prune_oldest_day' => (bool) env('NEWS_PRUNE_OLDEST_DAY', true),
+
+    /**
      * OFF by default. The schedule entry in routes/console.php reads this, so
      * hourly ingestion starts when an operator turns it on, never because a
      * deploy shipped the code.

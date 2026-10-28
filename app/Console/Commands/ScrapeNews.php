@@ -14,14 +14,20 @@ use Illuminate\Console\Command;
  * Writes NO original copy — that is `news:rewrite`, deliberately separate so a
  * re-run of this command cannot re-bill the rewriting of items already written.
  *
+ * Takes only the last day's items (`news.max_age_hours`), and the first run of
+ * a day that brings any in deletes the site's oldest day of news, covers
+ * included (`news.prune_oldest_day`) — a rolling window of recent news.
+ *
  *   php artisan news:scrape --dry-run
  *   php artisan news:scrape
+ *   php artisan news:scrape --no-prune
  */
 class ScrapeNews extends Command
 {
     protected $signature = 'news:scrape
                             {--dry-run : Fetch and parse, reporting what would change, without writing}
-                            {--source= : Limit the run to one source key from config/news.php}';
+                            {--source= : Limit the run to one source key from config/news.php}
+                            {--no-prune : Keep the oldest day of news instead of deleting it}';
 
     protected $description = 'Collect news facts from the configured RSS feeds as unpublished drafts';
 
@@ -51,7 +57,7 @@ class ScrapeNews extends Command
             $this->warn('Dry run — nothing will be written.');
         }
 
-        $totals = $scraper->run($dryRun, function (string $line, string $level): void {
+        $totals = $scraper->run($dryRun, prune: ! $this->option('no-prune'), report: function (string $line, string $level): void {
             match ($level) {
                 'error' => $this->error($line),
                 'warn'  => $this->warn($line),
@@ -62,11 +68,12 @@ class ScrapeNews extends Command
 
         $this->newLine();
         $this->info(sprintf(
-            '%s%d new, %d skipped, %d failed.',
+            '%s%d new, %d skipped, %d failed, %d old deleted.',
             $dryRun ? 'Would create: ' : '',
             $totals['created'],
             $totals['skipped'],
             $totals['failed'],
+            $totals['pruned'],
         ));
 
         if (! $dryRun && $totals['created'] > 0) {
