@@ -103,8 +103,10 @@ class NewsRewriteService
     ) {}
 
     /**
-     * Drafts waiting for original copy, oldest story first — the one that has
-     * waited longest is the one closest to going stale.
+     * Drafts waiting for original copy, newest story first. `news:scrape`
+     * deletes the oldest day every day, so an oldest-first queue would spend
+     * the model on drafts about to be deleted while today's news waited; with
+     * a backlog, a `--limit` run now always covers the freshest stories.
      *
      * @return Collection<int, Article>
      */
@@ -118,8 +120,8 @@ class NewsRewriteService
             // The guard. No body means no original copy has been written yet.
             ->whereNull('body')
             ->when($id !== null, fn ($q) => $q->whereKey($id))
-            ->orderBy('published_at')
-            ->orderBy('id')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id')
             ->limit($limit)
             ->get();
     }

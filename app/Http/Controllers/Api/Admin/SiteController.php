@@ -10,8 +10,11 @@ use App\Http\Requests\Admin\UpdateSiteRequest;
 use App\Http\Resources\SiteRegistrationResource;
 use App\Http\Resources\SiteResource;
 use App\Jobs\InvalidateCasinoCache;
+use App\Jobs\RevalidateNextJsSites;
 use App\Models\Site;
 use App\Services\CmsPageService;
+use App\Support\LegalIdentity;
+use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Hash;
@@ -62,6 +65,11 @@ class SiteController extends Controller
         return new SiteResource($site);
     }
 
+    /** Site columns the editorial endpoint publishes. */
+    private const array EDITORIAL_FIELDS = [
+        'byline_enabled', 'author_name', 'author_role', 'author_bio', 'author_avatar_path', 'methodology_page_slug',
+    ];
+
     public function update(UpdateSiteRequest $request, Site $site): SiteResource
     {
         $wasCountries = (bool) $site->countries_enabled;
@@ -82,6 +90,17 @@ class SiteController extends Controller
 
         if ($wasReviews !== (bool) $fresh->reviews_enabled) {
             InvalidateCasinoCache::dispatch([$site->id], ['reviews', 'casinos']);
+        }
+
+        // Identity and byline settings are rendered into every legal page, the
+        // footer and the JSON-LD. Without this they waited out the hour-long
+        // cache, so a corrected company name stayed wrong on the live site.
+        if ($site->wasChanged([...LegalIdentity::TOKENS, ...self::EDITORIAL_FIELDS])) {
+            SiteCache::flushSite($site->id);
+
+            if ($fresh->active) {
+                RevalidateNextJsSites::dispatch(['editorial'], [$site->id]);
+            }
         }
 
         return new SiteResource($site);

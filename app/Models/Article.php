@@ -61,6 +61,10 @@ class Article extends Model
         'meta_description',
         'canonical_url',
         'noindex',
+        // Byline — authors of THIS article's site only; see the Form Requests.
+        'author_id',
+        'reviewed_by_id',
+        'last_reviewed_at',
     ];
 
     protected function casts(): array
@@ -73,6 +77,7 @@ class Article extends Model
             'to_be_most_popular' => 'boolean',
             'most_popular_at'    => 'datetime',
             'read_minutes' => 'integer',
+            'last_reviewed_at' => 'datetime',
         ];
     }
 
@@ -226,6 +231,18 @@ class Article extends Model
     public function site(): BelongsTo
     {
         return $this->belongsTo(Site::class);
+    }
+
+    /** Who wrote it. Null means no named author — the page shows no byline. */
+    public function author(): BelongsTo
+    {
+        return $this->belongsTo(Author::class);
+    }
+
+    /** Who checked it. Independent of the author; either may be set alone. */
+    public function reviewer(): BelongsTo
+    {
+        return $this->belongsTo(Author::class, 'reviewed_by_id');
     }
 
     /** The editorial section this post sits in. Null is a valid, publishable state. */

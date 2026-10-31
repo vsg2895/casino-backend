@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\Article;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * A guide.
@@ -16,6 +18,12 @@ use Illuminate\Validation\Rule;
  *
  * The slug is unique PER SITE — two domains may each have a
  * "bonus-terms-explained" — and is generated from the title when omitted.
+ *
+ * A scraped news draft cannot be switched ON until it has a body. Until
+ * `news:rewrite` writes one, its title and excerpt are the source's own words,
+ * and it carries `noindex`, so approving it would publish a page that is copied
+ * text and that search engines are told to skip. Only the switch-on is
+ * refused: a post that is already live can still be edited or hidden.
  */
 class UpdateArticleRequest extends FormRequest
 {
@@ -49,6 +57,33 @@ class UpdateArticleRequest extends FormRequest
             'to_be_most_popular' => ['sometimes', 'boolean'],
             'news_category_id' => ['nullable', 'integer', 'exists:news_categories,id'],
             'noindex'         => ['sometimes', 'boolean'],
+            // Byline: authors of THIS site only.
+            'author_id'        => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
+            'reviewed_by_id'   => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
+            'last_reviewed_at' => ['nullable', 'date'],
+        ];
+    }
+
+    /** @return array<int, callable(Validator): void> */
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                $article = $this->route('article');
+
+                if (! $article instanceof Article
+                    || ! $article->isIngested()
+                    || $article->active
+                    || ! $this->boolean('active')
+                    || trim(strip_tags((string) $this->input('body'))) !== '') {
+                    return;
+                }
+
+                $validator->errors()->add(
+                    'active',
+                    'This news draft has not been rewritten yet. Run php artisan news:rewrite first, then approve it.',
+                );
+            },
         ];
     }
 

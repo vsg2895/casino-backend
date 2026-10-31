@@ -309,7 +309,7 @@ class NewsController extends Controller
                     ->ofType(Article::TYPE_NEWS)
                     ->where('slug', $slug)
                     ->visible()
-                    ->with('newsCategory')
+                    ->with(['newsCategory', 'author' => fn ($q) => $q->visible(), 'reviewer' => fn ($q) => $q->visible()])
                     ->firstOrFail();
 
                 return (new ArticleResource($article))->resolve();

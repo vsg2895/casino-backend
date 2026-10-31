@@ -13,21 +13,15 @@ use App\Models\ForumArticle;
 use App\Models\ForumPost;
 use App\Models\Site;
 use App\Models\SpecialOffer;
-use App\Observers\CasinoObserver;
-use App\Observers\ForumArticleObserver;
-use App\Observers\ForumPostObserver;
-use App\Observers\Search\BonusCategorySearchObserver;
-use App\Observers\Search\CasinoReviewSearchObserver;
-use App\Observers\Search\CasinoSearchObserver;
-use App\Observers\Search\CategorySearchObserver;
-use App\Observers\Search\CmsPageSearchObserver;
-use App\Observers\Search\SpecialOfferSearchObserver;
+use App\Observers\{CasinoObserver, ForumArticleObserver, ForumPostObserver};
+use App\Observers\Search\{BonusCategorySearchObserver, CasinoReviewSearchObserver, CasinoSearchObserver, CategorySearchObserver,
+CmsPageSearchObserver, SpecialOfferSearchObserver};
 use App\Observers\SiteForumFlagObserver;
 use App\Policies\CmsPagePolicy;
 use App\Repositories\CmsPageRepository;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
-use App\Services\Mail\Transport\MailgunApiTransport;
-use App\Services\Mail\Transport\SendgridClickTrackingClient;
+use App\Services\Mail\Transport\{MailgunApiTransport, SendgridClickTrackingClient};
+use App\Support\Seo\SeoResolver;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Connection;
@@ -50,6 +44,17 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(CmsPageRepositoryInterface::class, CmsPageRepository::class);
+
+        /*
+         * SCOPED, or SeoResolver's per-request memo never memoises anything.
+         *
+         * The resources call `app(SeoResolver::class)` once per row. Unbound,
+         * that built a fresh resolver with an empty memo every time, so a listing
+         * of 26 offers ran the same `seo_templates` lookup 26 times. Scoped means
+         * one resolver per HTTP request, forgotten between queue jobs, so a long
+         * worker never keeps a template the admin has since changed.
+         */
+        $this->app->scoped(SeoResolver::class);
     }
 
     public function boot(): void

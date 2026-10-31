@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Site;
+use App\Support\LegalIdentity;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
 
@@ -35,6 +36,10 @@ class EditorialController extends Controller
             // claiming a methodology that is not published is the failure this
             // item is most at risk of.
             'methodology_page_slug' => $site->methodology_page_slug,
+            // Who legally operates the site, for the footer and the
+            // Organization JSON-LD. Every empty field is null, and the front
+            // end hides that line — a placeholder never reaches a reader.
+            'legal' => LegalIdentity::publicFor($site),
         ]);
 
         return response()->json(['data' => $data]);

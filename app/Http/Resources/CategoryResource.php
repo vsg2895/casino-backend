@@ -21,6 +21,9 @@ class CategoryResource extends JsonResource
             // where uploads are served from.
             'logo_path'     => $this->logo_path,
             'sort_order'    => (int) $this->sort_order,
+            // Drives the category page's robots tag; the sitemap endpoint
+            // applies the same flag, so the two cannot disagree.
+            'noindex'       => (bool) $this->noindex,
             'casinos_count' => $this->when(isset($this->casinos_count), fn () => (int) $this->casinos_count),
             // ISO-8601 STRING, not the Carbon instance. These responses are cached
             // via SiteCache, and a serialized Carbon returns as

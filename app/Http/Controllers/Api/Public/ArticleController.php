@@ -60,6 +60,8 @@ class ArticleController extends Controller
                 ->ofType(Article::TYPE_GUIDE)
                 ->where('slug', $slug)
                 ->visible()
+                // Hidden authors never reach a public byline.
+                ->with(['author' => fn ($q) => $q->visible(), 'reviewer' => fn ($q) => $q->visible()])
                 ->firstOrFail();
 
             return (new ArticleResource($article))->resolve();

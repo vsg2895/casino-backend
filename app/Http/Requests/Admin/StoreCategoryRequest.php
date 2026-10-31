@@ -24,6 +24,7 @@ class StoreCategoryRequest extends FormRequest
             // on the name never discards an already-uploaded logo. Explicit null
             // clears it.
             'logo_path'  => ['nullable', 'string', 'max:500'],
+            'noindex'    => ['sometimes', 'boolean'],
         ];
     }
 }

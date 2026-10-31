@@ -32,6 +32,9 @@ class CasinoResource extends JsonResource
             'reviewed_at'               => $this->reviewed_at?->toDateString(),
             'meta_title'                => $this->meta_title,
             'meta_description'          => $this->meta_description,
+            // The admin form's "keep out of search results" switch. The public
+            // casino page reads the same flag through `seo.noindex`.
+            'noindex'                   => (bool) $this->noindex,
             'active'                    => (bool) $this->active,
             'category_ids'              => $this->whenLoaded('categories', fn () => $this->categories->pluck('id')),
             'categories'                => CategoryResource::collection($this->whenLoaded('categories')),

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
+use App\Support\LegalIdentity;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -43,6 +44,16 @@ class SiteResource extends JsonResource
             'author_bio'        => $this->author_bio,
             'author_avatar_path' => $this->author_avatar_path,
             'methodology_page_slug' => $this->methodology_page_slug,
+            'legal_entity_name'  => $this->legal_entity_name,
+            'registered_address' => $this->registered_address,
+            'company_number'     => $this->company_number,
+            'governing_law'      => $this->governing_law,
+            'contact_email'      => $this->contact_email,
+            'support_email'      => $this->support_email,
+            'privacy_email'      => $this->privacy_email,
+            // Required identity fields still empty — the admin's warning. The
+            // public site hides the matching lines meanwhile.
+            'legal_identity_missing' => LegalIdentity::missingFor($this->resource),
             // Cache health, for the sites list. Null until the first attempt.
             'last_revalidated_at'      => $this->last_revalidated_at,
             'last_revalidation_status' => $this->last_revalidation_status,

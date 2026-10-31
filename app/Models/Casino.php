@@ -74,7 +74,9 @@ class Casino extends Model
     public function sites(): BelongsToMany
     {
         return $this->belongsToMany(Site::class)
-            ->withPivot(['affiliate_url', 'position', 'featured', 'active'])
+            // The byline columns are per attachment because authors are per
+            // site and casinos are not — see the 2026_11_20 byline migration.
+            ->withPivot(['affiliate_url', 'position', 'featured', 'active', 'author_id', 'reviewed_by_id', 'last_reviewed_at'])
             ->withTimestamps()
             ->orderByPivot('position');
     }

@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CasinoWithAttachmentResource;
+use App\Models\Author;
 use App\Models\Casino;
 use App\Models\FacetConfig;
 use App\Models\Site;
@@ -125,12 +126,38 @@ class CasinoController extends Controller
         $site = app('current_site');
 
         $data = SiteCache::remember($site->id, ['casinos'], 'casinos:show:site:'.$site->id.':slug:'.$slug, 3600, function () use ($site, $slug) {
-            $casino = $this->baseQuery($site)->where('casinos.slug', $slug)->firstOrFail()->load(self::relations());
+            $casino = $this->baseQuery($site)
+                ->addSelect(['pivot.author_id', 'pivot.reviewed_by_id', 'pivot.last_reviewed_at'])
+                ->where('casinos.slug', $slug)
+                ->firstOrFail()
+                ->load(self::relations());
+
+            $this->attachByline($casino, $site);
 
             return (new CasinoWithAttachmentResource($casino))->resolve();
         });
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Resolve this site's byline for the casino, from its attachment row.
+     *
+     * Casinos are shared by every site; who wrote and checked the review is
+     * not, so the ids live on `casino_site`. Only visible authors of THIS site
+     * are loaded — the site scope is re-applied here rather than trusted from
+     * the write-time validation.
+     */
+    private function attachByline(Casino $casino, Site $site): void
+    {
+        $ids = array_filter([(int) $casino->getAttribute('author_id'), (int) $casino->getAttribute('reviewed_by_id')]);
+
+        $authors = $ids === []
+            ? collect()
+            : Author::query()->forSite($site->id)->visible()->whereIn('id', $ids)->get()->keyBy('id');
+
+        $casino->setRelation('bylineAuthor', $authors->get((int) $casino->getAttribute('author_id')));
+        $casino->setRelation('bylineReviewer', $authors->get((int) $casino->getAttribute('reviewed_by_id')));
     }
 
     /** @return Builder<Casino> */

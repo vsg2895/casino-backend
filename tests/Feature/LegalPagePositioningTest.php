@@ -133,6 +133,27 @@ class LegalPagePositioningTest extends TestCase
         $this->assertStringContainsString('Roulette and live table games.', (string) $about->meta_description);
     }
 
+    /**
+     * The six templated legal pages are seeded noindex and the five trust pages
+     * indexable — at creation, so a site registered after any backfill is right.
+     */
+    public function test_seeding_a_site_keeps_only_the_legal_pages_out_of_the_index(): void
+    {
+        [$site] = $this->siteWithKey();
+
+        app(CmsPageService::class)->seedDefaultsForSite($site);
+
+        $noindex = CmsPage::query()
+            ->where('site_id', $site->id)
+            ->where('noindex', true)
+            ->orderBy('slug')
+            ->pluck('slug')
+            ->all();
+
+        $this->assertSame(['aml-policy', 'cookie-policy', 'disclaimer', 'kyc-policy', 'privacy-policy', 'terms'], $noindex);
+        $this->assertSame(5, CmsPage::query()->where('site_id', $site->id)->where('noindex', false)->count());
+    }
+
     /** A site that never set one still seeds successfully, with the old wording. */
     public function test_seeding_a_site_without_positioning_still_works(): void
     {

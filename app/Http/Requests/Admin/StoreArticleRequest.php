@@ -49,6 +49,10 @@ class StoreArticleRequest extends FormRequest
             'to_be_most_popular' => ['sometimes', 'boolean'],
             'news_category_id' => ['nullable', 'integer', 'exists:news_categories,id'],
             'noindex'         => ['sometimes', 'boolean'],
+            // Byline: authors of THIS site only.
+            'author_id'        => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
+            'reviewed_by_id'   => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
+            'last_reviewed_at' => ['nullable', 'date'],
         ];
     }
 

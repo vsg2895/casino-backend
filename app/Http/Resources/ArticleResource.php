@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources;
 
 use App\Models\Article;
+use App\Support\Byline;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -62,6 +63,19 @@ class ArticleResource extends JsonResource
             'awaiting_rewrite' => $this->when(
                 array_key_exists('awaiting_rewrite', $this->resource->getAttributes()),
                 fn () => (bool) $this->resource->getAttributes()['awaiting_rewrite'],
+            ),
+            // Byline ids for the admin form; the resolved byline only when the
+            // detail query loaded the (visible) authors.
+            'author_id'        => $this->author_id,
+            'reviewed_by_id'   => $this->reviewed_by_id,
+            'last_reviewed_at' => $this->last_reviewed_at?->toISOString(),
+            'byline'           => $this->when(
+                $this->relationLoaded('author') || $this->relationLoaded('reviewer'),
+                fn () => Byline::from(
+                    $this->relationLoaded('author') ? $this->author : null,
+                    $this->relationLoaded('reviewer') ? $this->reviewer : null,
+                    $this->last_reviewed_at,
+                ),
             ),
             'updated_at'      => $this->updated_at?->toISOString(),
         ];

@@ -62,7 +62,7 @@ Schedule::command('promotions:dispatch-verification')
 // Collect news facts from the configured RSS feeds, then rewrite them.
 //
 // CONFIG-GUARDED, and off by default: ingestion starts when an operator sets
-// NEWS_SCRAPE_SCHEDULED=true, never because a deploy shipped the code. The
+// NEWS_SCRAPE_SCHEDULED=true, never because a deployment shipped the code. The
 // rewrite is under the same switch — with no scrape there is nothing to
 // rewrite, and a rewrite schedule alone would be a key spending on nothing.
 //

@@ -35,6 +35,16 @@ class CmsPageResource extends JsonResource
              * site, and editable in the admin.
              */
             'noindex'          => (bool) $this->noindex,
+            'author_id'        => $this->author_id,
+            'reviewed_by_id'   => $this->reviewed_by_id,
+            'last_reviewed_at' => $this->last_reviewed_at?->toISOString(),
+            // The pending revision. Admin only — the public resource never
+            // reads these columns.
+            'draft_title'            => $this->draft_title,
+            'draft_content'          => $this->draft_content,
+            'draft_meta_title'       => $this->draft_meta_title,
+            'draft_meta_description' => $this->draft_meta_description,
+            'draft_updated_at'       => $this->draft_updated_at?->toISOString(),
             'created_at'       => $this->created_at,
             'updated_at'       => $this->updated_at,
         ];

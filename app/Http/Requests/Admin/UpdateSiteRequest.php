@@ -50,6 +50,16 @@ class UpdateSiteRequest extends FormRequest
             'author_bio'        => ['nullable', 'string', 'max:2000'],
             'author_avatar_path' => ['nullable', 'string', 'max:500'],
             'methodology_page_slug' => ['nullable', 'string', 'max:120'],
+            // Legal identity. All optional: an empty field hides its line on
+            // the public site and shows a warning in the admin, so nothing has
+            // to be invented to save the form.
+            'legal_entity_name'  => ['nullable', 'string', 'max:200'],
+            'registered_address' => ['nullable', 'string', 'max:500'],
+            'company_number'     => ['nullable', 'string', 'max:60'],
+            'governing_law'      => ['nullable', 'string', 'max:120'],
+            'contact_email'      => ['nullable', 'email', 'max:190'],
+            'support_email'      => ['nullable', 'email', 'max:190'],
+            'privacy_email'      => ['nullable', 'email', 'max:190'],
         ];
         // api_key is intentionally absent — it can only change via rotateKey
     }

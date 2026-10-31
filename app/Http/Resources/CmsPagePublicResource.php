@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
+use App\Models\Site;
+use App\Support\Byline;
+use App\Support\LegalIdentity;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -19,7 +22,9 @@ class CmsPagePublicResource extends JsonResource
         return [
             'slug'             => $this->slug,
             'title'            => $this->title,
-            'content'          => $this->content,
+            // Legal-identity tokens resolved against the requesting site; a
+            // line whose value is empty is removed, never printed blank.
+            'content'          => $this->renderedContent(),
             'meta_title'       => $this->meta_title ?? $this->title,
             'meta_description' => $this->meta_description,
             /*
@@ -38,6 +43,21 @@ class CmsPagePublicResource extends JsonResource
             // __PHP_Incomplete_Class — so the cached copy shipped a broken object
             // where the uncached one shipped a date. Same wire format either way.
             'updated_at'       => $this->updated_at?->toISOString(),
+            'byline'           => Byline::from(
+                $this->relationLoaded('author') ? $this->author : null,
+                $this->relationLoaded('reviewer') ? $this->reviewer : null,
+                $this->last_reviewed_at,
+            ),
         ];
+    }
+
+    private function renderedContent(): string
+    {
+        $site = app()->bound('current_site') ? app('current_site') : $this->site;
+
+        return LegalIdentity::render(
+            $this->content,
+            $site instanceof Site ? LegalIdentity::valuesFor($site) : [],
+        );
     }
 }

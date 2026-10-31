@@ -526,6 +526,57 @@ class NewsSectionTest extends TestCase
         $this->assertSame(['Back up'], $this->feed());
     }
 
+    /** A scraped draft that news:rewrite has not written yet. */
+    private function scrapedDraft(): Article
+    {
+        return Article::create([
+            'site_id' => $this->site->id, 'type' => Article::TYPE_NEWS,
+            'title' => 'Source headline', 'excerpt' => 'Source teaser.', 'slug' => 'source-headline',
+            'source_ref' => 'feed:1', 'source_name' => 'Feed', 'source_url' => 'https://example.com/1',
+            'published_at' => now()->subHour(), 'active' => false, 'noindex' => true,
+        ]);
+    }
+
+    public function test_a_scraped_draft_cannot_be_approved_before_it_is_rewritten(): void
+    {
+        $draft = $this->scrapedDraft();
+        $this->actingAsAdmin();
+
+        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$draft->id}?type=news", [
+            'title' => $draft->title, 'body' => null, 'active' => true,
+        ])->assertUnprocessable()->assertJsonValidationErrors('active');
+
+        $this->assertFalse($draft->fresh()->active);
+        $this->assertSame([], $this->feed());
+    }
+
+    public function test_a_rewritten_draft_can_be_approved(): void
+    {
+        $draft = $this->scrapedDraft();
+        $draft->update(['body' => '<p>Original copy.</p>', 'noindex' => false]);
+        $this->actingAsAdmin();
+
+        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$draft->id}?type=news", [
+            'title' => $draft->title, 'body' => $draft->body, 'active' => true,
+        ])->assertOk();
+
+        $this->assertTrue($draft->fresh()->active);
+    }
+
+    /** Already live from before the block: it can still be edited, and hidden. */
+    public function test_a_live_unrewritten_post_can_still_be_edited_and_hidden(): void
+    {
+        $draft = $this->scrapedDraft();
+        $draft->update(['active' => true]);
+        $this->actingAsAdmin();
+        $url = "/api/v1/admin/sites/{$this->site->id}/articles/{$draft->id}?type=news";
+
+        $this->putJson($url, ['title' => $draft->title, 'body' => null, 'active' => true, 'featured' => true])->assertOk();
+        $this->putJson($url, ['title' => $draft->title, 'body' => null, 'active' => false])->assertOk();
+
+        $this->assertFalse($draft->fresh()->active);
+    }
+
     /** A hidden post must not be reachable by URL either. */
     public function test_a_hidden_post_404s_on_its_own_url(): void
     {

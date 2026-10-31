@@ -52,6 +52,15 @@ class Site extends Model
         'author_bio',
         'author_avatar_path',
         'methodology_page_slug',
+        // Legal identity — read by legal pages, the footer and the
+        // Organization JSON-LD. See App\Support\LegalIdentity.
+        'legal_entity_name',
+        'registered_address',
+        'company_number',
+        'governing_law',
+        'contact_email',
+        'support_email',
+        'privacy_email',
     ];
 
     protected $hidden = [
@@ -123,6 +132,12 @@ class Site extends Model
             ->withPivot(['affiliate_url', 'position', 'featured', 'active'])
             ->withTimestamps()
             ->orderByPivot('position');
+    }
+
+    /** The real people who write and check this site's content. */
+    public function authors(): HasMany
+    {
+        return $this->hasMany(Author::class);
     }
 
     public function newsletters(): HasMany

@@ -40,6 +40,8 @@ class CmsPageRepository implements CmsPageRepositoryInterface
             ->forSite($siteId)
             ->published()
             ->where('slug', $slug)
+            // Hidden authors never reach a public byline.
+            ->with(['author' => fn ($q) => $q->visible(), 'reviewer' => fn ($q) => $q->visible()])
             ->first();
     }
 

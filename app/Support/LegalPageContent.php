@@ -18,8 +18,9 @@ namespace App\Support;
  *
  * Brand-specific facts that genuinely require human/legal input (legal entity
  * name, company registration number, registered postal address, governing-law
- * jurisdiction) are left as clearly bracketed placeholders for the operator to
- * complete; everything else is finished copy.
+ * jurisdiction, contact addresses) are `{{tokens}}` filled from the site's
+ * settings at render time, a line being hidden while its value is empty — never
+ * a placeholder shown to a reader. Everything else is finished copy.
  *
  * Used by {@see \Database\Seeders\CmsPageSeeder} and by site registration so a
  * newly added domain automatically receives the full set of pages.
@@ -27,15 +28,14 @@ namespace App\Support;
 final class LegalPageContent
 {
     /**
-     * The three facts a lawyer has to supply, as they appear in the seeded copy.
+     * The bracketed placeholders the template USED to seed.
      *
-     * PUBLIC CONSTANTS rather than literals inside the builder, because a
-     * second caller now needs to find them: `sites:fill-legal-identity` scans
-     * for exactly these strings when it fills them in. If the two ever held
-     * their own copies, editing the wording here would silently turn that
-     * command into a no-op — it would search for text that no page contains any
-     * more, report "nothing to fill", and the pages would ship with visible
-     * brackets.
+     * New pages carry `{{legal_entity_name}}`, `{{registered_address}}`,
+     * `{{governing_law}}`, `{{support_email}}` and `{{privacy_email}}` instead,
+     * resolved from the site's settings when the page is served — see
+     * {@see LegalIdentity}. These constants remain because pages seeded before
+     * that change still hold the brackets, and `sites:tokenize-legal-identity`
+     * searches for exactly these strings to convert them.
      */
     public const string PLACEHOLDER_ENTITY = '[Legal Entity Name]';
 
@@ -44,22 +44,32 @@ final class LegalPageContent
     public const string PLACEHOLDER_JURISDICTION = '[governing-law jurisdiction]';
 
     /**
+     * Seeded with `noindex`. The same template on every domain with only the
+     * brand swapped, and not pages anyone searches for by name, so indexing
+     * them puts near-identical copies on every site into competition. The
+     * other five (about, contact, responsible-gambling, affiliate-disclosure,
+     * editorial-policy) are the trust pages Google looks for and stay indexable.
+     *
+     * Set HERE, at creation, and not only by a migration: the 2026_11_13
+     * backfill reached the sites that existed then, and every site registered
+     * after it shipped these six indexable.
+     */
+    public const array NOINDEX_SLUGS = [
+        'privacy-policy', 'terms', 'cookie-policy', 'disclaimer', 'aml-policy', 'kyc-policy',
+    ];
+
+    /**
      * Build every standard page for a brand.
      *
-     * @return array<int, array{slug:string,title:string,meta_title:string,meta_description:string,status:string,content:string}>
+     * @return array<int, array{slug:string,title:string,meta_title:string,meta_description:string,status:string,noindex:bool,content:string}>
      */
     public static function forBrand(string $brand, string $domain, ?string $positioning = null): array
     {
         $url      = 'https://' . $domain;
-        $support  = 'support@' . $domain;
-        $privacy  = 'privacy@' . $domain;
         $dpo      = 'dpo@' . $domain;
         $legal    = 'legal@' . $domain;
         $compliance = 'compliance@' . $domain;
         $partners = 'partners@' . $domain;
-        $company  = self::PLACEHOLDER_ENTITY;
-        $address  = self::PLACEHOLDER_ADDRESS;
-        $jurisdiction = self::PLACEHOLDER_JURISDICTION;
 
         $pages = [];
 
@@ -94,7 +104,7 @@ final class LegalPageContent
 <p>We promote gambling strictly as a form of entertainment for adults aged <strong>18 or older</strong> (or the legal age in your jurisdiction). Please read our <a href="{$url}/responsible-gambling">Responsible Gambling</a> page and always play within your means.</p>
 
 <h2>Contact</h2>
-<p>Questions or feedback? Email us at <a href="mailto:{$support}">{$support}</a> or visit our <a href="{$url}/contact">Contact</a> page.</p>
+<p>Questions or feedback? Email us at <a href="mailto:{{support_email}}">{{support_email}}</a> or visit our <a href="{$url}/contact">Contact</a> page.</p>
 HTML,
         ];
 
@@ -108,16 +118,16 @@ HTML,
 <p>We'd love to hear from you. Whether you have a question, a correction, a privacy request, or a partnership enquiry, please use the most relevant contact below and we'll get back to you.</p>
 
 <h2>General &amp; Support</h2>
-<p>For general questions and feedback: <a href="mailto:{$support}">{$support}</a></p>
+<p>For general questions and feedback: <a href="mailto:{{support_email}}">{{support_email}}</a></p>
 
 <h2>Privacy &amp; Data Requests</h2>
-<p>To exercise your data-protection rights or ask about how we handle personal data: <a href="mailto:{$privacy}">{$privacy}</a> (Data Protection contact: <a href="mailto:{$dpo}">{$dpo}</a>). See our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
+<p>To exercise your data-protection rights or ask about how we handle personal data: <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> (Data Protection contact: <a href="mailto:{$dpo}">{$dpo}</a>). See our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
 
 <h2>Partnerships &amp; Operators</h2>
 <p>For affiliate, advertising, and business enquiries: <a href="mailto:{$partners}">{$partners}</a></p>
 
-<h2>Postal Address</h2>
-<p>{$brand} is operated by {$company}, {$address}.</p>
+<h2 data-requires="legal_entity_name registered_address">Postal Address</h2>
+<p data-requires="legal_entity_name registered_address">{$brand} is operated by {{legal_entity_name}}, {{registered_address}}.<span data-requires="company_number"> Company number: {{company_number}}.</span></p>
 
 <h2>Response Times</h2>
 <p>We aim to respond to all enquiries within 2–3 business days. Privacy requests are handled within the timeframes required by applicable law.</p>
@@ -134,7 +144,7 @@ HTML,
             'meta_title'       => "Privacy Policy — {$brand}",
             'meta_description' => "How {$brand} collects, uses, shares, and protects your personal data, your GDPR and CCPA/CPRA rights, and how to contact us.",
             'content'          => <<<HTML
-<p>This Privacy Policy explains how {$brand} ("we", "us", "our") collects, uses, discloses, and safeguards your personal data when you visit <a href="{$url}">{$domain}</a> or subscribe to our communications. {$brand} is operated by {$company}, {$address}, which is the data controller responsible for your personal data.</p>
+<p>This Privacy Policy explains how {$brand} ("we", "us", "our") collects, uses, discloses, and safeguards your personal data when you visit <a href="{$url}">{$domain}</a> or subscribe to our communications. {$brand} is operated by {{legal_entity_name}}, which is the data controller responsible for your personal data. Its registered address is {{registered_address}}.</p>
 
 <h2>1. Information We Collect</h2>
 <h3>Information you provide</h3>
@@ -194,7 +204,7 @@ HTML,
 <p>We may update this Policy from time to time. Please review it periodically for any changes.</p>
 
 <h2>13. Contact</h2>
-<p>For any privacy question or request, contact <a href="mailto:{$privacy}">{$privacy}</a> or our Data Protection contact at <a href="mailto:{$dpo}">{$dpo}</a>.</p>
+<p>For any privacy question or request, contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> or our Data Protection contact at <a href="mailto:{$dpo}">{$dpo}</a>.</p>
 HTML,
         ];
 
@@ -205,7 +215,7 @@ HTML,
             'meta_title'       => "Terms & Conditions — {$brand}",
             'meta_description' => "The terms governing your use of {$brand}, including our affiliate relationship, content accuracy, and limitations of liability.",
             'content'          => <<<HTML
-<p>These Terms &amp; Conditions ("Terms") govern your use of <a href="{$url}">{$domain}</a> (the "Site"), operated by {$company}. By accessing or using the Site, you agree to these Terms. If you do not agree, please do not use the Site.</p>
+<p>These Terms &amp; Conditions ("Terms") govern your use of <a href="{$url}">{$domain}</a> (the "Site"). The Site is operated by {{legal_entity_name}}. By accessing or using the Site, you agree to these Terms. If you do not agree, please do not use the Site.</p>
 
 <h2>1. Eligibility</h2>
 <p>You must be at least <strong>18 years old</strong> (or the legal gambling age in your jurisdiction) to use the Site. It is your responsibility to ensure that online gambling is legal where you live; laws vary by country, state, and region.</p>
@@ -223,19 +233,19 @@ HTML,
 <p>The Site contains links to third-party operators we do not own or control. We are not responsible for their content, offers, terms, or conduct. Your dealings with any operator are solely between you and that operator.</p>
 
 <h2>6. Intellectual Property</h2>
-<p>All content on the Site, including text, graphics, logos, and design, is owned by or licensed to {$company} and protected by applicable laws. You may not reproduce or redistribute it without permission.</p>
+<p>All content on the Site, including text, graphics, logos, and design, is owned by or licensed to {{legal_entity_name}} and protected by applicable laws. You may not reproduce or redistribute it without permission.</p>
 
 <h2>7. Acceptable Use</h2>
 <p>You agree not to misuse the Site, attempt to disrupt it, scrape it without permission, or use it for unlawful purposes.</p>
 
 <h2>8. Limitation of Liability</h2>
-<p>To the maximum extent permitted by law, {$company} shall not be liable for any indirect, incidental, or consequential damages, or for any losses arising from your use of the Site or any third-party operator.</p>
+<p>To the maximum extent permitted by law, {{legal_entity_name}} shall not be liable for any indirect, incidental, or consequential damages, or for any losses arising from your use of the Site or any third-party operator.</p>
 
 <h2>9. Indemnification</h2>
-<p>You agree to indemnify and hold harmless {$company} from any claims arising out of your misuse of the Site or breach of these Terms.</p>
+<p>You agree to indemnify and hold harmless {{legal_entity_name}} from any claims arising out of your misuse of the Site or breach of these Terms.</p>
 
-<h2>10. Governing Law</h2>
-<p>These Terms are governed by the laws of {$jurisdiction}, without regard to conflict-of-law principles.</p>
+<h2 data-requires="governing_law">10. Governing Law</h2>
+<p>These Terms are governed by the laws of {{governing_law}}, without regard to conflict-of-law principles.</p>
 
 <h2>11. Changes</h2>
 <p>We may update these Terms from time to time. Continued use of the Site after changes constitutes acceptance of the revised Terms.</p>
@@ -278,7 +288,7 @@ HTML,
 <p>Some cookies are set by third parties (such as analytics providers and affiliate operators). Their use of cookies is governed by their own privacy and cookie policies.</p>
 
 <h2>More Information</h2>
-<p>For how we handle the data collected via cookies, see our <a href="{$url}/privacy-policy">Privacy Policy</a>, or contact <a href="mailto:{$privacy}">{$privacy}</a>.</p>
+<p>For how we handle the data collected via cookies, see our <a href="{$url}/privacy-policy">Privacy Policy</a>, or contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>.</p>
 HTML,
         ];
 
@@ -359,7 +369,7 @@ HTML,
 <p>Outbound links to operators are marked with <code>rel="sponsored nofollow"</code> and open in a new tab, consistent with search-engine and advertising best practices.</p>
 
 <h2>Questions</h2>
-<p>If you have any questions about our affiliate relationships, contact <a href="mailto:{$support}">{$support}</a>.</p>
+<p>If you have any questions about our affiliate relationships, contact <a href="mailto:{{support_email}}">{{support_email}}</a>.</p>
 HTML,
         ];
 
@@ -391,7 +401,7 @@ HTML,
 <p>All promotions are subject to the operator's terms and conditions, including wagering requirements, eligibility, and expiry. Review them carefully before opting in.</p>
 
 <h2>Contact</h2>
-<p>Questions about this Disclaimer? Contact <a href="mailto:{$support}">{$support}</a>.</p>
+<p>Questions about this Disclaimer? Contact <a href="mailto:{{support_email}}">{{support_email}}</a>.</p>
 HTML,
         ];
 
@@ -450,7 +460,7 @@ HTML,
 <p>The only personal data {$brand} collects directly is the information you choose to share with us — for example, your email address when you subscribe to our newsletter. We handle that data as described in our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
 
 <h2>Contact</h2>
-<p>Questions? Contact <a href="mailto:{$privacy}">{$privacy}</a>.</p>
+<p>Questions? Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>.</p>
 HTML,
         ];
 
@@ -476,7 +486,7 @@ HTML,
 <p>The online-gambling landscape changes quickly. We review and update our content regularly, and we encourage readers to verify current terms directly with operators. If you spot an error, please tell us.</p>
 
 <h2>Corrections</h2>
-<p>We correct significant errors promptly and transparently. To report an inaccuracy, email <a href="mailto:{$support}">{$support}</a>.</p>
+<p>We correct significant errors promptly and transparently. To report an inaccuracy, email <a href="mailto:{{support_email}}">{{support_email}}</a>.</p>
 HTML,
         ];
 
@@ -491,6 +501,7 @@ HTML,
         return array_map(static function (array $page) use ($suffix): array {
             $page['status'] = 'published';
             $page['meta_description'] = trim($page['meta_description'] . $suffix);
+            $page['noindex'] = in_array($page['slug'], self::NOINDEX_SLUGS, true);
 
             return $page;
         }, $pages);

@@ -45,7 +45,9 @@ class RevalidationService
 
             // Always include the site's own tag — every public fetch is tagged with it,
             // so this refreshes ALL of that site's pages (list, detail, categories, offers).
-            $siteTags = array_values(array_unique([...$tags, 'site:' . $site->slug]));
+            // `sitemap` on every call: any content change can add, drop or
+            // re-date a URL, and the sitemap fetch is tagged with it.
+            $siteTags = array_values(array_unique([...$tags, 'sitemap', 'site:' . $site->slug]));
 
             $startedAt = microtime(true);
             $status = SiteRevalidation::STATUS_FAILED;

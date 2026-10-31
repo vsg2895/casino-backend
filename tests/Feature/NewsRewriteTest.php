@@ -330,8 +330,16 @@ class NewsRewriteTest extends TestCase
 
         $pending = app(NewsRewriteService::class)->pending(10);
 
-        // Oldest story first: the one that has waited longest goes stale first.
-        $this->assertSame([$older->id, $newer->id], $pending->modelKeys());
+        // Newest story first: the oldest day is the next one news:scrape deletes.
+        $this->assertSame([$newer->id, $older->id], $pending->modelKeys());
+    }
+
+    public function test_a_limited_run_takes_the_newest_drafts(): void
+    {
+        $this->draft(['published_at' => now()->subDays(20), 'source_ref' => 'a:1', 'slug' => 'stale']);
+        $today = $this->draft(['published_at' => now()->subHour(), 'source_ref' => 'a:2', 'slug' => 'today']);
+
+        $this->assertSame([$today->id], app(NewsRewriteService::class)->pending(1)->modelKeys());
     }
 
     // ── the command ──────────────────────────────────────────────────────────

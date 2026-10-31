@@ -24,12 +24,16 @@ class Category extends Model
         // see the upload endpoint and SvgSanitizer.
         'logo_path',
         'sort_order',
+        // Editorial "hide from search engines": noindex on the page, absent
+        // from the sitemap. See the 2026_11_19 migration.
+        'noindex',
     ];
 
     protected function casts(): array
     {
         return [
             'sort_order' => 'integer',
+            'noindex'    => 'boolean',
         ];
     }
 

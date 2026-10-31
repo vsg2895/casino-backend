@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\Admin\AuthorController as AdminAuthorController;
 use App\Http\Controllers\Api\Admin\CasinoController as AdminCasinoController;
 use App\Http\Controllers\Api\Admin\CasinoReviewController as AdminCasinoReviewController;
 use App\Http\Controllers\Api\Admin\ArticleController as AdminArticleController;
@@ -45,12 +46,14 @@ use App\Http\Controllers\Api\Admin\UnsubscribeController;
 use App\Http\Controllers\Api\Admin\VerifyEmailSendController;
 use App\Http\Controllers\Api\Admin\WarmupEmailController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\Public\AuthorController as PublicAuthorController;
 use App\Http\Controllers\Api\Public\CasinoController as PublicCasinoController;
 use App\Http\Controllers\Api\Public\ForumAuthController;
 use App\Http\Controllers\Api\Public\ForumController as PublicForumController;
 use App\Http\Controllers\Api\Public\ForumPostController;
 use App\Http\Controllers\Api\Public\CasinoReviewController as PublicCasinoReviewController;
 use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryController;
+use App\Http\Controllers\Api\Public\SitemapController as PublicSitemapController;
 use App\Http\Controllers\Api\Public\CountryController as PublicCountryController;
 use App\Http\Controllers\Api\Admin\BonusCategoryController as AdminBonusCategoryController;
 use App\Http\Controllers\Api\Admin\NewsCategoryController as AdminNewsCategoryController;
@@ -150,6 +153,14 @@ Route::prefix('v1')->group(function () {
 
         // Guides — the only content type that belongs to a single site, so it
         // is nested under one rather than living at the top level.
+        // Authors — one site's team. Unpaginated (a handful of people), so no
+        // `count` literal to order before the {author} binding.
+        Route::get('sites/{site}/authors', [AdminAuthorController::class, 'index']);
+        Route::post('sites/{site}/authors', [AdminAuthorController::class, 'store']);
+        Route::get('sites/{site}/authors/{author}', [AdminAuthorController::class, 'show']);
+        Route::put('sites/{site}/authors/{author}', [AdminAuthorController::class, 'update']);
+        Route::delete('sites/{site}/authors/{author}', [AdminAuthorController::class, 'destroy']);
+
         // News categories — one site's editorial sections.
         Route::get('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'index']);
         Route::post('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'store']);
@@ -245,6 +256,9 @@ Route::prefix('v1')->group(function () {
             Route::post('sync',     [CasinoSiteAttachmentController::class, 'sync']);
             Route::post('',         [CasinoSiteAttachmentController::class, 'store']);
             Route::patch('{site}',  [CasinoSiteAttachmentController::class, 'update']);
+            // This site's byline for the casino — kept off sync() so saving the
+            // attachment table can never wipe who reviewed it.
+            Route::put('{site}/byline', [CasinoSiteAttachmentController::class, 'updateByline']);
             Route::delete('{site}', [CasinoSiteAttachmentController::class, 'destroy']);
         });
 
@@ -563,6 +577,7 @@ Route::prefix('v1')->group(function () {
         // CMS / Legal pages (per-site content — authorized via CmsPagePolicy)
         // Literal before the resource, or `pages/{page}` swallows "count".
         Route::get('pages/count', [AdminCmsPageController::class, 'count']);
+        Route::post('pages/{page}/publish-draft', [AdminCmsPageController::class, 'publishDraft']);
         Route::apiResource('pages', AdminCmsPageController::class);
     });
 
@@ -608,6 +623,10 @@ Route::prefix('v1')->group(function () {
         Route::get('categories',              [PublicCategoryController::class, 'index']);
         Route::get('categories/{slug}',       [PublicCategoryController::class, 'show']);
 
+        // Every indexable detail URL in one payload: slug + updated_at per item,
+        // filtered by the same rules as the pages. Feeds app/sitemap.ts.
+        Route::get('sitemap',                 [PublicSitemapController::class, 'index']);
+
         // Which optional surfaces this site publishes. Advisory — it tells the
         // front end what to render; the endpoints below enforce it themselves.
         Route::get('features',                [SiteFeatureController::class, 'index']);
@@ -652,6 +671,8 @@ Route::prefix('v1')->group(function () {
         // Who stands behind the reviews. Separate from `features`: that endpoint
         // is booleans, this is content.
         Route::get('editorial',               [EditorialController::class, 'index']);
+        // A visible author's profile and the reviews/articles they signed.
+        Route::get('authors/{slug}',          [PublicAuthorController::class, 'show']);
 
         // Published guides. Both 404 unless the site has guides_enabled — the
         // endpoints enforce it themselves, as countries and reviews do.

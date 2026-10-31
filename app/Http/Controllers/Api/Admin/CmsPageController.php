@@ -99,6 +99,28 @@ class CmsPageController extends Controller
         return new CmsPageResource($updated);
     }
 
+    /**
+     * Make the pending draft the live page.
+     *
+     * A separate action, not a field on update(): publishing is the moment a
+     * reviewed rewrite replaces what readers see, and it should be one
+     * deliberate click rather than a side effect of saving the form.
+     */
+    public function publishDraft(CmsPage $page): CmsPageResource|JsonResponse
+    {
+        $this->authorize('update', $page);
+
+        if (! $page->hasDraftContent()) {
+            return response()->json(['message' => 'This page has no pending draft.'], 422);
+        }
+
+        $page->publishDraft();
+
+        $this->revalidate($page);
+
+        return new CmsPageResource($page->refresh());
+    }
+
     public function destroy(CmsPage $page): JsonResponse
     {
         $this->authorize('delete', $page);

@@ -36,6 +36,16 @@ class UpdateCmsPageRequest extends FormRequest
             // are the only per-record SEO controls an offer has.
             'canonical_url' => ['nullable', 'string', 'max:500', 'regex:#^https?://#'],
             'noindex'       => ['sometimes', 'boolean'],
+            // Byline: only an author of the page's OWN site — a person from
+            // another brand must never be named on this one.
+            'author_id'        => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $page->site_id)],
+            'reviewed_by_id'   => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $page->site_id)],
+            'last_reviewed_at' => ['nullable', 'date'],
+            // Pending revision; the live columns above stay public meanwhile.
+            'draft_title'            => ['nullable', 'string', 'max:255'],
+            'draft_content'          => ['nullable', 'string'],
+            'draft_meta_title'       => ['nullable', 'string', 'max:255'],
+            'draft_meta_description' => ['nullable', 'string', 'max:500'],
         ];
     }
 }

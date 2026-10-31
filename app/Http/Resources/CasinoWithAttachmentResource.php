@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Resources;
 
 use App\Models\Site;
+use App\Support\Byline;
+use Carbon\CarbonImmutable;
 use App\Support\Seo\SeoResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -62,6 +64,16 @@ class CasinoWithAttachmentResource extends JsonResource
             // the front end then says nothing rather than falling back to
             // updated_at and implying a person checked it.
             'reviewed_at'           => $this->reviewed_at?->toDateString(),
+            // Per-site "Written by / Reviewed by · Updated". Only on the detail
+            // endpoint, which resolves the authors; null when nobody is named.
+            'byline'                => $this->when(
+                $this->relationLoaded('bylineAuthor'),
+                fn () => Byline::from(
+                    $this->bylineAuthor,
+                    $this->bylineReviewer,
+                    $this->bylineDate(),
+                ),
+            ),
             'seo'                   => $this->seoBlock(),
             'updated_at'            => $this->updated_at?->toISOString(),
             'attachment'            => [
@@ -70,6 +82,23 @@ class CasinoWithAttachmentResource extends JsonResource
                 'featured'      => (bool) $this->featured,
             ],
         ];
+    }
+
+    /**
+     * This site's own review date, or the casino's global one.
+     *
+     * The pivot column arrives from the join as a raw string (no cast applies
+     * to a joined column), hence the parse.
+     */
+    private function bylineDate(): ?\DateTimeInterface
+    {
+        $own = $this->resource->getAttribute('last_reviewed_at');
+
+        if (is_string($own) && $own !== '') {
+            return CarbonImmutable::parse($own);
+        }
+
+        return $this->reviewed_at;
     }
 
     /**
