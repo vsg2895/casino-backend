@@ -8,6 +8,7 @@ use App\Models\CmsPage;
 use App\Models\Site;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Support\LegalPageContent;
+use App\Support\SchemaGuard;
 use Illuminate\Contracts\Pagination\Paginator;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
@@ -46,13 +47,15 @@ class CmsPageService
     {
         $data['status'] ??= CmsPage::STATUS_DRAFT;
 
-        return $this->repository->create($data);
+        return $this->repository->create(SchemaGuard::onlyExistingColumns('cms_pages', $data));
     }
 
     /** @param array<string, mixed> $data */
     public function update(CmsPage $page, array $data): CmsPage
     {
-        return $this->repository->update($page, $data);
+        // Byline and draft fields are dropped until their migration has run,
+        // so the rest of the page still saves.
+        return $this->repository->update($page, SchemaGuard::onlyExistingColumns('cms_pages', $data));
     }
 
     public function delete(CmsPage $page): void

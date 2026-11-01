@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\SchemaGuard;
 use App\Http\Requests\Admin\UpdateCasinoRequest;
 use Database\Factories\CasinoFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -73,10 +74,18 @@ class Casino extends Model
 
     public function sites(): BelongsToMany
     {
+        $pivot = ['affiliate_url', 'position', 'featured', 'active'];
+
+        // The byline columns are per attachment because authors are per site
+        // and casinos are not — see the 2026_11_20 byline migration. Selected
+        // only once that migration has run: naming them earlier fails every
+        // query that loads this relation (SchemaGuard).
+        if (SchemaGuard::hasColumn('casino_site', 'author_id')) {
+            array_push($pivot, 'author_id', 'reviewed_by_id', 'last_reviewed_at');
+        }
+
         return $this->belongsToMany(Site::class)
-            // The byline columns are per attachment because authors are per
-            // site and casinos are not — see the 2026_11_20 byline migration.
-            ->withPivot(['affiliate_url', 'position', 'featured', 'active', 'author_id', 'reviewed_by_id', 'last_reviewed_at'])
+            ->withPivot($pivot)
             ->withTimestamps()
             ->orderByPivot('position');
     }

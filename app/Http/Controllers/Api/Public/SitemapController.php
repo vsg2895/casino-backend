@@ -12,6 +12,7 @@ use App\Models\Category;
 use App\Models\Site;
 use App\Models\SpecialOffer;
 use App\Support\SiteCache;
+use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -61,7 +62,9 @@ class SitemapController extends Controller
                 'categories' => $this->entries($this->categories($site), 'categories'),
                 'offers'     => $this->entries($this->offers($site), 'special_offers'),
                 'articles'   => $this->articles($site),
-                'authors'    => $this->entries(Author::query()->forSite($site->id)->visible(), 'authors'),
+                'authors'    => SchemaGuard::hasTable('authors')
+                    ? $this->entries(Author::query()->forSite($site->id)->visible(), 'authors')
+                    : [],
             ],
         );
 
@@ -81,7 +84,8 @@ class SitemapController extends Controller
     private function categories(Site $site): Builder
     {
         return Category::query()
-            ->where('categories.noindex', false)
+            // The flag arrives with 2026_11_19; before that nothing is hidden.
+            ->when(SchemaGuard::hasColumn('categories', 'noindex'), fn (Builder $q) => $q->where('categories.noindex', false))
             // The categories index applies the same predicate, so a category
             // the menu does not offer is never submitted either.
             ->whereHas('casinos', static function (Builder $casinos) use ($site): void {

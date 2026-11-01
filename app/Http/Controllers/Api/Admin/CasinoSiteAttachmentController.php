@@ -10,6 +10,7 @@ use App\Http\Requests\Admin\SyncCasinoSitesRequest;
 use App\Http\Requests\Admin\UpdateCasinoBylineRequest;
 use App\Jobs\InvalidateCasinoCache;
 use App\Services\Search\SearchIndexer;
+use App\Support\SchemaGuard;
 use App\Models\Casino;
 use App\Models\Site;
 use Carbon\CarbonImmutable;
@@ -160,6 +161,10 @@ class CasinoSiteAttachmentController extends Controller
     {
         abort_unless($casino->sites()->whereKey($site->id)->exists(), 404);
 
+        if (! SchemaGuard::hasColumn('casino_site', 'author_id')) {
+            return response()->json(['message' => 'Bylines are not available until the database migrations have been run.'], 503);
+        }
+
         $data = $request->validated();
 
         $casino->sites()->updateExistingPivot($site->id, [
@@ -176,11 +181,11 @@ class CasinoSiteAttachmentController extends Controller
     /** @return array{author_id: ?int, reviewed_by_id: ?int, last_reviewed_at: ?string} */
     private function bylineFields(Site $site): array
     {
-        $reviewedAt = $site->pivot->last_reviewed_at;
+        $reviewedAt = $site->pivot->last_reviewed_at ?? null;
 
         return [
-            'author_id'        => $site->pivot->author_id !== null ? (int) $site->pivot->author_id : null,
-            'reviewed_by_id'   => $site->pivot->reviewed_by_id !== null ? (int) $site->pivot->reviewed_by_id : null,
+            'author_id'        => isset($site->pivot->author_id) ? (int) $site->pivot->author_id : null,
+            'reviewed_by_id'   => isset($site->pivot->reviewed_by_id) ? (int) $site->pivot->reviewed_by_id : null,
             'last_reviewed_at' => $reviewedAt !== null ? CarbonImmutable::parse((string) $reviewedAt)->toISOString() : null,
         ];
     }

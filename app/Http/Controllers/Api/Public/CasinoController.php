@@ -10,6 +10,7 @@ use App\Models\Author;
 use App\Models\Casino;
 use App\Models\FacetConfig;
 use App\Models\Site;
+use App\Support\SchemaGuard;
 use App\Services\CasinoFacetService;
 use App\Support\SiteCache;
 use Illuminate\Database\Eloquent\Builder;
@@ -126,13 +127,19 @@ class CasinoController extends Controller
         $site = app('current_site');
 
         $data = SiteCache::remember($site->id, ['casinos'], 'casinos:show:site:'.$site->id.':slug:'.$slug, 3600, function () use ($site, $slug) {
+            $hasBylines = SchemaGuard::hasColumn('casino_site', 'author_id');
+
             $casino = $this->baseQuery($site)
-                ->addSelect(['pivot.author_id', 'pivot.reviewed_by_id', 'pivot.last_reviewed_at'])
+                ->when($hasBylines, fn ($q) => $q->addSelect(['pivot.author_id', 'pivot.reviewed_by_id', 'pivot.last_reviewed_at']))
                 ->where('casinos.slug', $slug)
                 ->firstOrFail()
                 ->load(self::relations());
 
-            $this->attachByline($casino, $site);
+            // Before the byline migration has run there is no byline to find,
+            // and the page renders without one rather than failing.
+            if ($hasBylines) {
+                $this->attachByline($casino, $site);
+            }
 
             return (new CasinoWithAttachmentResource($casino))->resolve();
         });

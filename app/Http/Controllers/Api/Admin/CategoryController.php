@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Support\SchemaGuard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ReorderCategoriesRequest;
 use App\Http\Requests\Admin\StoreCategoryRequest;
@@ -26,14 +27,14 @@ class CategoryController extends Controller
 
     public function store(StoreCategoryRequest $request): CategoryResource
     {
-        $category = Category::create($request->validated());
+        $category = Category::create(SchemaGuard::onlyExistingColumns('categories', $request->validated()));
 
         return new CategoryResource($category);
     }
 
     public function update(UpdateCategoryRequest $request, Category $category): CategoryResource
     {
-        $category->update($request->validated());
+        $category->update(SchemaGuard::onlyExistingColumns('categories', $request->validated()));
 
         $this->revalidate($category);
 

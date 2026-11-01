@@ -12,6 +12,7 @@ use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
 use App\Models\Site;
 use App\Support\SiteCache;
+use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -142,7 +143,7 @@ class ArticleController extends Controller
         // and accepting it from the body would let a malformed request file a
         // guide into the news feed.
         $article = Article::create([
-            ...$request->validated(),
+            ...SchemaGuard::onlyExistingColumns('articles', $request->validated()),
             'site_id' => $site->id,
             'type'    => $this->type($request),
         ]);
@@ -165,7 +166,7 @@ class ArticleController extends Controller
             unset($validated['slug']);
         }
 
-        $article->update($validated);
+        $article->update(SchemaGuard::onlyExistingColumns('articles', $validated));
 
         $this->refresh($site, $article);
 

@@ -12,6 +12,7 @@ use App\Jobs\RevalidateNextJsSites;
 use App\Models\Author;
 use App\Models\Site;
 use App\Support\SiteCache;
+use App\Support\SchemaGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
@@ -27,6 +28,12 @@ class AuthorController extends Controller
 {
     public function index(Site $site): AnonymousResourceCollection
     {
+        // Before the authors migration the list is empty, not an error: the
+        // byline pickers across the admin load it on every form.
+        if (! SchemaGuard::hasTable('authors')) {
+            return AuthorResource::collection(collect());
+        }
+
         return AuthorResource::collection(
             Author::query()->forSite($site->id)->orderBy('name')->get(),
         );

@@ -14,6 +14,7 @@ use App\Jobs\RevalidateNextJsSites;
 use App\Models\Site;
 use App\Services\CmsPageService;
 use App\Support\LegalIdentity;
+use App\Support\SchemaGuard;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -75,7 +76,9 @@ class SiteController extends Controller
         $wasCountries = (bool) $site->countries_enabled;
         $wasReviews = (bool) $site->reviews_enabled;
 
-        $site->update($request->validated());
+        // Fields whose migration has not run yet are dropped rather than
+        // failing the whole save (SchemaGuard).
+        $site->update(SchemaGuard::onlyExistingColumns('sites', $request->validated()));
 
         // Flipping the countries switch changes what this site serves, so the
         // cached payload and the statically generated pages have to go — in BOTH

@@ -11,6 +11,7 @@ use App\Models\Author;
 use App\Models\Casino;
 use App\Models\Site;
 use App\Support\SiteCache;
+use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 
@@ -31,6 +32,9 @@ class AuthorController extends Controller
     {
         /** @var Site $resolved */
         $resolved = app('current_site');
+
+        // No authors table yet (migration pending): there is no such author.
+        abort_unless(SchemaGuard::hasTable('authors'), 404);
 
         $data = SiteCache::remember(
             $resolved->id,
