@@ -281,19 +281,42 @@ class TrustSignalsTest extends TestCase
         $this->assertSame(CmsPage::STATUS_DRAFT, $rate->status);
     }
 
-    public function test_tokenize_command_replaces_given_text_and_writes_nothing_on_dry_run(): void
+    public function test_set_legal_identity_writes_the_site_and_tokenizes_its_pages_and_nothing_on_dry_run(): void
     {
         $site = Site::factory()->create(['slug' => 'acme']);
         $other = Site::factory()->create();
-        $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH. Laws of [governing-law jurisdiction].</p>']);
+        $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH. Owned by Acme LTD. Laws of [governing-law jurisdiction].</p>']);
         $untouched = CmsPage::factory()->create(['site_id' => $other->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH.</p>']);
+        $args = ['site' => 'acme', '--entity' => 'Acme LTD', '--contact-email' => 'info@acme.test', '--entity-was' => ['SW1Y 4PH']];
 
-        $this->artisan('sites:tokenize-legal-identity', ['site' => 'acme', '--entity-was' => ['SW1Y 4PH'], '--dry-run' => true])->assertSuccessful();
+        $this->artisan('sites:set-legal-identity', [...$args, '--dry-run' => true])->assertSuccessful();
         $this->assertStringContainsString('SW1Y 4PH', $page->fresh()->content);
+        $this->assertNull($site->fresh()->legal_entity_name);
 
-        $this->artisan('sites:tokenize-legal-identity', ['site' => 'acme', '--entity-was' => ['SW1Y 4PH']])->assertSuccessful();
+        $this->artisan('sites:set-legal-identity', $args)->assertSuccessful();
 
-        $this->assertSame('<p>Operated by {{legal_entity_name}}. Laws of {{governing_law}}.</p>', $page->fresh()->content);
+        $this->assertSame('<p>Operated by {{legal_entity_name}}. Owned by {{legal_entity_name}}. Laws of {{governing_law}}.</p>', $page->fresh()->content);
+        $this->assertSame('Acme LTD', $site->fresh()->legal_entity_name);
+        $this->assertSame('info@acme.test', $site->fresh()->contact_email);
         $this->assertSame('<p>Operated by SW1Y 4PH.</p>', $untouched->fresh()->content);
+    }
+
+    public function test_set_legal_identity_points_role_mailboxes_at_the_site_addresses(): void
+    {
+        $site = Site::factory()->create(['slug' => 'acme', 'domain' => 'acme.test']);
+        $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'privacy-policy', 'content' => '<p>Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> or our Data Protection contact at <a href="mailto:dpo@acme.test">dpo@acme.test</a>. Terms: <a href="mailto:legal@acme.test">legal@acme.test</a>.</p>']);
+
+        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--contact-email' => 'info@acme.test'])->assertSuccessful();
+
+        $this->assertSame('<p>Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>. Terms: <a href="mailto:{{contact_email}}">{{contact_email}}</a>.</p>', $page->fresh()->content);
+    }
+
+    public function test_set_legal_identity_rejects_an_invalid_email_and_writes_nothing(): void
+    {
+        $site = Site::factory()->create(['slug' => 'acme']);
+
+        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--entity' => 'Acme LTD', '--contact-email' => 'not-an-email'])->assertFailed();
+
+        $this->assertNull($site->fresh()->legal_entity_name);
     }
 }

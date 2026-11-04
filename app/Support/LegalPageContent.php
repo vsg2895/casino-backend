@@ -34,7 +34,7 @@ final class LegalPageContent
      * `{{governing_law}}`, `{{support_email}}` and `{{privacy_email}}` instead,
      * resolved from the site's settings when the page is served — see
      * {@see LegalIdentity}. These constants remain because pages seeded before
-     * that change still hold the brackets, and `sites:tokenize-legal-identity`
+     * that change still hold the brackets, and `sites:set-legal-identity`
      * searches for exactly these strings to convert them.
      */
     public const string PLACEHOLDER_ENTITY = '[Legal Entity Name]';
@@ -65,11 +65,12 @@ final class LegalPageContent
      */
     public static function forBrand(string $brand, string $domain, ?string $positioning = null): array
     {
+        // Every address is a token read from the site's Legal identity, never
+        // a role mailbox built from the domain: dpo@, legal@, compliance@ and
+        // partners@ were printed on every site whether or not the inbox existed,
+        // so a visitor's privacy request could bounce. support_email and
+        // privacy_email fall back to contact_email (LegalIdentity::valuesFor).
         $url      = 'https://' . $domain;
-        $dpo      = 'dpo@' . $domain;
-        $legal    = 'legal@' . $domain;
-        $compliance = 'compliance@' . $domain;
-        $partners = 'partners@' . $domain;
 
         $pages = [];
 
@@ -121,10 +122,10 @@ HTML,
 <p>For general questions and feedback: <a href="mailto:{{support_email}}">{{support_email}}</a></p>
 
 <h2>Privacy &amp; Data Requests</h2>
-<p>To exercise your data-protection rights or ask about how we handle personal data: <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> (Data Protection contact: <a href="mailto:{$dpo}">{$dpo}</a>). See our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
+<p>To exercise your data-protection rights or ask about how we handle personal data: <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>. See our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
 
 <h2>Partnerships &amp; Operators</h2>
-<p>For affiliate, advertising, and business enquiries: <a href="mailto:{$partners}">{$partners}</a></p>
+<p>For affiliate, advertising, and business enquiries: <a href="mailto:{{contact_email}}">{{contact_email}}</a></p>
 
 <h2 data-requires="legal_entity_name registered_address">Postal Address</h2>
 <p data-requires="legal_entity_name registered_address">{$brand} is operated by {{legal_entity_name}}, {{registered_address}}.<span data-requires="company_number"> Company number: {{company_number}}.</span></p>
@@ -204,14 +205,17 @@ HTML,
 <p>We may update this Policy from time to time. Please review it periodically for any changes.</p>
 
 <h2>13. Contact</h2>
-<p>For any privacy question or request, contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> or our Data Protection contact at <a href="mailto:{$dpo}">{$dpo}</a>.</p>
+<p>For any privacy question or request, contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>.</p>
 HTML,
         ];
 
         // ── Terms & Conditions ────────────────────────────────────────────────
         $pages[] = [
             'slug'             => 'terms',
-            'title'            => 'Terms &amp; Conditions',
+            // Plain text, like every other title: it reaches an <h1>, the admin
+            // list and JSON-LD as a string, and React escapes it. The entity
+            // that was here rendered literally — "Terms &amp; Conditions".
+            'title'            => 'Terms & Conditions',
             'meta_title'       => "Terms & Conditions — {$brand}",
             'meta_description' => "The terms governing your use of {$brand}, including our affiliate relationship, content accuracy, and limitations of liability.",
             'content'          => <<<HTML
@@ -251,7 +255,7 @@ HTML,
 <p>We may update these Terms from time to time. Continued use of the Site after changes constitutes acceptance of the revised Terms.</p>
 
 <h2>12. Contact</h2>
-<p>Questions about these Terms? Contact <a href="mailto:{$legal}">{$legal}</a>.</p>
+<p>Questions about these Terms? Contact <a href="mailto:{{contact_email}}">{{contact_email}}</a>.</p>
 HTML,
         ];
 
@@ -429,7 +433,7 @@ HTML,
 <p>The licensed operators we feature are responsible for customer due diligence, transaction monitoring, source-of-funds checks, and suspicious-activity reporting under the regulations that apply to them. When you register and transact with an operator, their AML procedures apply.</p>
 
 <h2>Reporting Concerns</h2>
-<p>If you have concerns about money laundering or suspicious activity related to a brand featured on our Site, contact <a href="mailto:{$compliance}">{$compliance}</a> and, where appropriate, report it to the relevant operator and authorities.</p>
+<p>If you have concerns about money laundering or suspicious activity related to a brand featured on our Site, contact <a href="mailto:{{contact_email}}">{{contact_email}}</a> and, where appropriate, report it to the relevant operator and authorities.</p>
 HTML,
         ];
 
