@@ -33,6 +33,10 @@ class UpdateSiteRequest extends FormRequest
             // outbound mail stops.
             'newsletter_emails_enabled' => ['sometimes', 'boolean'],
             'countries_enabled' => ['sometimes', 'boolean'],
+            // The countries whose page this site marks `noindex` and leaves
+            // out of its sitemap. The whole set: what is sent replaces it.
+            'noindex_country_ids'   => ['sometimes', 'array'],
+            'noindex_country_ids.*' => ['integer', 'distinct', Rule::exists('countries', 'id')],
             'reviews_enabled'   => ['sometimes', 'boolean'],
             'review_auto_publish' => ['sometimes', 'boolean'],
             'operator_profile_enabled' => ['sometimes', 'boolean'],
@@ -60,6 +64,9 @@ class UpdateSiteRequest extends FormRequest
             'contact_email'      => ['nullable', 'email', 'max:190'],
             'support_email'      => ['nullable', 'email', 'max:190'],
             'privacy_email'      => ['nullable', 'email', 'max:190'],
+            // By name, e.g. "Google Analytics" — printed in the Privacy and
+            // Cookie policies. Empty = the site runs none, and says so.
+            'analytics_provider' => ['nullable', 'string', 'max:120'],
         ];
         // api_key is intentionally absent — it can only change via rotateKey
     }

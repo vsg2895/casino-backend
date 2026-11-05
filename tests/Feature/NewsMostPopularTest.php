@@ -54,6 +54,7 @@ class NewsMostPopularTest extends TestCase
             'type'         => Article::TYPE_NEWS,
             'title'        => $title,
             'slug'         => str($title)->slug()->value(),
+            'body'         => '<p>A written body.</p>',
             'active'       => true,
             'published_at' => Carbon::parse($publishedAt),
             'featured'     => $flags['featured'] ?? false,

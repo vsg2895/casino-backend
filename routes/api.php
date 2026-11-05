@@ -259,6 +259,8 @@ Route::prefix('v1')->group(function () {
             // This site's byline for the casino — kept off sync() so saving the
             // attachment table can never wipe who reviewed it.
             Route::put('{site}/byline', [CasinoSiteAttachmentController::class, 'updateByline']);
+            // This site's own review text — off sync() for the same reason.
+            Route::put('{site}/description', [CasinoSiteAttachmentController::class, 'updateDescription']);
             Route::delete('{site}', [CasinoSiteAttachmentController::class, 'destroy']);
         });
 
@@ -436,7 +438,7 @@ Route::prefix('v1')->group(function () {
         // reputation. Counter route BEFORE the resource, or `{warmup_email}`
         // would swallow "count" as an id.
         Route::get('warmup-emails/count', [WarmupEmailController::class, 'count']);
-        // Templates a warmup run may use (catalog minus verify) — drives the
+        // Templates a warmup run may use (promotion + custom HTML) — drives the
         // send dialog's dropdown from the same allow-list the validator uses.
         Route::get('warmup-emails/templates', [WarmupEmailController::class, 'templates']);
         Route::post('warmup-emails/import', [WarmupEmailController::class, 'import']);
@@ -455,6 +457,8 @@ Route::prefix('v1')->group(function () {
         Route::get('warmup-emails/history/count', [WarmupEmailController::class, 'historyCount']);
         Route::delete('warmup-emails/history/{recipient}', [WarmupEmailController::class, 'destroyHistory']);
         Route::post('warmup-emails/send', [WarmupEmailController::class, 'send']);
+        // The "Custom HTML" template as it will be sent — read-only, before Send.
+        Route::post('warmup-emails/custom-preview', [WarmupEmailController::class, 'previewCustom']);
         // The last run, summarised: how many actually went out, and when. Read
         // on opening the screen, which is where the question is asked.
         // LITERAL SEGMENT, so it is declared before the apiResource below —

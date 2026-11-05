@@ -84,10 +84,10 @@ final class LegalPageContent
 <p>{$brand} is an independent online-casino comparison and review platform. We help players discover licensed casino brands, understand bonus offers, and make informed choices. We are <strong>not a gambling operator</strong>: you cannot place bets, deposit, or gamble on {$brand}, and we never handle player funds.</p>
 
 <h2>What We Do</h2>
-<p>Our team researches, tests, and reviews online casinos so you don't have to. We compare licensing, security, game range, banking options, customer support, and bonus value, then publish clear, honest summaries to help you compare your options at a glance.</p>
+<p>We research and review online casinos so you don't have to. We compare licensing, security, game range, banking options, customer support, and bonus value, working from each operator's published terms and verifiable public information, then publish clear, honest summaries to help you compare your options at a glance.</p>
 
 <h2>Our Review Methodology</h2>
-<p>Every casino featured on {$brand} is assessed against a consistent, documented checklist:</p>
+<p>Every casino featured on {$brand} is assessed against the same checklist:</p>
 <ul>
   <li><strong>Licensing &amp; regulation</strong> — we prioritise operators licensed by recognised authorities.</li>
   <li><strong>Safety &amp; security</strong> — SSL encryption, data protection, and account-protection tools.</li>
@@ -150,35 +150,38 @@ HTML,
 <h2>1. Information We Collect</h2>
 <h3>Information you provide</h3>
 <ul>
-  <li><strong>Email address</strong> — when you subscribe to our newsletter or contact us.</li>
+  <li><strong>Email address</strong> — when you subscribe to our newsletter or contact us. When you subscribe, we check that the address can receive mail using our email provider's validation service.</li>
+  <li data-requires="feature_reviews"><strong>Reviews</strong> — your name, your review and, if you choose to give it, your email address when you post a casino review. Your name and review are published; your email address never is.</li>
+  <li data-requires="feature_accounts"><strong>Account details</strong> — your display name, email address and password (stored only as a one-way hash) when you create an account, and anything you post with it.</li>
   <li><strong>Messages</strong> — the content of any enquiry you send us.</li>
 </ul>
 <h3>Information collected automatically</h3>
 <ul>
-  <li><strong>Device &amp; usage data</strong> — IP address, browser type, pages viewed, and referring URLs.</li>
+  <li><strong>Server logs</strong> — IP address, browser type, the pages requested, and referring URLs, recorded by our hosting to keep the Site running and secure.</li>
   <li><strong>Cookies &amp; similar technologies</strong> — see our <a href="{$url}/cookie-policy">Cookie Policy</a>.</li>
-  <li><strong>Affiliate attribution data</strong> — when you click an outbound offer, a referral/click identifier may be passed to the operator so the referral can be attributed.</li>
+  <li data-requires="analytics_provider"><strong>Analytics</strong> — if you accept analytics cookies, {{analytics_provider}} records the pages you view, your device and browser type, and your approximate location, so we can see how the Site is used. If you do not, it sets no cookies and receives only cookieless signals, such as the page viewed and your browser type, with no identifier for you or your device.</li>
+  <li><strong>Affiliate links</strong> — a link to an operator carries our affiliate identifier, so the operator can attribute your visit to us. The operator receives that identifier when you click; we do not pass it any other data about you.</li>
 </ul>
 
 <h2>2. How and Why We Use Your Data</h2>
-<p>We process personal data to operate and improve our website, send communications you have requested, measure traffic, ensure security, and comply with legal obligations. Where GDPR applies, our lawful bases are:</p>
+<p>We process personal data to operate and improve our website, send communications you have requested, publish what you choose to post, keep the Site secure, and comply with legal obligations. Where GDPR applies, our lawful bases are:</p>
 <ul>
-  <li><strong>Consent</strong> — for newsletters, marketing emails, and non-essential cookies.</li>
-  <li><strong>Legitimate interests</strong> — for analytics, site security, and fraud prevention, balanced against your rights.</li>
+  <li><strong>Consent</strong> — for newsletters, marketing emails, and non-essential cookies<span data-requires="analytics_provider">, including analytics cookies</span>.</li>
+  <li><strong>Legitimate interests</strong> — for site security, spam and fraud prevention<span data-requires="feature_reviews">, publishing the reviews you submit</span><span data-requires="analytics_provider">, and cookieless analytics where you have not accepted analytics cookies</span>, balanced against your rights.</li>
   <li><strong>Legal obligation</strong> — where we must retain or disclose data by law.</li>
 </ul>
 
 <h2>3. Email &amp; Marketing Communications</h2>
-<p>We only send newsletter and marketing emails to people who have <strong>opted in</strong>. Every email includes a clear, <strong>one-click unsubscribe</strong> link, and we honour opt-out requests promptly. We do <strong>not sell or rent</strong> your email address. We use reputable third-party email service providers (such as SendGrid, Mailgun, Amazon SES, or Postmark) to deliver these messages on our behalf as data processors under appropriate agreements.</p>
+<p>We only send newsletter and marketing emails to people who have <strong>opted in</strong>. Every email includes a clear, <strong>one-click unsubscribe</strong> link, and we honour opt-out requests promptly. We do <strong>not sell or rent</strong> your email address. We use reputable third-party email service providers (such as SendGrid, Mailgun, or UniOne) to validate addresses and deliver these messages on our behalf as data processors under appropriate agreements.</p>
 
 <h2>4. Cookies &amp; Tracking</h2>
-<p>We use cookies and similar technologies for essential functionality, analytics, and affiliate attribution. You can manage your preferences via our consent banner, your browser settings, or a <strong>Global Privacy Control (GPC)</strong> signal. Full details are in our <a href="{$url}/cookie-policy">Cookie Policy</a>.</p>
+<p>We use a cookie to remember your cookie choice<span data-requires="feature_accounts"> and to keep you signed in</span><span data-requires="analytics_provider">, and, if you accept them, {{analytics_provider}} sets cookies to measure how the Site is used</span>. We set no advertising cookies; an operator you visit through our links may set its own on its own site. You can manage your preferences via our consent banner, your browser settings, or a <strong>Global Privacy Control (GPC)</strong> signal. Full details are in our <a href="{$url}/cookie-policy">Cookie Policy</a>.</p>
 
 <h2>5. How We Share Your Data</h2>
 <p>We share personal data only with:</p>
 <ul>
-  <li><strong>Service providers</strong> — analytics, hosting, and email delivery partners acting as processors.</li>
-  <li><strong>Affiliate operators</strong> — limited attribution data when you choose to click through to their site.</li>
+  <li><strong>Service providers</strong> — hosting and email delivery partners<span data-requires="analytics_provider">, and {{analytics_provider}}</span>, acting as processors.</li>
+  <li><strong>Affiliate operators</strong> — our affiliate identifier, when you choose to click through to their site.</li>
   <li><strong>Authorities</strong> — where required by law or to protect our rights.</li>
 </ul>
 <p>We never sell your personal data.</p>
@@ -187,7 +190,7 @@ HTML,
 <p>Your data may be processed outside your country. Where it is, we rely on appropriate safeguards such as the European Commission's Standard Contractual Clauses (SCCs) or equivalent mechanisms.</p>
 
 <h2>7. Data Retention</h2>
-<p>We keep personal data only as long as necessary for the purposes described above. Newsletter data is retained until you unsubscribe; analytics data is retained for a limited period and then deleted or anonymised.</p>
+<p>We keep personal data only as long as necessary for the purposes described above. Newsletter data is retained until you unsubscribe<span data-requires="feature_reviews">; a review is kept while it is published, and you can ask us to remove it</span><span data-requires="feature_accounts">; account data is kept until you ask us to delete the account</span><span data-requires="analytics_provider">; analytics data is retained for the period set in {{analytics_provider}} and then deleted</span>.</p>
 
 <h2>8. Your Rights (GDPR / UK GDPR)</h2>
 <p>If you are in the EEA or UK, you have the right to access, rectify, erase, restrict, or port your data, to object to processing, and to withdraw consent at any time. You may also lodge a complaint with your local supervisory authority.</p>
@@ -271,13 +274,13 @@ HTML,
 <h2>What Are Cookies?</h2>
 <p>Cookies are small text files stored on your device when you visit a website. They help the site function, remember your preferences, and understand how it is used.</p>
 
-<h2>Categories of Cookies We Use</h2>
+<h2>Cookies We Use</h2>
 <ul>
-  <li><strong>Strictly necessary</strong> — required for the Site to work (e.g. security and basic navigation). These cannot be switched off.</li>
-  <li><strong>Analytics / performance</strong> — help us measure traffic and improve content (e.g. Google Analytics).</li>
-  <li><strong>Functional</strong> — remember your preferences and choices.</li>
-  <li><strong>Marketing / affiliate</strong> — UTM parameters and affiliate click identifiers used to attribute referrals to partner operators.</li>
+  <li><strong>Strictly necessary</strong> — <code>cookie_consent</code> remembers the choice you made in our cookie banner, for 12 months (a copy is kept in your browser's local storage).<span data-requires="feature_accounts"> A sign-in cookie keeps you logged in to your account until you sign out.</span> These cannot be switched off.</li>
+  <li><strong>Functional</strong> — where the Site shows a newsletter sign-up window, a cookie remembers that you closed it, so it is not shown again straight away.</li>
+  <li data-requires="analytics_provider"><strong>Analytics</strong> — only if you choose &ldquo;Accept All&rdquo; in our cookie banner, {{analytics_provider}} sets cookies to measure how the Site is used, such as which pages are viewed. Until then it sets none and receives only cookieless signals with no identifier for you or your device, and choosing &ldquo;Reject Non-Essential&rdquo; later deletes the analytics cookies already set.</li>
 </ul>
+<p>We set no advertising cookies. Links to operators carry our affiliate identifier in the link itself, not in a cookie on this Site.</p>
 
 <h2>Managing Your Preferences</h2>
 <p>When required, we ask for your consent to non-essential cookies via a consent banner. You can change your choices at any time by:</p>
@@ -289,7 +292,7 @@ HTML,
 <p>Please note that blocking some cookies may affect how the Site works.</p>
 
 <h2>Third-Party Cookies</h2>
-<p>Some cookies are set by third parties (such as analytics providers and affiliate operators). Their use of cookies is governed by their own privacy and cookie policies.</p>
+<p>An operator you visit through one of our links may set cookies on its own site to record the referral<span data-requires="analytics_provider">, and, if you accept them, {{analytics_provider}} sets the cookies described above on this one</span>. Their use of cookies is governed by their own privacy and cookie policies.</p>
 
 <h2>More Information</h2>
 <p>For how we handle the data collected via cookies, see our <a href="{$url}/privacy-policy">Privacy Policy</a>, or contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>.</p>
@@ -331,17 +334,18 @@ HTML,
 
 <h2>Self-Exclusion &amp; Blocking</h2>
 <ul>
-  <li><strong>GAMSTOP</strong> (UK) — free self-exclusion from licensed sites: <a href="https://www.gamstop.co.uk" rel="nofollow noopener" target="_blank">gamstop.co.uk</a></li>
-  <li><strong>Gamban</strong> — software that blocks gambling sites and apps: <a href="https://gamban.com" rel="nofollow noopener" target="_blank">gamban.com</a></li>
+  <li><strong>GAMSTOP</strong> (UK) — free self-exclusion from licensed sites: <a href="https://www.gamstop.co.uk" rel="noopener" target="_blank">gamstop.co.uk</a></li>
+  <li><strong>Gamban</strong> — software that blocks gambling sites and apps: <a href="https://gamban.com" rel="noopener" target="_blank">gamban.com</a></li>
 </ul>
 
 <h2>Get Help &amp; Support</h2>
 <ul>
-  <li><strong>GamCare</strong> — <a href="https://www.gamcare.org.uk" rel="nofollow noopener" target="_blank">gamcare.org.uk</a></li>
-  <li><strong>BeGambleAware</strong> — <a href="https://www.begambleaware.org" rel="nofollow noopener" target="_blank">begambleaware.org</a></li>
-  <li><strong>Gamblers Anonymous</strong> — <a href="https://www.gamblersanonymous.org" rel="nofollow noopener" target="_blank">gamblersanonymous.org</a></li>
-  <li><strong>Gambling Therapy</strong> (worldwide) — <a href="https://www.gamblingtherapy.org" rel="nofollow noopener" target="_blank">gamblingtherapy.org</a></li>
-  <li><strong>1-800-GAMBLER</strong> (US) — call 1-800-426-2537</li>
+  <li><strong>National Gambling Helpline</strong> (UK, free, 24/7, run by GamCare) — call <a href="tel:+448088020133">0808 8020 133</a></li>
+  <li><strong>GamCare</strong> — <a href="https://www.gamcare.org.uk" rel="noopener" target="_blank">gamcare.org.uk</a></li>
+  <li><strong>BeGambleAware</strong> — <a href="https://www.begambleaware.org" rel="noopener" target="_blank">begambleaware.org</a></li>
+  <li><strong>Gamblers Anonymous</strong> — <a href="https://www.gamblersanonymous.org.uk" rel="noopener" target="_blank">gamblersanonymous.org.uk</a> (UK) and <a href="https://www.gamblersanonymous.org" rel="noopener" target="_blank">gamblersanonymous.org</a> (US)</li>
+  <li><strong>Gambling Therapy</strong> (worldwide) — <a href="https://www.gamblingtherapy.org" rel="noopener" target="_blank">gamblingtherapy.org</a></li>
+  <li><strong>1-800-GAMBLER</strong> (US) — call <a href="tel:+18004262537">1-800-426-2537</a></li>
 </ul>
 
 <h2>Protecting Minors</h2>
@@ -358,16 +362,16 @@ HTML,
             'meta_title'       => "Affiliate Disclosure — {$brand}",
             'meta_description' => "{$brand} is reader-supported. We may earn commissions from some links at no extra cost to you — and it never affects our independent ratings.",
             'content'          => <<<HTML
-<p>In the interest of full transparency and in line with the U.S. Federal Trade Commission (FTC) guidelines and similar standards worldwide, this page explains how {$brand} makes money.</p>
+<p>In the interest of full transparency and in line with the UK CAP Code, the U.S. Federal Trade Commission (FTC) guidelines and similar standards worldwide, this page explains how {$brand} makes money.</p>
 
 <h2>We Are Reader-Supported</h2>
 <p>{$brand} is funded through affiliate partnerships. When you click certain links on our Site and then register or deposit with an operator, <strong>we may earn a commission — at no extra cost to you</strong>.</p>
 
 <h2>It Costs You Nothing Extra</h2>
-<p>Affiliate commissions are paid by the operator, not by you. You never pay more for using our links, and you often access the same or better promotions.</p>
+<p>Affiliate commissions are paid by the operator, not by you. You never pay more for using our links, and the promotions you reach through them are the operators' own.</p>
 
 <h2>Our Independence</h2>
-<p>Commissions help us run the Site, but they <strong>do not influence our ratings or reviews</strong>. Operators cannot buy a higher score, and we only feature brands we believe offer genuine value to players.</p>
+<p>Commissions help us run the Site, but they <strong>do not influence our ratings or reviews</strong>. Operators cannot buy a higher score or a place on our lists: the order casinos appear in is set by our editors. We only feature brands we believe offer genuine value to players.</p>
 
 <h2>How to Identify Affiliate Links</h2>
 <p>Outbound links to operators are marked with <code>rel="sponsored nofollow"</code> and open in a new tab, consistent with search-engine and advertising best practices.</p>
@@ -386,6 +390,9 @@ HTML,
             'content'          => <<<HTML
 <p>The information on <a href="{$url}">{$domain}</a> is provided for general informational and entertainment purposes only. By using the Site, you accept the following disclaimers.</p>
 
+<h2>We Are Not a Gambling Operator</h2>
+<p>{$brand} does not offer gambling, accept bets or deposits, or hold player funds. The Site is intended for adults aged <strong>18 or older</strong> (or the legal age where you live).</p>
+
 <h2>No Professional Advice</h2>
 <p>Nothing on the Site constitutes legal, financial, or professional advice. You should not rely on our content as a substitute for advice from a qualified professional.</p>
 
@@ -399,7 +406,7 @@ HTML,
 <p>Online gambling is not legal everywhere. It is your responsibility to ensure that participating in online gambling is lawful in your jurisdiction before registering with any operator.</p>
 
 <h2>Third-Party Content</h2>
-<p>The Site links to third-party operators and resources we do not control. We are not responsible for their content, offers, or practices, and a link does not imply endorsement of everything on that site.</p>
+<p>The Site links to third-party operators and resources we do not control. We are not responsible for their content, offers, or practices, and a link does not imply endorsement of everything on that site. Links to operators are affiliate links — see our <a href="{$url}/affiliate-disclosure">Affiliate Disclosure</a>.</p>
 
 <h2>Bonus Terms Apply</h2>
 <p>All promotions are subject to the operator's terms and conditions, including wagering requirements, eligibility, and expiry. Review them carefully before opting in.</p>
@@ -461,7 +468,7 @@ HTML,
 <p>KYC protects players and the industry by preventing fraud, underage gambling, and money laundering, and by ensuring funds are paid to the rightful account holder. It is a standard, legitimate part of using a regulated operator.</p>
 
 <h2>The Data We Do Collect</h2>
-<p>The only personal data {$brand} collects directly is the information you choose to share with us — for example, your email address when you subscribe to our newsletter. We handle that data as described in our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
+<p>The only personal data {$brand} collects directly is the information you choose to share with us — for example, your email address when you subscribe to our newsletter<span data-requires="feature_reviews">, or your name (and, if you give it, your email address) when you post a review</span><span data-requires="feature_accounts">, or your account details when you register</span>. We handle that data as described in our <a href="{$url}/privacy-policy">Privacy Policy</a>.</p>
 
 <h2>Contact</h2>
 <p>Questions? Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>.</p>
@@ -478,16 +485,16 @@ HTML,
 <p>This Editorial Policy describes the standards behind every review, rating, and guide we publish on {$brand}. Our goal is to provide accurate, honest, and useful information that helps players make safer choices.</p>
 
 <h2>How We Research &amp; Review</h2>
-<p>Our reviewers evaluate each operator against a consistent checklist covering licensing, security, game fairness, banking, bonus value, customer support, and responsible-gambling tools. Where possible, we base our assessments on first-hand testing and verifiable public information.</p>
+<p>We evaluate each operator against the same checklist covering licensing, security, game fairness, banking, bonus value, customer support, and responsible-gambling tools. We base our assessments on the operator's published terms and verifiable public information.</p>
 
 <h2>How We Rate</h2>
-<p>Ratings reflect the overall quality and safety of an operator, weighting factors such as regulation, transparency, and player protection most heavily. A strong bonus alone will never earn a high score if an operator falls short on safety or fairness.</p>
+<p>Each operator carries one overall rating out of 5, set by our editors. It is an editorial judgement of the operator's quality and safety, not a formula, and a strong bonus alone will never earn a high score if an operator falls short on safety or fairness.</p>
 
 <h2>Editorial Independence</h2>
 <p>{$brand} is funded through affiliate partnerships (see our <a href="{$url}/affiliate-disclosure">Affiliate Disclosure</a>), but <strong>commercial relationships never determine our ratings</strong>. Operators cannot pay for a better review, and advertising is kept separate from editorial content.</p>
 
 <h2>Accuracy &amp; Updates</h2>
-<p>The online-gambling landscape changes quickly. We review and update our content regularly, and we encourage readers to verify current terms directly with operators. If you spot an error, please tell us.</p>
+<p>The online-gambling landscape changes quickly. We update a page when we learn that an operator's terms or availability have changed, and we encourage readers to verify current terms directly with operators. If you spot an error, please tell us.</p>
 
 <h2>Corrections</h2>
 <p>We correct significant errors promptly and transparently. To report an inaccuracy, email <a href="mailto:{{support_email}}">{{support_email}}</a>.</p>

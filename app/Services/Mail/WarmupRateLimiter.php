@@ -55,6 +55,17 @@ use Throwable;
  * `Sleep::fake(syncWithCarbon: true)` drive the window deterministically in
  * tests, and a test that would otherwise wait a real minute finishes instantly.
  *
+ * PACING ON TOP OF THE WINDOW. The window is the ceiling; it is not a shape. On
+ * its own it lets a whole window's quota go out back to back and then idles —
+ * eight messages in a second, then nothing for a minute — and a burst is what a
+ * receiving host scores as bulk. So a slot is also refused until
+ * `minIntervalSeconds()` have passed since the newest recorded send, read from
+ * the same shared log under the same lock. That is a gap between ANY two sends
+ * across every worker, not a per-process sleep, so it cannot be multiplied by
+ * adding workers the way a `sleep(6)` can. Default: window / max (7.5 s at 8 per
+ * minute), which spreads a minute's quota evenly across it — the smoothing
+ * SendGrid and Brevo apply to a warming IP.
+ *
  * NOT A DELIVERY GUARANTEE. The limiter decides WHEN a send may be attempted; it
  * records nothing about the outcome. Whether the message left is the sender's
  * business, and a failed send still consumed its slot — which is correct, because
@@ -81,7 +92,16 @@ final class WarmupRateLimiter
      * reputation, and a typo in `.env` must not be able to switch that
      * protection off silently.
      */
-    private const int MAX_EMAILS = 10;
+    private const int MAX_EMAILS = 8;
+
+    /**
+     * The most messages a window may ever hold, whatever the config says.
+     *
+     * The operator's rule is "7–8 a minute, never more", and an `.env` written
+     * before that rule still says WARMUP_EMAILS_PER_MINUTE=10. Configuration
+     * may lower the rate below this, never raise it above.
+     */
+    public const int MAX_EMAILS_CEILING = 8;
 
     private const int WINDOW_SECONDS = 60;
 
@@ -93,12 +113,31 @@ final class WarmupRateLimiter
 
     public function __construct(private readonly Repository $cache) {}
 
-    /** Messages permitted per window. */
+    /** Messages permitted per window, clamped to MAX_EMAILS_CEILING. */
     public function max(): int
     {
         $value = (int) config('warmup.rate_limit.max_emails', self::MAX_EMAILS);
 
-        return $value > 0 ? $value : self::MAX_EMAILS;
+        return min($value > 0 ? $value : self::MAX_EMAILS, self::MAX_EMAILS_CEILING);
+    }
+
+    /**
+     * The gap every send keeps from the previous one, in seconds.
+     *
+     * Null in config derives it from the window, so the two cannot be set into
+     * a combination where the spacing alone would undercut the ceiling or the
+     * ceiling would never be reached. 0 switches the spacing off (the window
+     * still applies); a negative value is a typo and derives as for null.
+     */
+    public function minIntervalSeconds(): float
+    {
+        $configured = config('warmup.rate_limit.min_interval_seconds');
+
+        if (is_numeric($configured) && (float) $configured >= 0) {
+            return (float) $configured;
+        }
+
+        return $this->windowSeconds() / $this->max();
     }
 
     /** Length of the rolling window, in seconds. */
@@ -227,6 +266,16 @@ final class WarmupRateLimiter
         $nowMs = (int) Carbon::now()->getPreciseTimestamp(3);
 
         $timestamps = $this->window($nowMs);
+
+        // The spacing rule: too soon after the newest send, whatever the window
+        // holds. Checked first, because when it refuses the window may well have
+        // room — the point is to spread the quota, not to spend it.
+        $intervalMs = (int) round($this->minIntervalSeconds() * 1000);
+        $newest = $timestamps === [] ? null : $timestamps[count($timestamps) - 1];
+
+        if ($intervalMs > 0 && $newest !== null && $nowMs - $newest < $intervalMs) {
+            return RateLimitDecision::refused(count($timestamps), $max, ($newest + $intervalMs - $nowMs) / 1000);
+        }
 
         if (count($timestamps) < $max) {
             $timestamps[] = $nowMs;

@@ -57,7 +57,7 @@ class CmsPagePublicResource extends JsonResource
 
         return LegalIdentity::render(
             $this->content,
-            $site instanceof Site ? LegalIdentity::valuesFor($site) : [],
+            $site instanceof Site ? LegalIdentity::pageValuesFor($site) : [],
         );
     }
 }

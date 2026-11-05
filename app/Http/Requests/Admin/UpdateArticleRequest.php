@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Requests\Admin;
 
 use App\Models\Article;
+use App\Models\Site;
+use App\Services\News\NewsIndexGate;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -71,18 +73,52 @@ class UpdateArticleRequest extends FormRequest
             function (Validator $validator): void {
                 $article = $this->route('article');
 
-                if (! $article instanceof Article
-                    || ! $article->isIngested()
-                    || $article->active
-                    || ! $this->boolean('active')
-                    || trim(strip_tags((string) $this->input('body'))) !== '') {
+                // Only the step INTO public view. An article that is already
+                // active keeps its existing edits and its "hide" possible.
+                if (! $article instanceof Article || $article->active || ! $this->boolean('active')) {
                     return;
                 }
 
+                // The body the article will have AFTER this save: the one sent,
+                // or the stored one when the request leaves it out (a list
+                // toggle sends `active` alone, and used to be refused for a body
+                // it never touched).
+                $body = $this->has('body') ? $this->input('body') : $article->body;
+
+                if (trim(strip_tags((string) $body)) !== '') {
+                    return;
+                }
+
+                // Every article, not only feed items: a bodiless page is never
+                // public (Article::scopeVisible), so approving one would publish
+                // a 404 the admin reports as live.
                 $validator->errors()->add(
                     'active',
-                    'This news draft has not been rewritten yet. Run php artisan news:rewrite first, then approve it.',
+                    $article->isIngested()
+                        ? 'This news draft has not been rewritten yet. Run php artisan news:rewrite first, then approve it.'
+                        : 'Add the article body before publishing it.',
                 );
+            },
+            // Indexing a news post is gated on added value — see NewsIndexGate.
+            // Only the step OUT of noindex: an already indexable post keeps
+            // every edit and toggle possible.
+            function (Validator $validator): void {
+                $article = $this->route('article');
+                $site = $this->route('site');
+
+                if (! $article instanceof Article || ! $site instanceof Site || ! $article->isNews() || ! $article->noindex) {
+                    return;
+                }
+
+                if (! $this->has('noindex') || $this->boolean('noindex')) {
+                    return;
+                }
+
+                $problems = NewsIndexGate::problems($this->has('body') ? $this->input('body') : $article->body, $site);
+
+                if ($problems !== []) {
+                    $validator->errors()->add('noindex', 'Keep "Keep out of search results" on: ' . implode('; ', $problems) . '.');
+                }
             },
         ];
     }

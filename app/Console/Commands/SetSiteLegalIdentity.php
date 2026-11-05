@@ -17,7 +17,9 @@ use Throwable;
 
 /**
  * Sets a site's legal identity and makes its legal pages read it — the one
- * command to run for every new site.
+ * command to run for every new site. `--analytics` names the analytics
+ * service the site loads, if any: the Privacy and Cookie policies mention
+ * analytics only where it is set.
  *
  * ── What it does, in one transaction ────────────────────────────────────────
  *
@@ -25,7 +27,8 @@ use Throwable;
  *     Sites → Edit → Legal identity. Only the options given are written; an
  *     option given as "" clears that field, which hides its line on the public
  *     pages (see App\Support\LegalIdentity).
- *  2. Converts identity TEXT inside the site's pages to tokens, so the pages,
+ *  2. Only with `--rewrite-pages` (off by default, so a plain run never
+ *     changes a page's text): converts identity TEXT inside the site's pages to tokens, so the pages,
  *     the footer and the JSON-LD all read the value from the row:
  *       - the three bracketed seed placeholders, always;
  *       - the entity, address and governing law being set, where a page already
@@ -67,9 +70,11 @@ class SetSiteLegalIdentity extends Command
                             {--contact-email= : General contact e-mail (support and privacy fall back to it)}
                             {--support-email= : Support e-mail}
                             {--privacy-email= : Privacy / data-protection e-mail}
+                            {--analytics= : Analytics service the site runs, by name, e.g. "Google Analytics" ("" = none)}
                             {--entity-was=* : Old text printed in the pages where the legal entity belongs}
                             {--address-was=* : Old text printed in the pages where the registered address belongs}
                             {--jurisdiction-was=* : Old text printed in the pages where the governing law belongs}
+                            {--rewrite-pages : Also convert identity text inside the site pages to tokens (step 2), off by default}
                             {--dry-run : Report what would change and write nothing}';
 
     protected $description = "Set a site's legal identity and point its legal pages, footer and JSON-LD at it";
@@ -83,6 +88,7 @@ class SetSiteLegalIdentity extends Command
         'contact-email'  => ['contact_email', 190],
         'support-email'  => ['support_email', 190],
         'privacy-email'  => ['privacy_email', 190],
+        'analytics'      => ['analytics_provider', 120],
     ];
 
     /** Options whose value, found as text in a page, becomes its token. */
@@ -120,7 +126,12 @@ class SetSiteLegalIdentity extends Command
             return self::FAILURE;
         }
 
-        $pages = $this->pageUpdates($site, $this->replacements($site));
+        // Step 2 only on request: by default the pages' text is never touched,
+        // so running this to set a field cannot change what a legal page says.
+        $rewritePages = (bool) $this->option('rewrite-pages');
+        $pages = $rewritePages
+            ? $this->pageUpdates($site, $this->replacements($site))
+            : ['rows' => [], 'changed' => []];
 
         if ($fields === [] && $pages['changed'] === []) {
             $this->error('Nothing to do — pass at least one of: --' . implode(', --', array_keys(self::FIELDS)) . '.');
@@ -140,7 +151,9 @@ class SetSiteLegalIdentity extends Command
             ));
         }
 
-        if ($pages['rows'] === []) {
+        if (! $rewritePages) {
+            $this->line('  Pages: not touched (pass --rewrite-pages to convert identity text to tokens).');
+        } elseif ($pages['rows'] === []) {
             $this->line('  Pages: no identity text to convert — they already read the site settings.');
         } else {
             $this->table(['Page', 'Column', 'Becomes', 'Context'], $pages['rows']);
@@ -170,7 +183,9 @@ class SetSiteLegalIdentity extends Command
             return self::FAILURE;
         }
 
-        $this->invalidate($site, array_map(static fn (array $e): string => (string) $e['page']->slug, $pages['changed']));
+        // Every page, not only the ones whose text changed: the values set in
+        // step 1 are substituted into all of them when served.
+        $this->invalidate($site, CmsPage::query()->where('site_id', $site->id)->pluck('slug')->map(static fn ($slug): string => (string) $slug)->all());
 
         $this->info(sprintf('  Saved %d field(s); replaced %d occurrence(s) across %d page(s).', count($fields), count($pages['rows']), count($pages['changed'])));
 

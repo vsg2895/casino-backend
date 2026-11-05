@@ -6,6 +6,7 @@ namespace App\Http\Resources;
 
 use App\Models\Article;
 use App\Support\Byline;
+use App\Support\Media\ImageDimensions;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -48,6 +49,10 @@ class ArticleResource extends JsonResource
             // Only present when the controller selected it — see the class note.
             'body'    => $this->when(! is_null($this->body) || $this->isLoadedForDetail(), $this->body),
             'hero_image_path' => $this->hero_image_path,
+            // Detail responses only: whether the cover is big enough to be the
+            // share image. Null for an SVG, a remote URL or a missing file —
+            // see ImageDimensions.
+            'hero_image_size' => $this->when($this->isLoadedForDetail(), fn (): ?array => ImageDimensions::forPublicPath($this->hero_image_path)),
             // ISO-8601 STRING, not Carbon: these responses go through SiteCache,
             // and a serialized Carbon comes back as __PHP_Incomplete_Class.
             'published_at'    => $this->published_at?->toISOString(),
@@ -78,6 +83,9 @@ class ArticleResource extends JsonResource
                 ),
             ),
             'updated_at'      => $this->updated_at?->toISOString(),
+            // Detail responses only: the date a reader's "updated" means — the
+            // text's last change, never an admin toggle. See contentModifiedAt().
+            'content_modified_at' => $this->when($this->isLoadedForDetail(), fn (): ?string => $this->contentModifiedAt()?->toISOString()),
         ];
     }
 

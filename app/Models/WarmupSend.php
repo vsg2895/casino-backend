@@ -53,6 +53,9 @@ class WarmupSend extends Model
         'site_id',
         'user_id',
         'template',
+        // "Custom HTML" runs only; null for a stored-template run.
+        'custom_subject',
+        'custom_html',
         'requested_count',
         'cooldown_days',
         'queued_count',

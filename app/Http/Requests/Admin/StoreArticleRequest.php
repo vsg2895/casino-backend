@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\Article;
+use App\Models\Site;
+use App\Services\News\NewsIndexGate;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * A guide.
@@ -53,6 +57,38 @@ class StoreArticleRequest extends FormRequest
             'author_id'        => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
             'reviewed_by_id'   => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
             'last_reviewed_at' => ['nullable', 'date'],
+        ];
+    }
+
+    /**
+     * No article is created live without a body: it would be a 404 on the site
+     * (Article::scopeVisible) while the admin listed it as published.
+     *
+     * @return array<int, callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                if ($this->boolean('active') && trim(strip_tags((string) $this->input('body'))) === '') {
+                    $validator->errors()->add('active', 'Add the article body before publishing it.');
+                }
+            },
+            // A news post is created indexable only when it already clears the
+            // bar in NewsIndexGate; otherwise it must start as noindex.
+            function (Validator $validator): void {
+                $site = $this->route('site');
+
+                if ($this->query('type') !== Article::TYPE_NEWS || ! $site instanceof Site || $this->boolean('noindex')) {
+                    return;
+                }
+
+                $problems = NewsIndexGate::problems($this->input('body'), $site);
+
+                if ($problems !== []) {
+                    $validator->errors()->add('noindex', 'Turn "Keep out of search results" on, or fix: ' . implode('; ', $problems) . '.');
+                }
+            },
         ];
     }
 

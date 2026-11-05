@@ -12,7 +12,9 @@ use App\Models\Casino;
 use App\Models\Continent;
 use App\Models\Country;
 use App\Models\Site;
+use App\Support\SchemaGuard;
 use App\Support\SiteCache;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 
@@ -111,12 +113,15 @@ class CountryController extends Controller
                 //
                 // The sitemap still excludes zero-casino countries, so nothing thin
                 // is ever submitted for indexing.
+                $hidden = $this->noindexQuery($site);
+
                 $continents = Continent::query()
                     ->whereHas('countries', fn ($q) => $q->where('active', true))
-                    ->with(['countries' => function ($q) use ($casinoCount): void {
+                    ->with(['countries' => function ($q) use ($casinoCount, $hidden): void {
                         $q->where('active', true)
                             ->select('countries.*')
-                            ->selectSub($casinoCount, 'casinos_count');
+                            ->selectSub($casinoCount, 'casinos_count')
+                            ->when($hidden !== null, fn ($q) => $q->selectRaw('EXISTS(' . $hidden->toSql() . ') as noindex', $hidden->getBindings()));
                     }])
                     ->ordered()
                     ->get();
@@ -188,6 +193,10 @@ class CountryController extends Controller
                     ...Casino::publicCountriesEagerLoad(),
                 ]);
 
+                if (SchemaGuard::hasTable('country_site_noindex')) {
+                    $country->setAttribute('noindex', $site->noindexCountries()->whereKey($country->id)->exists());
+                }
+
                 return [
                     'country' => (new CountryResource($country->load('continent')))->resolve(),
                     'casinos' => CasinoWithAttachmentResource::collection($paginator->getCollection())->resolve(),
@@ -202,6 +211,23 @@ class CountryController extends Controller
         );
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * A correlated "this site hides this country from search" subquery for the
+     * grid, or null before the table's migration has run (no flag is sent
+     * then, and the site falls back to its own rules).
+     */
+    private function noindexQuery(Site $site): ?Builder
+    {
+        if (! SchemaGuard::hasTable('country_site_noindex')) {
+            return null;
+        }
+
+        return DB::table('country_site_noindex as csn')
+            ->selectRaw('1')
+            ->whereColumn('csn.country_id', 'countries.id')
+            ->where('csn.site_id', $site->id);
     }
 
     /**

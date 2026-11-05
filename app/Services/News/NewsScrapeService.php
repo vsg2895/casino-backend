@@ -370,8 +370,8 @@ class NewsScrapeService
              * editor who publishes a draft early would put another
              * publisher's wording on this domain and invite a search engine to
              * index it as ours. This makes that mistake harmless rather than
-             * relying on nobody making it. NewsRewriteService clears it once
-             * the copy is genuinely original.
+             * relying on nobody making it. It stays on after the rewrite too:
+             * an editor unticks it once the post clears NewsIndexGate.
              */
             'noindex' => true,
 

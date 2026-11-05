@@ -131,6 +131,9 @@ class CasinoController extends Controller
 
             $casino = $this->baseQuery($site)
                 ->when($hasBylines, fn ($q) => $q->addSelect(['pivot.author_id', 'pivot.reviewed_by_id', 'pivot.last_reviewed_at']))
+                // This site's own review text (SEO audit H6), detail page only:
+                // the listings do not render a description.
+                ->when(SchemaGuard::hasColumn('casino_site', 'description'), fn ($q) => $q->addSelect(['pivot.description as site_description']))
                 ->where('casinos.slug', $slug)
                 ->firstOrFail()
                 ->load(self::relations());

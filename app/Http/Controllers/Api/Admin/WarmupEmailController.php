@@ -8,6 +8,7 @@ use App\Http\Controllers\Concerns\RespondsWithQueuedRun;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\BulkWarmupEmailIdsRequest;
 use App\Http\Requests\Admin\ImportWarmupEmailsRequest;
+use App\Http\Requests\Admin\PreviewWarmupCustomEmailRequest;
 use App\Http\Requests\Admin\SendWarmupEmailsRequest;
 use App\Http\Requests\Admin\StoreWarmupEmailRequest;
 use App\Http\Requests\Admin\UpdateWarmupEmailRequest;
@@ -156,6 +157,9 @@ class WarmupEmailController extends Controller
      * Served from {@see WarmupMailResolver::ALLOWED_TEMPLATES} so the dropdown,
      * the validation rule and the send path all read ONE allow-list. Registering a
      * future template in the catalog makes it appear here automatically.
+     *
+     * "Custom HTML" is appended by hand: it is not a catalog type (it has no
+     * stored per-site row), but it is on the same allow-list.
      */
     public function templates(): JsonResponse
     {
@@ -164,7 +168,38 @@ class WarmupEmailController extends Controller
             static fn (array $type): bool => WarmupMailResolver::supports($type['value']),
         ));
 
+        if (WarmupMailResolver::supports(WarmupMailResolver::TYPE_CUSTOM)) {
+            $allowed[] = [
+                'value'       => WarmupMailResolver::TYPE_CUSTOM,
+                'label'       => WarmupMailResolver::CUSTOM_LABEL,
+                'description' => WarmupMailResolver::CUSTOM_DESCRIPTION,
+            ];
+        }
+
         return response()->json(['data' => $allowed]);
+    }
+
+    /**
+     * What a "Custom HTML" warmup email will look like, before it is sent.
+     *
+     * Returns the HTML exactly as it will be sent, the generated plain-text
+     * part, the size, and the pre-send warnings a provider would raise. Read-only:
+     * nothing is stored and nothing is mailed. The admin renders the HTML in a
+     * sandboxed iframe.
+     */
+    public function previewCustom(PreviewWarmupCustomEmailRequest $request): JsonResponse
+    {
+        $custom = $request->customContent();
+
+        return response()->json([
+            'data' => [
+                'subject'    => $custom->subject,
+                'html'       => $custom->html,
+                'text'       => $custom->plainText(),
+                'html_bytes' => $custom->htmlBytes(),
+                'warnings'   => $custom->warnings(),
+            ],
+        ]);
     }
 
     /**
@@ -181,6 +216,7 @@ class WarmupEmailController extends Controller
             $request->recipientLimit(),
             $request->cooldownDays(),
             $request->user()?->id,
+            $request->customContent(),
         );
 
         if (! $outcome->wasQueued()) {

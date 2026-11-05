@@ -51,7 +51,8 @@ class WarmupRateLimitTest extends TestCase
     use InteractsWithSites;
     use RefreshDatabase;
 
-    private const int MAX = 10;
+    /** WarmupRateLimiter::MAX_EMAILS_CEILING — the configured rate cannot exceed it. */
+    private const int MAX = 8;
 
     private const int WINDOW = 60;
 
@@ -236,7 +237,7 @@ class WarmupRateLimitTest extends TestCase
         try {
             $this->assertRollingLimit($times);
         } catch (AssertionFailedError $e) {
-            $this->assertStringContainsString('holding 20', $e->getMessage());
+            $this->assertStringContainsString('holding '.(2 * self::MAX), $e->getMessage());
 
             return;
         }
@@ -324,13 +325,13 @@ class WarmupRateLimitTest extends TestCase
         $this->assertRollingLimit($this->attemptTimes());
 
         // A limiter rebuilt per chunk would let each of the ten chunks open with a
-        // fresh burst of ten, so a thousand addresses would finish in a tenth of
-        // the windows. 1000 sends at 10 per window is 99 windows of waiting.
+        // fresh burst, so a thousand addresses would finish in a tenth of the
+        // windows. 1000 sends at MAX per window is ceil(1000 / MAX) - 1 windows of waiting.
         $times = $this->attemptTimes();
         $span = end($times) - $times[0];
 
         $this->assertGreaterThanOrEqual(
-            99 * self::WINDOW,
+            ((int) ceil(1000 / self::MAX) - 1) * self::WINDOW,
             $span,
             'the limiter must stay in force for the whole run, not restart per chunk',
         );
@@ -343,18 +344,18 @@ class WarmupRateLimitTest extends TestCase
         // in a limiter instance the chunk owns.
         Mail::fake();
         [$site] = $this->siteWithKey(['slug' => 'idevaffiliation']);
-        $emails = $this->seedAddresses(11);
+        $emails = $this->seedAddresses(self::MAX + 1);
         $send = $this->warmupRun($site);
 
-        $this->batch(array_slice($emails, 0, 10), $site, $send);
+        $this->batch(array_slice($emails, 0, self::MAX), $site, $send);
 
         $afterFirstChunk = Carbon::now();
 
-        $this->batch(array_slice($emails, 10), $site, $send);
+        $this->batch(array_slice($emails, self::MAX), $site, $send);
 
         $this->assertTrue(
             Carbon::now()->greaterThanOrEqualTo($afterFirstChunk->copy()->addSeconds(self::WINDOW)),
-            'the eleventh address must wait for the first to leave the window',
+            'the address after a full window must wait for the first to leave it',
         );
         $this->assertRollingLimit($this->attemptTimes());
     }
@@ -540,7 +541,7 @@ class WarmupRateLimitTest extends TestCase
 
         $limiter = app(WarmupRateLimiter::class);
 
-        $this->assertSame(10, $limiter->max());
+        $this->assertSame(self::MAX, $limiter->max());
         $this->assertSame(60, $limiter->windowSeconds());
     }
 
@@ -589,5 +590,109 @@ class WarmupRateLimitTest extends TestCase
 
         $this->assertSame(self::MAX, $attempts, 'the first window went out, then the stop took effect');
         $this->assertRollingLimit($this->attemptTimes());
+    }
+
+    // ── 8. Pacing: 7–8 a minute, evenly spaced ───────────────────────────────
+
+    /**
+     * Acquire $count slots and return the grant times in milliseconds.
+     *
+     * @return list<int>
+     */
+    private function grantTimesMs(WarmupRateLimiter $limiter, int $count): array
+    {
+        $times = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $limiter->acquire();
+            $times[] = (int) Carbon::now()->getPreciseTimestamp(3);
+        }
+
+        return $times;
+    }
+
+    public function test_sends_are_spaced_evenly_seven_to_eight_a_minute(): void
+    {
+        // The suite turns spacing off (phpunit.xml); null derives it, as in production.
+        config()->set('warmup.rate_limit.min_interval_seconds', null);
+        $limiter = app(WarmupRateLimiter::class);
+
+        $this->assertSame(7.5, $limiter->minIntervalSeconds());
+
+        $times = $this->grantTimesMs($limiter, 40);
+
+        for ($i = 1; $i < count($times); $i++) {
+            $this->assertGreaterThanOrEqual(7500, $times[$i] - $times[$i - 1], "send {$i} came too soon after the previous one");
+        }
+
+        // Never more than 8 in any minute, and never a burst: every full minute
+        // of the run holds 7 or 8.
+        $this->assertRollingLimit(array_map(static fn (int $ms): int => intdiv($ms, 1000), $times));
+
+        foreach ($times as $start) {
+            if ($start + 60_000 > end($times)) {
+                break;
+            }
+
+            $inWindow = count(array_filter($times, static fn (int $t): bool => $t >= $start && $t < $start + 60_000));
+            $this->assertContains($inWindow, [7, 8], 'a minute of sending holds 7 or 8 messages');
+        }
+    }
+
+    public function test_a_configured_rate_above_eight_is_capped(): void
+    {
+        // An older .env still says 10.
+        config()->set('warmup.rate_limit.max_emails', 10);
+        config()->set('warmup.rate_limit.min_interval_seconds', null);
+
+        $limiter = app(WarmupRateLimiter::class);
+
+        $this->assertSame(WarmupRateLimiter::MAX_EMAILS_CEILING, $limiter->max());
+        $this->assertSame(7.5, $limiter->minIntervalSeconds());
+
+        $times = $this->grantTimesMs($limiter, 20);
+        $this->assertRollingLimit(array_map(static fn (int $ms): int => intdiv($ms, 1000), $times), 8);
+    }
+
+    public function test_a_lower_configured_rate_is_honoured_and_spaced_to_match(): void
+    {
+        config()->set('warmup.rate_limit.max_emails', 6);
+        config()->set('warmup.rate_limit.min_interval_seconds', null);
+
+        $limiter = app(WarmupRateLimiter::class);
+
+        $this->assertSame(6, $limiter->max());
+        $this->assertSame(10.0, $limiter->minIntervalSeconds());
+    }
+
+    public function test_the_spacing_is_shared_by_every_worker(): void
+    {
+        // Two limiters over the same store — two workers. The gap is between ANY
+        // two sends, so alternating between them cannot halve it.
+        config()->set('warmup.rate_limit.min_interval_seconds', null);
+        $workerA = new WarmupRateLimiter(Cache::store());
+        $workerB = new WarmupRateLimiter(Cache::store());
+
+        $times = [];
+
+        for ($i = 0; $i < 10; $i++) {
+            ($i % 2 === 0 ? $workerA : $workerB)->acquire();
+            $times[] = (int) Carbon::now()->getPreciseTimestamp(3);
+        }
+
+        for ($i = 1; $i < count($times); $i++) {
+            $this->assertGreaterThanOrEqual(7500, $times[$i] - $times[$i - 1]);
+        }
+    }
+
+    public function test_the_spacing_can_be_switched_off(): void
+    {
+        config()->set('warmup.rate_limit.min_interval_seconds', 0);
+        $limiter = app(WarmupRateLimiter::class);
+
+        $start = Carbon::now()->getPreciseTimestamp(3);
+        $this->grantTimesMs($limiter, self::MAX);
+
+        $this->assertSame($start, Carbon::now()->getPreciseTimestamp(3), 'a full window goes out without waiting');
     }
 }

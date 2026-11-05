@@ -186,5 +186,12 @@ return [
 
         /** Seconds before one model request is abandoned. */
         'timeout' => 60,
+
+        /**
+         * At most this many posts rewritten per site per day (0 = no cap).
+         * Volume is part of what Google calls scaled content abuse; the
+         * schedule alone would allow ~240 a day. `--id` ignores it.
+         */
+        'daily_per_site' => (int) env('NEWS_REWRITE_DAILY_PER_SITE', 10),
     ],
 ];

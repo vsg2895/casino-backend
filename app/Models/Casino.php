@@ -84,6 +84,11 @@ class Casino extends Model
             array_push($pivot, 'author_id', 'reviewed_by_id', 'last_reviewed_at');
         }
 
+        // This site's own review text (2026_11_26); null = the shared one.
+        if (SchemaGuard::hasColumn('casino_site', 'description')) {
+            $pivot[] = 'description';
+        }
+
         return $this->belongsToMany(Site::class)
             ->withPivot($pivot)
             ->withTimestamps()

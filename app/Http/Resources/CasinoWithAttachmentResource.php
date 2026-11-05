@@ -28,7 +28,10 @@ class CasinoWithAttachmentResource extends JsonResource
             'image_path'            => $this->image_path,
             'banner_image'          => $this->banner_image,
             'bonuses'               => $this->bonuses,
-            'description'           => $this->description,
+            // This site's own review text when it has one (casino_site.description,
+            // selected by the detail endpoint only), else the shared one. A
+            // shared text is the same paragraph on every site (SEO audit H6).
+            'description'           => filled($this->getAttribute('site_description')) ? $this->getAttribute('site_description') : $this->description,
             'rating'                => (int) $this->rating,
             'meta_title'            => $this->meta_title,
             'meta_description'      => $this->meta_description,

@@ -53,15 +53,52 @@ return [
     | protect a mailbox's reputation, and a typo in .env must not be able to
     | disable that quietly.
     |
-    | RAISING max_emails costs nothing. LOWERING it makes each batch take longer
-    | in wall-clock time, which `send_timeout` below is sized against — read the
-    | note there before changing it.
+    | CAPPED AT 8. The operator's rule is "7–8 a minute, never more", so
+    | WarmupRateLimiter::MAX_EMAILS_CEILING clamps whatever is configured here:
+    | the env var can LOWER the rate, never raise it past the ceiling. An older
+    | .env still carrying WARMUP_EMAILS_PER_MINUTE=10 therefore sends 8.
+    | Lowering it makes each batch take longer in wall-clock time, which
+    | `send_timeout` below is sized against — read the note there first.
+    |
+    | PACED, as well as capped. The window alone lets a whole minute's quota go
+    | out in a burst and then sit idle — eight messages in two seconds is exactly
+    | the pattern a receiving host scores as bulk. `min_interval_seconds` is the
+    | gap every send must keep from the previous one, the way SendGrid and Brevo
+    | smooth a warming IP: with 8 per 60 s it is 7.5 s, so a minute holds 7 or 8
+    | evenly spaced messages. Null derives it as window / max_emails; 0 turns the
+    | spacing off and leaves only the window.
     */
     'rate_limit' => [
 
-        'max_emails' => (int) env('WARMUP_EMAILS_PER_MINUTE', 10),
+        'max_emails' => (int) env('WARMUP_EMAILS_PER_MINUTE', 8),
 
         'window_seconds' => (int) env('WARMUP_RATE_LIMIT_WINDOW_SECONDS', 60),
+
+        // Empty or non-numeric = derive it. A bare `WARMUP_MIN_INTERVAL_SECONDS=`
+        // must not read as 0, which would switch the spacing off.
+        'min_interval_seconds' => is_numeric(env('WARMUP_MIN_INTERVAL_SECONDS'))
+            ? (float) env('WARMUP_MIN_INTERVAL_SECONDS')
+            : null,
+
+    ],
+
+    /*
+    | The "Custom HTML" template: a subject and an HTML body typed in the send
+    | dialog and stored on the run (`warmup_sends.custom_subject` /
+    | `custom_html`), instead of a site's stored template.
+    |
+    | `max_html_bytes` bounds what the API accepts. Gmail clips a message body
+    | past ~102 KB behind a "View entire message" link — the preview warns at
+    | `clip_warning_bytes` — and anything far beyond that is a paste mistake, not
+    | an email.
+    */
+    'custom' => [
+
+        'max_subject_length' => 255,
+
+        'max_html_bytes' => 500_000,
+
+        'clip_warning_bytes' => 102_000,
 
     ],
 
@@ -88,8 +125,8 @@ return [
     | mailed twice.
     |
     | Since the rate limit above exists, this is no longer a ceiling on how long
-    | a batch of `send_batch_size` addresses takes — at 10 per minute, 100
-    | addresses need roughly ten minutes of wall clock, far past any safe
+    | a batch of `send_batch_size` addresses takes — at 8 per minute, 100
+    | addresses need roughly 12.5 minutes of wall clock, far past any safe
     | timeout. The batch job therefore treats this value as a TIME BUDGET: when
     | the budget is nearly spent it re-queues whatever addresses are left as
     | another batch of the same run and returns cleanly, instead of being killed
@@ -134,7 +171,11 @@ return [
     | brand name baked into the code. If it names no active site the send fails
     | loudly: rendering some other brand's template would put the wrong branding
     | in real inboxes, which is worse than not sending.
+    |
+    | Fsozbet since 2026-11-05 (was crogambline). An environment that still sets
+    | WARMUP_SITE_SLUG=crogambline keeps sending as Crogambline until that line
+    | is changed or removed.
     */
-    'site_slug' => env('WARMUP_SITE_SLUG', 'crogambline'),
+    'site_slug' => env('WARMUP_SITE_SLUG', 'fsozbet'),
 
 ];

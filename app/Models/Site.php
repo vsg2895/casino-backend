@@ -61,6 +61,7 @@ class Site extends Model
         'contact_email',
         'support_email',
         'privacy_email',
+        'analytics_provider',
     ];
 
     protected $hidden = [
@@ -132,6 +133,15 @@ class Site extends Model
             ->withPivot(['affiliate_url', 'position', 'featured', 'active'])
             ->withTimestamps()
             ->orderByPivot('position');
+    }
+
+    /**
+     * Countries whose page this site keeps out of search engines (`noindex`,
+     * no sitemap entry). See 2026_11_24_100000.
+     */
+    public function noindexCountries(): BelongsToMany
+    {
+        return $this->belongsToMany(Country::class, 'country_site_noindex')->withTimestamps();
     }
 
     /** The real people who write and check this site's content. */

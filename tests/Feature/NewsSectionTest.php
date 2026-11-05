@@ -9,6 +9,7 @@ use App\Models\Site;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\Concerns\InteractsWithSites;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -320,6 +321,29 @@ class NewsSectionTest extends TestCase
             ->assertJsonPath('data.type', Article::TYPE_NEWS);
     }
 
+    public function test_a_post_reports_its_covers_pixel_size_for_the_share_image(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('uploads/image/wide.png', UploadedFile::fake()->image('wide.png', 1600, 900)->getContent());
+        Storage::disk('public')->put('news/drawn.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+
+        $raster = $this->article(Article::TYPE_NEWS, 'Wide cover');
+        $raster->update(['hero_image_path' => 'uploads/image/wide.png']);
+        $drawn = $this->article(Article::TYPE_NEWS, 'Drawn cover');
+        $drawn->update(['hero_image_path' => 'news/drawn.svg']);
+        $remote = $this->article(Article::TYPE_NEWS, 'Remote cover');
+        $remote->update(['hero_image_path' => 'https://example.com/cover.jpg']);
+
+        $show = fn (Article $a) => $this->getJson($this->publicBase($this->site) . '/news/' . $a->slug, $this->siteHeaders($this->key))->assertOk();
+
+        $show($raster)->assertJsonPath('data.hero_image_size', ['width' => 1600, 'height' => 900]);
+        $show($drawn)->assertJsonPath('data.hero_image_size', null);
+        $show($remote)->assertJsonPath('data.hero_image_size', null);
+
+        // Listings never pay for the file read.
+        $this->assertArrayNotHasKey('hero_image_size', $this->getJson($this->publicBase($this->site) . '/news', $this->siteHeaders($this->key))->json('data.posts.0'));
+    }
+
     public function test_a_guide_slug_404s_on_the_news_route(): void
     {
         $guide = $this->article(Article::TYPE_GUIDE, 'A guide');
@@ -335,7 +359,7 @@ class NewsSectionTest extends TestCase
         $this->actingAsAdmin();
         $base = "/api/v1/admin/sites/{$this->site->id}/articles?type=news";
 
-        $id = $this->postJson($base, ['title' => 'Draft post', 'body' => 'Body'])
+        $id = $this->postJson($base, ['title' => 'Draft post', 'body' => 'Body', 'noindex' => true])
             ->assertCreated()
             ->json('data.id');
 
@@ -563,6 +587,89 @@ class NewsSectionTest extends TestCase
         $this->assertTrue($draft->fresh()->active);
     }
 
+    /** Live without a body (approved before the block existed): never public. */
+    public function test_an_active_post_without_a_body_is_a_404_and_out_of_the_feed_and_sitemap(): void
+    {
+        $draft = $this->scrapedDraft();
+        $draft->update(['active' => true, 'noindex' => false]);
+
+        $this->getJson($this->publicBase($this->site) . '/news/' . $draft->slug, $this->siteHeaders($this->key))->assertNotFound();
+        $this->assertSame([], $this->feed());
+        $this->assertSame([], array_column((array) $this->getJson($this->publicBase($this->site) . '/sitemap', $this->siteHeaders($this->key))->json('data.articles'), 'slug'));
+    }
+
+    public function test_a_hand_written_post_cannot_go_live_without_a_body(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->postJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news", [
+            'title' => 'Empty post', 'body' => '<p> </p>', 'active' => true, 'published_at' => now()->subHour()->toIso8601String(),
+        ])->assertUnprocessable()->assertJsonValidationErrors('active');
+    }
+
+    public function test_toggling_active_alone_uses_the_stored_body(): void
+    {
+        $post = $this->article(Article::TYPE_NEWS, 'Written post');
+        $post->update(['active' => false]);
+        $this->actingAsAdmin();
+
+        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news", [
+            'title' => $post->title, 'active' => true,
+        ])->assertOk();
+
+        $this->assertTrue($post->fresh()->active);
+    }
+
+    /** The public "modified" date of a post: detail field and sitemap lastmod. */
+    private function modifiedDates(Article $post): array
+    {
+        $detail = $this->getJson($this->publicBase($this->site) . '/news/' . $post->slug, $this->siteHeaders($this->key))
+            ->assertOk()->json('data.content_modified_at');
+        $sitemap = collect($this->getJson($this->publicBase($this->site) . '/sitemap', $this->siteHeaders($this->key))->json('data.articles'))
+            ->firstWhere('slug', $post->slug)['updated_at'] ?? null;
+
+        return [$detail, $sitemap];
+    }
+
+    public function test_admin_toggles_do_not_move_the_modified_date_but_a_text_edit_does(): void
+    {
+        Carbon::setTestNow('2026-11-01 10:00:00');
+        $post = $this->article(Article::TYPE_NEWS, 'Original headline', Carbon::parse('2026-11-01 09:00:00'));
+        $this->actingAsAdmin();
+        $url = "/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news";
+        $fields = ['title' => $post->title, 'body' => $post->body, 'excerpt' => $post->excerpt, 'published_at' => $post->published_at->toISOString()];
+
+        Carbon::setTestNow('2026-11-02 10:00:00');
+        $this->putJson($url, [...$fields, 'featured' => true, 'to_be_most_popular' => true])->assertOk();
+
+        $this->assertSame(['2026-11-01T10:00:00.000000Z', '2026-11-01T10:00:00.000000Z'], $this->modifiedDates($post));
+        $this->assertTrue($post->fresh()->updated_at->isSameDay('2026-11-02'));
+
+        Carbon::setTestNow('2026-11-03 10:00:00');
+        $this->putJson($url, [...$fields, 'body' => 'Corrected body copy.'])->assertOk();
+
+        $this->assertSame(['2026-11-03T10:00:00.000000Z', '2026-11-03T10:00:00.000000Z'], $this->modifiedDates($post));
+        Carbon::setTestNow();
+    }
+
+    public function test_the_modified_date_is_never_before_the_approval(): void
+    {
+        // Written (rewritten) on the 1st, approved on the 4th: approval restamps
+        // published_at, so the post cannot read as modified before it existed.
+        Carbon::setTestNow('2026-11-01 10:00:00');
+        $post = $this->article(Article::TYPE_NEWS, 'Approved later');
+        $post->update(['active' => false]);
+        $this->actingAsAdmin();
+
+        Carbon::setTestNow('2026-11-04 08:00:00');
+        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news", [
+            'title' => $post->title, 'body' => $post->body, 'active' => true,
+        ])->assertOk();
+
+        $this->assertSame(['2026-11-04T08:00:00.000000Z', '2026-11-04T08:00:00.000000Z'], $this->modifiedDates($post));
+        Carbon::setTestNow();
+    }
+
     /** Already live from before the block: it can still be edited, and hidden. */
     public function test_a_live_unrewritten_post_can_still_be_edited_and_hidden(): void
     {
@@ -593,7 +700,7 @@ class NewsSectionTest extends TestCase
         $this->actingAsAdmin();
 
         $id = $this->postJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news", [
-            'title' => 'Fresh', 'body' => 'Body',
+            'title' => 'Fresh', 'body' => 'Body', 'noindex' => true,
             'published_at' => Carbon::now()->subHour()->toDateTimeString(),
         ])->assertCreated()->json('data.id');
 
@@ -960,7 +1067,7 @@ class NewsSectionTest extends TestCase
         $this->actingAsAdmin();
 
         $id = $this->postJson("/api/v1/admin/sites/{$this->site->id}/articles?type=news", [
-            'title' => 'Claimed', 'body' => '<p>Three words here.</p>', 'read_minutes' => 99,
+            'title' => 'Claimed', 'body' => '<p>Three words here.</p>', 'read_minutes' => 99, 'noindex' => true,
         ])->assertCreated()->json('data.id');
 
         $this->assertSame(1, Article::findOrFail($id)->read_minutes);

@@ -32,6 +32,9 @@
              like live sends. -->
         <env name="LOG_CHANNEL" value="null"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- Warmup send spacing off: the suite sends without faking Sleep, and a
+             7.5 s gap per message would stall it. WarmupRateLimitTest turns it on. -->
+        <env name="WARMUP_MIN_INTERVAL_SECONDS" value="0"/>
         <!-- Address validation is OFF for the suite, and the key is blanked.
              Without these two lines the tests inherit whatever is in the
              developer's .env, and every subscribe test makes a REAL, BILLABLE

@@ -11,11 +11,13 @@ use App\Http\Resources\SiteRegistrationResource;
 use App\Http\Resources\SiteResource;
 use App\Jobs\InvalidateCasinoCache;
 use App\Jobs\RevalidateNextJsSites;
+use App\Models\CmsPage;
 use App\Models\Site;
 use App\Services\CmsPageService;
 use App\Support\LegalIdentity;
 use App\Support\SchemaGuard;
 use App\Support\SiteCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Hash;
@@ -43,7 +45,7 @@ class SiteController extends Controller
      */
     public function index(): AnonymousResourceCollection
     {
-        return SiteResource::collection(Site::latest()->get());
+        return SiteResource::collection(self::withNoindexCountries(Site::latest())->get());
     }
 
     public function store(StoreSiteRequest $request): SiteRegistrationResource
@@ -63,8 +65,33 @@ class SiteController extends Controller
 
     public function show(Site $site): SiteResource
     {
-        return new SiteResource($site);
+        return new SiteResource(self::loadNoindexCountries($site));
     }
+
+    /**
+     * The edit dialog takes its site from the listing, so every response that
+     * can open it carries the hidden-countries set. Skipped until the table's
+     * migration has run, so deploying the code first breaks nothing.
+     *
+     * @param  Builder<Site>  $query
+     * @return Builder<Site>
+     */
+    private static function withNoindexCountries(Builder $query): Builder
+    {
+        return SchemaGuard::hasTable('country_site_noindex')
+            ? $query->with(['noindexCountries' => fn ($q) => $q->select('countries.id')])
+            : $query;
+    }
+
+    private static function loadNoindexCountries(Site $site): Site
+    {
+        return SchemaGuard::hasTable('country_site_noindex')
+            ? $site->load(['noindexCountries' => fn ($q) => $q->select('countries.id')])
+            : $site;
+    }
+
+    /** Feature flags that decide which lines of the legal pages show. */
+    private const array PAGE_FEATURE_FIELDS = ['reviews_enabled', 'accounts_enabled', 'forum_enabled'];
 
     /** Site columns the editorial endpoint publishes. */
     private const array EDITORIAL_FIELDS = [
@@ -91,22 +118,41 @@ class SiteController extends Controller
             InvalidateCasinoCache::dispatch([$site->id], ['countries', 'casinos']);
         }
 
+        // The country pages' `noindex` and the sitemap read this set, so a
+        // change has to reach both — `countries` is on every country fetch.
+        if ($request->has('noindex_country_ids') && SchemaGuard::hasTable('country_site_noindex')) {
+            $changes = $site->noindexCountries()->sync($request->validated('noindex_country_ids'));
+
+            if (array_filter($changes) !== []) {
+                InvalidateCasinoCache::dispatch([$site->id], ['countries']);
+            }
+        }
+
         if ($wasReviews !== (bool) $fresh->reviews_enabled) {
             InvalidateCasinoCache::dispatch([$site->id], ['reviews', 'casinos']);
         }
 
         // Identity and byline settings are rendered into every legal page, the
-        // footer and the JSON-LD. Without this they waited out the hour-long
-        // cache, so a corrected company name stayed wrong on the live site.
-        if ($site->wasChanged([...LegalIdentity::TOKENS, ...self::EDITORIAL_FIELDS])) {
+        // footer and the JSON-LD; the feature switches decide which lines of
+        // the legal pages show (LegalIdentity::pageValuesFor). Without this
+        // they waited out the hour-long cache, so a corrected company name
+        // stayed wrong on the live site.
+        //
+        // The pages' own `page:<slug>` tags go too: a Next.js page is cached
+        // under its slug, not under `editorial`, so revalidating `editorial`
+        // alone refreshed the footer while the legal pages kept the old text.
+        if ($site->wasChanged([...LegalIdentity::TOKENS, ...self::EDITORIAL_FIELDS, ...self::PAGE_FEATURE_FIELDS])) {
             SiteCache::flushSite($site->id);
 
             if ($fresh->active) {
-                RevalidateNextJsSites::dispatch(['editorial'], [$site->id]);
+                $pageTags = CmsPage::query()->where('site_id', $site->id)->pluck('slug')
+                    ->map(static fn (string $slug): string => 'page:' . $slug)->all();
+
+                RevalidateNextJsSites::dispatch(['editorial', ...$pageTags], [$site->id]);
             }
         }
 
-        return new SiteResource($site);
+        return new SiteResource(self::loadNoindexCountries($site));
     }
 
     public function destroy(Site $site): JsonResponse

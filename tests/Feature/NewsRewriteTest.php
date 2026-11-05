@@ -142,7 +142,9 @@ class NewsRewriteTest extends TestCase
         $this->assertStringContainsString('What this means for players', (string) $draft->body);
         $this->assertSame('what-the-latest-licence-review-means-for-players', $draft->slug);
         $this->assertSame($draft->slug, $result['slug']);
-        $this->assertFalse($draft->noindex);
+        // Original wording is not added value: indexing stays an editor's call
+        // (NewsIndexGate), so the rewrite leaves noindex on.
+        $this->assertTrue($draft->noindex);
 
         // Approval stays a human act — the one thing a rewrite must not touch.
         $this->assertFalse($draft->active);

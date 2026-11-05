@@ -26,6 +26,9 @@ class SiteResource extends JsonResource
             // Feature switches. Both default false — a new feature never
             // switches itself on for a live domain.
             'countries_enabled' => (bool) $this->countries_enabled,
+            // Countries whose page this site keeps out of search engines.
+            // Loaded by the admin SiteController only.
+            'noindex_country_ids' => $this->whenLoaded('noindexCountries', fn (): array => $this->noindexCountries->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all()),
             'reviews_enabled'   => (bool) $this->reviews_enabled,
             'review_auto_publish' => (bool) $this->review_auto_publish,
             'operator_profile_enabled' => (bool) $this->operator_profile_enabled,
@@ -51,6 +54,7 @@ class SiteResource extends JsonResource
             'contact_email'      => $this->contact_email,
             'support_email'      => $this->support_email,
             'privacy_email'      => $this->privacy_email,
+            'analytics_provider' => $this->analytics_provider,
             // Required identity fields still empty — the admin's warning. The
             // public site hides the matching lines meanwhile.
             'legal_identity_missing' => LegalIdentity::missingFor($this->resource),

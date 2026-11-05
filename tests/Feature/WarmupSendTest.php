@@ -553,6 +553,10 @@ class WarmupSendTest extends TestCase
 
             $this->send([
                 'template' => $type,
+                // The custom template carries its own message; the others ignore these.
+                ...($type === WarmupMailResolver::TYPE_CUSTOM
+                    ? ['custom_subject' => 'Hello', 'custom_html' => '<p>A short custom warmup message with enough text in it.</p>']
+                    : []),
             ])->assertAccepted();
 
             $this->assertSame(

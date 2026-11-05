@@ -6,6 +6,7 @@ namespace App\Http\Resources;
 
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
+use App\Services\Mail\WarmupMailResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -70,6 +71,8 @@ class WarmupSendRecipientResource extends JsonResource
 
             self::$labels = collect($catalog->types())
                 ->pluck('label', 'value')
+                // Not a catalog type, but a warmup template all the same.
+                ->put(WarmupMailResolver::TYPE_CUSTOM, WarmupMailResolver::CUSTOM_LABEL)
                 ->all();
         }
 

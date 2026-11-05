@@ -11,8 +11,8 @@ use App\Models\Casino;
 use App\Models\Category;
 use App\Models\Site;
 use App\Models\SpecialOffer;
-use App\Support\SiteCache;
 use App\Support\SchemaGuard;
+use App\Support\SiteCache;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -137,11 +137,14 @@ class SitemapController extends Controller
             ->visible()
             ->where('noindex', false)
             ->orderByDesc('published_at')
-            ->get(['type', 'slug', 'updated_at'])
+            ->get(['type', 'slug', 'updated_at', 'published_at', ...(SchemaGuard::hasColumn('articles', 'content_updated_at') ? ['content_updated_at'] : [])])
+            // `updated_at` here is what `lastmod` shows, so it is the CONTENT
+            // date (Article::contentModifiedAt), not the row's: toggling a post
+            // onto the home page is not a change worth a recrawl.
             ->map(static fn (Article $article): array => [
                 'type'       => (string) $article->type,
                 'slug'       => (string) $article->slug,
-                'updated_at' => $article->updated_at?->toISOString(),
+                'updated_at' => $article->contentModifiedAt()?->toISOString(),
             ])
             ->values()
             ->all();

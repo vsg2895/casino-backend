@@ -6,6 +6,7 @@ namespace App\Services\News;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Support\SchemaGuard;
 use App\Support\SiteCache;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -112,7 +113,7 @@ class NewsRewriteService
      */
     public function pending(int $limit, ?int $id = null): Collection
     {
-        return Article::query()
+        $drafts = Article::query()
             ->ofType(Article::TYPE_NEWS)
             // Ingested only: a hand-written draft without a body has no facts
             // to rewrite, and sending it would bill a request for nothing.
@@ -122,8 +123,66 @@ class NewsRewriteService
             ->when($id !== null, fn ($q) => $q->whereKey($id))
             ->orderByDesc('published_at')
             ->orderByDesc('id')
-            ->limit($limit)
+            // Unlimited here so the per-site quota can skip a capped site and
+            // still fill the run from the others. Bounded in practice: drafts
+            // are a day or two of feed items, pruned daily by news:scrape.
             ->get();
+
+        // `--id` is the operator naming one article: no quota applies.
+        if ($id !== null) {
+            return $drafts->take($limit)->values();
+        }
+
+        $remaining = $this->remainingQuotaBySite($drafts->pluck('site_id')->unique()->values()->all());
+
+        return $drafts
+            ->filter(function (Article $article) use (&$remaining): bool {
+                if (($remaining[$article->site_id] ?? PHP_INT_MAX) <= 0) {
+                    return false;
+                }
+
+                $remaining[$article->site_id] = ($remaining[$article->site_id] ?? PHP_INT_MAX) - 1;
+
+                return true;
+            })
+            ->take($limit)
+            ->values();
+    }
+
+    /**
+     * How many more posts each site may have rewritten today.
+     *
+     * Volume is part of what makes generated news "scaled content", so each
+     * site gets at most `news.rewrite.daily_per_site` a day; 0 = no cap. A
+     * post counts on the day its text was written (`content_updated_at`, or
+     * `updated_at` before that column's migration has run).
+     *
+     * @param  list<int>  $siteIds
+     * @return array<int, int> site id => posts still allowed today (absent = no cap)
+     */
+    private function remainingQuotaBySite(array $siteIds): array
+    {
+        $cap = (int) config('news.rewrite.daily_per_site', 10);
+
+        if ($cap <= 0 || $siteIds === []) {
+            return [];
+        }
+
+        $column = SchemaGuard::hasColumn('articles', 'content_updated_at') ? 'content_updated_at' : 'updated_at';
+
+        $used = Article::query()
+            ->ofType(Article::TYPE_NEWS)
+            ->fromASource()
+            ->whereNotNull('body')
+            ->whereIn('site_id', $siteIds)
+            ->where($column, '>=', now()->startOfDay())
+            ->selectRaw('site_id, COUNT(*) as used')
+            ->groupBy('site_id')
+            ->pluck('used', 'site_id');
+
+        return collect($siteIds)
+            ->mapWithKeys(fn (int $siteId): array => [$siteId => max(0, $cap - (int) ($used[$siteId] ?? 0))])
+            ->all();
     }
 
     /**
@@ -216,9 +275,9 @@ class NewsRewriteService
                     'slug'    => $slug,
                     // Null means drawing failed; keep the cover it already had.
                     'hero_image_path' => $newCover ?? $oldCover,
-                    // The copy is original now, so the page may be indexed. It
-                    // was set while the row still held the source's wording.
-                    'noindex' => false,
+                    // `noindex` is deliberately left ON. Original wording is not
+                    // added value: an editor unticks it once the post clears
+                    // NewsIndexGate (length + a link into this site).
                     // `active` is deliberately absent: approval stays a human act.
                 ]);
 

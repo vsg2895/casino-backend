@@ -9,11 +9,14 @@ use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\RateLimitDecision;
+use App\Services\Mail\WarmupCustomContent;
 use App\Services\Mail\WarmupMailResolver;
 use App\Services\Mail\WarmupRateLimiter;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Mail\Mailable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
@@ -55,13 +58,20 @@ use Throwable;
  * it too.
  *
  * THAT MAKES A BATCH SLOW, which changes one thing about this job's lifetime: 100
- * addresses at ten a minute need roughly ten minutes, and `send_timeout` is 240
+ * addresses at eight a minute need roughly 12.5 minutes, and `send_timeout` is 240
  * seconds. A job killed by its timeout is retried, and this job's retry re-sends
  * its WHOLE payload — so the limit would have bought deliverability at the price
  * of duplicate mail. Instead the loop watches a time budget derived from that
  * timeout and, when it is nearly spent, re-queues the addresses it has not
  * reached as another batch of the same run. Same class, same queue, same run id;
  * no new retry mechanism, and no address is attempted twice.
+ *
+ * TEMPORARY FAILURES ARE RETRIED ONCE, the way a sending provider treats a soft
+ * bounce. A 4xx SMTP reply (421 "try again later", 450/451/452 greylisting and
+ * resource limits) or a dropped connection is not the address's fault: the
+ * transport is reconnected and the same message goes again once, after its own
+ * rate-limit slot. A 5xx, or a second temporary failure, is recorded as failed
+ * as before — and a failed address stays eligible for the next run anyway.
  *
  * Runs on the LOW queue, like the fan-out that dispatched it.
  */
@@ -142,6 +152,24 @@ class SendWarmupBatchJob implements ShouldQueue
             return;
         }
 
+        // A "Custom HTML" run's subject and body, read ONCE for the whole batch
+        // from the run row. Missing content is a broken run, not something to
+        // discover once per address.
+        $custom = null;
+
+        if ($this->template === WarmupMailResolver::TYPE_CUSTOM) {
+            $custom = WarmupCustomContent::fromSend(WarmupSend::query()->find($this->warmupSendId));
+
+            if ($custom === null) {
+                Log::warning('Warmup batch skipped: the custom run has no subject or HTML', [
+                    'warmup_send_id' => $this->warmupSendId,
+                    'batch_size'     => count($this->emails),
+                ]);
+
+                return;
+            }
+        }
+
         // Resolved HERE rather than carried in the payload: an address can be
         // deleted between fan-out and delivery, and a stale id would make the
         // history INSERT violate its foreign key and lose the whole buffer. A
@@ -220,10 +248,10 @@ class SendWarmupBatchJob implements ShouldQueue
             $mailable = null;
 
             try {
-                $mailable = $resolver->build($this->template, $site, $email)
+                $mailable = $resolver->build($this->template, $site, $email, $custom)
                     ->usingFromAddress($fromAddress);
 
-                $mailer->to($email)->send($mailable);
+                $this->deliver($mailer, $mailable, $email, $limiter);
                 $sent++;
 
                 // Debug, not info: at the configured rate this is one line every
@@ -304,6 +332,81 @@ class SendWarmupBatchJob implements ShouldQueue
         }
 
         $this->logRunCompletion();
+    }
+
+    /**
+     * Send one message, retrying ONCE when the failure is temporary.
+     *
+     * The retry reconnects the transport first (a 421 usually closes the session,
+     * and a dead socket fails every later send too) and takes a fresh slot from
+     * the limiter, so the rate holds for retries as it does for first attempts.
+     * A run stopped during that wait does not retry: the original failure is
+     * rethrown and recorded. Anything else is rethrown for the caller to record
+     * as failed.
+     */
+    private function deliver(Mailer $mailer, Mailable $mailable, string $email, WarmupRateLimiter $limiter): void
+    {
+        try {
+            $mailer->to($email)->send($mailable);
+
+            return;
+        } catch (Throwable $e) {
+            if (! self::isTemporaryFailure($e)) {
+                throw $e;
+            }
+
+            Log::info('[Warmup] Temporary SMTP failure; retrying once.', [
+                'warmup_send_id' => $this->warmupSendId,
+                'error'          => mb_substr($e->getMessage(), 0, 300),
+            ]);
+
+            $temporary = $e;
+        }
+
+        $this->resetTransport($mailer);
+        $limiter->acquire();
+
+        if (WarmupSend::isCancelled($this->warmupSendId)) {
+            throw $temporary;
+        }
+
+        $mailer->to($email)->send($mailable);
+    }
+
+    /**
+     * Whether a send failure is worth one retry: a 4xx SMTP reply or a
+     * connection-level error. 5xx replies are permanent and never retried.
+     */
+    public static function isTemporaryFailure(Throwable $e): bool
+    {
+        $message = $e->getMessage();
+        $code = $e->getCode();
+
+        if (is_int($code) && $code >= 400 && $code < 500) {
+            return true;
+        }
+
+        if (preg_match('/\b4[0-9]{2}[ -]|code "4[0-9]{2}"/', $message) === 1 && preg_match('/\b5[0-9]{2}[ -]|code "5[0-9]{2}"/', $message) !== 1) {
+            return true;
+        }
+
+        return preg_match('/connection (could not be established|reset|refused|timed out)|timed out|broken pipe|unable to (connect|write)/i', $message) === 1;
+    }
+
+    /** Drop the SMTP session so the retry opens a fresh one. Best effort. */
+    private function resetTransport(Mailer $mailer): void
+    {
+        try {
+            if (method_exists($mailer, 'getSymfonyTransport')) {
+                $transport = $mailer->getSymfonyTransport();
+
+                if (method_exists($transport, 'stop')) {
+                    $transport->stop();
+                }
+            }
+        } catch (Throwable) {
+            // A transport that cannot be stopped is already disconnected.
+        }
     }
 
     /**

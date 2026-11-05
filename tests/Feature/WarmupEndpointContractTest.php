@@ -197,6 +197,8 @@ class WarmupEndpointContractTest extends TestCase
 
     public function test_recipients_summary(): void
     {
+        // The production pace (phpunit.xml switches the spacing off for speed).
+        config()->set('warmup.rate_limit.min_interval_seconds', null);
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey(['slug' => config('warmup.site_slug'), 'name' => 'Warm Brand']);
         $this->addAddress('a@example.com');
@@ -216,6 +218,9 @@ class WarmupEndpointContractTest extends TestCase
                 'site_id' => $site->id,
                 'site_name' => 'Warm Brand',
                 'site_slug' => config('warmup.site_slug'),
+                'rate_per_window' => 8,
+                'rate_window_seconds' => 60,
+                'min_interval_seconds' => 7.5,
             ]]);
     }
 

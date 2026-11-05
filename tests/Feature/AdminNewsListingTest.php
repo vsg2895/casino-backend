@@ -40,6 +40,7 @@ class AdminNewsListingTest extends TestCase
             'type'         => Article::TYPE_NEWS,
             'title'        => $title,
             'slug'         => str($title)->slug()->value(),
+            'body'         => '<p>A written body.</p>',
             'active'       => true,
             'published_at' => Carbon::parse($publishedAt),
         ]);
@@ -124,6 +125,7 @@ class AdminNewsListingTest extends TestCase
             'type'         => Article::TYPE_GUIDE,
             'title'        => 'A guide',
             'slug'         => 'a-guide',
+            'body'         => '<p>A written body.</p>',
             'active'       => true,
             'featured'     => true,
             'published_at' => Carbon::parse('2026-09-20 10:00:00'),
@@ -238,6 +240,7 @@ class AdminNewsListingTest extends TestCase
         $this->putJson("/api/v1/admin/sites/{$site->id}/articles/{$middle->id}?type=news", [
             'title'        => 'Midday, revised',
             'published_at' => $middle->published_at->toIso8601String(),
+            'body'         => '<p>A written body.</p>',
             'active'       => true,
         ])->assertOk();
 
@@ -269,6 +272,7 @@ class AdminNewsListingTest extends TestCase
             'title'        => 'Midday',
             // What the old form sent: the day, with the time thrown away.
             'published_at' => '2026-09-28',
+            'body'         => '<p>A written body.</p>',
             'active'       => true,
         ])->assertOk();
 

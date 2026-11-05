@@ -32,6 +32,9 @@ class CountryResource extends JsonResource
             'position'      => (int) $this->position,
             'active'        => (bool) $this->active,
             'casinos_count' => $this->when(isset($this->casinos_count), fn () => (int) $this->casinos_count),
+            // Public responses only: this site keeps the country's page out of
+            // search engines (admin → Sites → "Countries hidden from search").
+            'noindex'       => $this->when(isset($this->noindex), fn () => (bool) $this->noindex),
             // ISO-8601 STRINGS, not Carbon instances: these responses are cached
             // through SiteCache, and a serialized Carbon comes back as
             // __PHP_Incomplete_Class. Same wire format either way.

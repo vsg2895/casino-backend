@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Support\SchemaGuard;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -38,6 +40,14 @@ class Article extends Model
 
     /** @var list<string> */
     public const array TYPES = [self::TYPE_GUIDE, self::TYPE_NEWS];
+
+    /**
+     * The columns a reader sees. Only a change to one of these moves
+     * `content_updated_at` — see stampContentUpdate().
+     *
+     * @var list<string>
+     */
+    public const array CONTENT_FIELDS = ['title', 'excerpt', 'body', 'hero_image_path'];
 
     protected $fillable = [
         'site_id',
@@ -78,6 +88,7 @@ class Article extends Model
             'most_popular_at'    => 'datetime',
             'read_minutes' => 'integer',
             'last_reviewed_at' => 'datetime',
+            'content_updated_at' => 'datetime',
         ];
     }
 
@@ -104,6 +115,7 @@ class Article extends Model
         static::saving(function (self $article): void {
             $article->stampPublishDateOnGoingLive();
             $article->stampMostPopularPick();
+            $article->stampContentUpdate();
         });
 
         // Deleting an article deletes its cover file — see deleteCoverFile().
@@ -209,6 +221,46 @@ class Article extends Model
     }
 
     /**
+     * `content_updated_at` follows the text, not the row.
+     *
+     * Set on creation and whenever a CONTENT_FIELDS column changes. The admin
+     * toggles (featured, most popular, shown) re-send every field unchanged,
+     * so they are not dirty and leave it alone. NOT in $fillable: it is
+     * derived, never supplied. Skipped until its migration has run.
+     */
+    protected function stampContentUpdate(): void
+    {
+        if (! SchemaGuard::hasColumn('articles', 'content_updated_at')) {
+            return;
+        }
+
+        if (! $this->exists || $this->isDirty(self::CONTENT_FIELDS)) {
+            $this->content_updated_at = now();
+        }
+    }
+
+    /**
+     * The public "last modified" date: `dateModified` and sitemap `lastmod`.
+     *
+     * The later of the text's last change and the publish date. A news post is
+     * written before it is approved, and approval restamps `published_at`, so
+     * the text alone would read as older than the publication. Falls back to
+     * `updated_at` until the column's migration has run (and on rows selected
+     * without it).
+     */
+    public function contentModifiedAt(): ?Carbon
+    {
+        $content = $this->content_updated_at ?? $this->updated_at;
+        $published = $this->published_at;
+
+        if ($content === null || ($published !== null && $published->greaterThan($content))) {
+            return $published;
+        }
+
+        return $content;
+    }
+
+    /**
      * Minutes to read, at 200 words per minute.
      *
      * Null for an empty body — the card then shows nothing rather than "0 min
@@ -283,14 +335,25 @@ class Article extends Model
     /**
      * What the public may actually see.
      *
-     * TWO conditions, and both have to be here rather than in each controller:
-     * the date decides whether it has been published yet, `active` decides
-     * whether it is currently shown. A public query that applies one and forgets
-     * the other is how a hidden post reappears on one surface and not another.
+     * THREE conditions, and all of them have to be here rather than in each
+     * controller: the date decides whether it has been published yet, `active`
+     * decides whether it is currently shown, and a body decides whether there is
+     * an article at all. A public query that applies one and forgets another is
+     * how a hidden post reappears on one surface and not another.
+     *
+     * The body is what keeps a scraped item private until it is rewritten. A
+     * feed item is stored with `body = null` and the SOURCE's headline and
+     * teaser as its title and excerpt (NewsScrapeService); approving it before
+     * news:rewrite ran used to publish that wording at a live URL — noindex,
+     * but readable and linkable. Now it is a 404, out of every listing and out
+     * of the sitemap, until there is a body of this site's own.
      */
     public function scopeVisible(Builder $query): Builder
     {
-        return $query->published()->where('active', true);
+        return $query->published()
+            ->where('active', true)
+            ->whereNotNull('body')
+            ->where('body', '!=', '');
     }
 
     /** Ingested from a feed rather than written in the admin. */

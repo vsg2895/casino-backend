@@ -10,6 +10,9 @@ use App\Models\WarmupEmail;
 use App\Models\WarmupSend;
 use App\Models\WarmupSendRecipient;
 use App\Services\Mail\EmailTemplateCatalog;
+use App\Services\Mail\WarmupCustomContent;
+use App\Services\Mail\WarmupMailResolver;
+use App\Services\Mail\WarmupRateLimiter;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -48,6 +51,7 @@ final class WarmupRunService
     public function __construct(
         private readonly WarmupRecipientService $recipients,
         private readonly EmailTemplateCatalog $templates,
+        private readonly WarmupRateLimiter $limiter,
     ) {}
 
     /**
@@ -64,8 +68,16 @@ final class WarmupRunService
      * app servers. The lock is released by the fan-out job, and expires on its own
      * if a worker dies.
      */
-    public function start(string $template, ?int $limit, ?int $cooldown, ?int $userId): QueuedRunOutcome
+    public function start(string $template, ?int $limit, ?int $cooldown, ?int $userId, ?WarmupCustomContent $custom = null): QueuedRunOutcome
     {
+        // A custom run carries its own message; without it there is nothing to send.
+        if ($template === WarmupMailResolver::TYPE_CUSTOM && $custom === null) {
+            return QueuedRunOutcome::refused(
+                QueuedRunRefusal::Unsendable,
+                'A custom warmup email needs a subject and HTML.',
+            );
+        }
+
         if ($this->recipients->available() === 0) {
             return QueuedRunOutcome::refused(
                 QueuedRunRefusal::Unsendable,
@@ -118,6 +130,9 @@ final class WarmupRunService
                 'site_id' => $site->id,
                 'user_id' => $userId,
                 'template' => $template,
+                // Stored once on the run; every batch reads it from here.
+                'custom_subject' => $custom?->subject,
+                'custom_html' => $custom?->html,
                 'requested_count' => $limit,
                 'cooldown_days' => $cooldown,
             ]);
@@ -152,7 +167,7 @@ final class WarmupRunService
 
         $message = sprintf(
             'Warmup queued: %s template for %s to %s.',
-            $this->templates->label($template),
+            WarmupMailResolver::label($template, $this->templates),
             $site->name,
             $limit === null
                 ? "all {$recipientCount} address(es)"
@@ -264,6 +279,11 @@ final class WarmupRunService
             'site_id' => $this->site()?->id,
             'site_name' => $this->site()?->name,
             'site_slug' => (string) config('warmup.site_slug', ''),
+            // The pace the run will actually go at, from the limiter itself, so
+            // the dialog can say how long the run takes.
+            'rate_per_window' => $this->limiter->max(),
+            'rate_window_seconds' => $this->limiter->windowSeconds(),
+            'min_interval_seconds' => $this->limiter->minIntervalSeconds(),
         ];
     }
 
@@ -409,7 +429,7 @@ final class WarmupRunService
             'attempted_count' => $attempted,
             'cooldown_days' => $send->cooldown_days,
             'template' => $send->template,
-            'template_label' => $this->templates->label($send->template),
+            'template_label' => WarmupMailResolver::label($send->template, $this->templates),
             'site_name' => $send->site?->name,
             // Who pressed Send. Null for a run whose admin account has since
             // been deleted — the audit outlives the account.

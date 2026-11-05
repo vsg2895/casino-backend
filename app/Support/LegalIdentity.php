@@ -49,6 +49,24 @@ final class LegalIdentity
         'contact_email',
         'support_email',
         'privacy_email',
+        'analytics_provider',
+    ];
+
+    /**
+     * Switches a page can depend on, each read from the site's feature flags —
+     * never edited as text. Their value is "1" while the feature is on and ""
+     * while it is off, so `data-requires="feature_reviews"` keeps a line about
+     * review data only on a site that takes reviews.
+     *
+     * They exist because the legal pages are ONE template for every site: the
+     * Privacy Policy cannot list forum-account data as collected on a site that
+     * has no accounts, nor leave it out on the one that does.
+     *
+     * @var array<string, string>  token => a boolean column, or a Site method
+     */
+    private const array FEATURES = [
+        'feature_reviews'  => 'reviews_enabled',
+        'feature_accounts' => 'allowsAccounts',
     ];
 
     /**
@@ -84,6 +102,25 @@ final class LegalIdentity
             if ($values[$token] === '') {
                 $values[$token] = $values['contact_email'];
             }
+        }
+
+        return $values;
+    }
+
+    /**
+     * What a page body is rendered with: the identity values plus the feature
+     * switches ({@see FEATURES}). Kept apart from valuesFor(), which also feeds
+     * the public footer and JSON-LD, where feature flags have no business.
+     *
+     * @return array<string, string>
+     */
+    public static function pageValuesFor(Site $site): array
+    {
+        $values = self::valuesFor($site);
+
+        foreach (self::FEATURES as $token => $source) {
+            $on = method_exists($site, $source) ? $site->{$source}() : $site->getAttribute($source);
+            $values[$token] = $on ? '1' : '';
         }
 
         return $values;

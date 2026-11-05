@@ -287,7 +287,7 @@ class TrustSignalsTest extends TestCase
         $other = Site::factory()->create();
         $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH. Owned by Acme LTD. Laws of [governing-law jurisdiction].</p>']);
         $untouched = CmsPage::factory()->create(['site_id' => $other->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH.</p>']);
-        $args = ['site' => 'acme', '--entity' => 'Acme LTD', '--contact-email' => 'info@acme.test', '--entity-was' => ['SW1Y 4PH']];
+        $args = ['site' => 'acme', '--entity' => 'Acme LTD', '--contact-email' => 'info@acme.test', '--entity-was' => ['SW1Y 4PH'], '--rewrite-pages' => true];
 
         $this->artisan('sites:set-legal-identity', [...$args, '--dry-run' => true])->assertSuccessful();
         $this->assertStringContainsString('SW1Y 4PH', $page->fresh()->content);
@@ -306,9 +306,32 @@ class TrustSignalsTest extends TestCase
         $site = Site::factory()->create(['slug' => 'acme', 'domain' => 'acme.test']);
         $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'privacy-policy', 'content' => '<p>Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a> or our Data Protection contact at <a href="mailto:dpo@acme.test">dpo@acme.test</a>. Terms: <a href="mailto:legal@acme.test">legal@acme.test</a>.</p>']);
 
-        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--contact-email' => 'info@acme.test'])->assertSuccessful();
+        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--contact-email' => 'info@acme.test', '--rewrite-pages' => true])->assertSuccessful();
 
         $this->assertSame('<p>Contact <a href="mailto:{{privacy_email}}">{{privacy_email}}</a>. Terms: <a href="mailto:{{contact_email}}">{{contact_email}}</a>.</p>', $page->fresh()->content);
+    }
+
+    public function test_set_legal_identity_sets_the_analytics_provider(): void
+    {
+        $site = Site::factory()->create(['slug' => 'acme']);
+
+        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--analytics' => 'Google Analytics'])->assertSuccessful();
+
+        $this->assertSame('Google Analytics', $site->fresh()->analytics_provider);
+    }
+
+    public function test_set_legal_identity_leaves_page_text_alone_without_the_rewrite_flag(): void
+    {
+        $site = Site::factory()->create(['slug' => 'acme', 'domain' => 'acme.test']);
+        $page = CmsPage::factory()->create(['site_id' => $site->id, 'slug' => 'terms', 'content' => '<p>Operated by SW1Y 4PH. Write to <a href="mailto:legal@acme.test">legal@acme.test</a>. Laws of [governing-law jurisdiction].</p>']);
+        $before = $page->content;
+
+        $this->artisan('sites:set-legal-identity', ['site' => 'acme', '--entity' => 'Acme LTD', '--entity-was' => ['SW1Y 4PH'], '--analytics' => 'Google Analytics'])
+            ->expectsOutputToContain('not touched')
+            ->assertSuccessful();
+
+        $this->assertSame($before, $page->fresh()->content);
+        $this->assertSame('Acme LTD', $site->fresh()->legal_entity_name);
     }
 
     public function test_set_legal_identity_rejects_an_invalid_email_and_writes_nothing(): void

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Mail;
 
 use App\Mail\Contracts\SenderOverridable;
+use App\Mail\WarmupCustomMessage;
 use App\Models\Site;
 use App\Models\VerificationPromotionEmail;
 use App\Services\PostVerificationPromotionEmailService;
@@ -35,6 +36,18 @@ use InvalidArgumentException;
 final class WarmupMailResolver
 {
     /**
+     * The operator's own subject + HTML, typed in the send dialog. Not a catalog
+     * type: it has no per-site stored row, so it lives here, beside the policy
+     * list it belongs to. The content travels as {@see WarmupCustomContent}.
+     */
+    public const string TYPE_CUSTOM = 'custom';
+
+    public const string CUSTOM_LABEL = 'Custom HTML';
+
+    public const string CUSTOM_DESCRIPTION = 'Your own subject and HTML, sent as typed with a generated plain-text part. '
+        .'Preview it before sending.';
+
+    /**
      * Templates a warmup send may use.
      *
      * A POLICY list, deliberately narrower than what {@see build()} can render.
@@ -45,16 +58,15 @@ final class WarmupMailResolver
      *  - SUBSCRIBE — a welcome message to an address that never subscribed.
      *  - PROMOTION_AFTER_VERIFICATION — its whole premise is a subscriber who just
      *    confirmed their email, which a seed address never did.
-     *
-     * VERIFY carries the same objection in principle and is nevertheless included
-     * at the operator's request: its confirmation link resolves to nothing for a
-     * seed address. Prefer PROMOTION for routine warming.
+     *  - VERIFY — offered until 2026-11-05 and replaced by CUSTOM at the operator's
+     *    request: its confirmation link resolves to nothing for a seed address.
+     *    History rows written with it keep their label.
      *
      * @return list<string>
      */
     public const array ALLOWED_TEMPLATES = [
-        EmailTemplateCatalog::TYPE_VERIFY,
         EmailTemplateCatalog::TYPE_PROMOTION,
+        self::TYPE_CUSTOM,
     ];
 
     public function __construct(
@@ -67,6 +79,12 @@ final class WarmupMailResolver
     public static function supports(string $type): bool
     {
         return in_array($type, self::ALLOWED_TEMPLATES, true);
+    }
+
+    /** Human-readable name of any warmup template key, custom included. */
+    public static function label(string $type, EmailTemplateCatalog $catalog): string
+    {
+        return $type === self::TYPE_CUSTOM ? self::CUSTOM_LABEL : $catalog->label($type);
     }
 
     /**
@@ -93,9 +111,15 @@ final class WarmupMailResolver
      * produce — which is the point: warming a mailbox with mail that looks
      * nothing like your real traffic teaches the receiving side nothing useful.
      */
-    public function build(string $type, Site $site, string $email): Mailable&SenderOverridable
+    public function build(string $type, Site $site, string $email, ?WarmupCustomContent $custom = null): Mailable&SenderOverridable
     {
         return match ($type) {
+            // The run's own content, read once per batch by the caller. Without it
+            // there is nothing to send, which is a broken run rather than a reason
+            // to fall back to some other template.
+            self::TYPE_CUSTOM => $custom !== null
+                ? new WarmupCustomMessage($custom, $site->name)
+                : throw new InvalidArgumentException('A custom warmup send needs its subject and HTML.'),
             EmailTemplateCatalog::TYPE_SUBSCRIBE => $this->subscription->previewMail(
                 $site,
                 $this->template($site, $type, static fn (Site $s): Model => $s->emailTemplateOrDefault()),

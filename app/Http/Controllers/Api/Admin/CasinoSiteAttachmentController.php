@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\AttachCasinoToSiteRequest;
 use App\Http\Requests\Admin\SyncCasinoSitesRequest;
 use App\Http\Requests\Admin\UpdateCasinoBylineRequest;
+use App\Http\Requests\Admin\UpdateCasinoSiteDescriptionRequest;
 use App\Jobs\InvalidateCasinoCache;
 use App\Services\Search\SearchIndexer;
 use App\Support\SchemaGuard;
@@ -34,6 +35,7 @@ class CasinoSiteAttachmentController extends Controller
                 'featured'      => (bool) $site->pivot->featured,
                 'active'        => (bool) $site->pivot->active,
                 ...$this->bylineFields($site),
+                'description'   => $this->siteDescription($site),
             ]);
 
         return response()->json(['data' => $attachments]);
@@ -147,6 +149,7 @@ class CasinoSiteAttachmentController extends Controller
             'featured'      => (bool) $site->pivot->featured,
             'active'        => (bool) $site->pivot->active,
             ...$this->bylineFields($site),
+            'description'   => $this->siteDescription($site),
         ];
     }
 
@@ -176,6 +179,46 @@ class CasinoSiteAttachmentController extends Controller
         InvalidateCasinoCache::dispatch([$site->id]);
 
         return response()->json(['data' => $this->pivotRow($casino, $site->id)]);
+    }
+
+    /**
+     * Set this site's own review text for the casino (SEO audit H6).
+     *
+     * Its own endpoint for the same reason as the byline: sync() posts the
+     * whole attachment table, and a text carried along there would be wiped by
+     * any screen that did not send it back.
+     *
+     * Stored as null, so the site falls back to the shared description, when
+     * the text is empty or is the shared text unchanged: a copy is not a
+     * site's own text, and storing it would hide later edits of the shared one.
+     */
+    public function updateDescription(UpdateCasinoSiteDescriptionRequest $request, Casino $casino, Site $site): JsonResponse
+    {
+        abort_unless($casino->sites()->whereKey($site->id)->exists(), 404);
+
+        if (! SchemaGuard::hasColumn('casino_site', 'description')) {
+            return response()->json(['message' => 'Per-site descriptions are not available until the database migrations have been run.'], 503);
+        }
+
+        $text = trim((string) $request->validated('description'));
+
+        if (trim(html_entity_decode(strip_tags($text))) === '' || $text === trim((string) $casino->description)) {
+            $text = null;
+        }
+
+        $casino->sites()->updateExistingPivot($site->id, ['description' => $text]);
+
+        InvalidateCasinoCache::dispatch([$site->id]);
+
+        return response()->json(['data' => $this->pivotRow($casino, $site->id)]);
+    }
+
+    /** This site's own text, or null when it uses the shared description. */
+    private function siteDescription(Site $site): ?string
+    {
+        $text = $site->pivot->description ?? null;
+
+        return $text === null || $text === '' ? null : (string) $text;
     }
 
     /** @return array{author_id: ?int, reviewed_by_id: ?int, last_reviewed_at: ?string} */
