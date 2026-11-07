@@ -166,7 +166,7 @@ final readonly class PhoneAudienceFilter
      *
      * Always spans whole days — start-of-day to end-of-day — so a number added at
      * 09:00 is never excluded by a filter expressed as a date. Same rule as
-     * {@see \App\Models\EmailSchedule::dateRange()}.
+     * the sign-up windows email schedules used before they moved to count + cooldown.
      *
      * Open-ended modes ("before" / "after") return null on the side that is
      * unbounded, so callers must handle a null endpoint.

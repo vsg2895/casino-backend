@@ -6,17 +6,20 @@ namespace App\Http\Controllers\Concerns;
 
 use App\Http\Resources\MailgunReceiverResource;
 use App\Models\MailgunKey;
+use App\Models\SendgridKey;
 use App\Models\SmtpCredential;
 use App\Services\MailgunReceiverSelector;
 use App\Support\Mail\MailgunReceiverTemplate;
 use Illuminate\Http\JsonResponse;
 
 /**
- * The receiver-campaign endpoints shared by Mailgun keys and own SMTP servers.
+ * The receiver-campaign endpoints shared by Mailgun keys, own SMTP servers and
+ * SendGrid keys.
  *
- * Both channels mail the SAME receiver list through the same selector,
- * template and renderer, so their settings, preview and template-source
- * endpoints were line-for-line copies. They differ in two places only, and both
+ * The first two mail the Mailgun receiver list and SendGrid keys mail the
+ * SendGrid one, but all three go through the same selector, template and
+ * renderer — the credential names its list — so their settings, preview and
+ * template-source endpoints were line-for-line copies. They differ in two places only, and both
  * are supplied by the calling controller rather than branched on here:
  *
  *  - the job whose `blockedReason()` gates a run, passed as a callable;
@@ -28,11 +31,11 @@ use Illuminate\Http\JsonResponse;
 trait ManagesReceiverCampaign
 {
     /**
-     * @param  callable(MailgunKey|SmtpCredential): ?string  $blockedReason
+     * @param  callable(MailgunKey|SmtpCredential|SendgridKey): ?string  $blockedReason
      * @param  array<string, mixed>  $leading  Channel-only keys, rendered before the shared ones.
      */
     protected function receiverSettingsResponse(
-        MailgunKey|SmtpCredential $credential,
+        MailgunKey|SmtpCredential|SendgridKey $credential,
         MailgunReceiverSelector $selector,
         callable $blockedReason,
         array $leading = [],
@@ -74,11 +77,11 @@ trait ManagesReceiverCampaign
      * malformed or hostile — out of a bulk send.
      *
      * @param  array<string, mixed>  $validated
-     * @param  callable(MailgunKey|SmtpCredential): ?string  $blockedReason
+     * @param  callable(MailgunKey|SmtpCredential|SendgridKey): ?string  $blockedReason
      */
     protected function saveReceiverSettings(
         array $validated,
-        MailgunKey|SmtpCredential $credential,
+        MailgunKey|SmtpCredential|SendgridKey $credential,
         MailgunReceiverSelector $selector,
         callable $blockedReason,
     ): JsonResponse {
@@ -148,7 +151,7 @@ trait ManagesReceiverCampaign
      * disagree — and both channels report the same audience.
      */
     protected function receiverBatchPreviewResponse(
-        MailgunKey|SmtpCredential $credential,
+        MailgunKey|SmtpCredential|SendgridKey $credential,
         MailgunReceiverSelector $selector,
     ): JsonResponse {
         return response()->json([

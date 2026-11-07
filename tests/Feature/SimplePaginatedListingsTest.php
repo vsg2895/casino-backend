@@ -29,12 +29,13 @@ class SimplePaginatedListingsTest extends TestCase
     public static function listings(): array
     {
         return [
-            'promotion history'          => ['/api/v1/admin/promotion-history'],
+            'schedule history'           => ['/api/v1/admin/schedule-history'],
             'newsletters'                => ['/api/v1/admin/newsletters'],
             'unsubscribes'               => ['/api/v1/admin/unsubscribes'],
             'verify-email history'       => ['/api/v1/admin/verify-email-sends'],
             'after-verification history' => ['/api/v1/admin/verification-promotion/history'],
             'mailgun receivers'          => ['/api/v1/admin/mailgun-receivers'],
+            'sendgrid receivers'         => ['/api/v1/admin/sendgrid-receivers'],
             'warmup list'                => ['/api/v1/admin/warmup-emails'],
             'warmup history'             => ['/api/v1/admin/warmup-emails/history'],
             'phone numbers'              => ['/api/v1/admin/newsletter-phones'],

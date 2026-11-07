@@ -375,7 +375,7 @@ class SendgridKeyTest extends TestCase
 
         $schedule = EmailSchedule::create([
             'site_id'         => $site->id,
-            'date_filter'     => EmailSchedule::FILTER_TODAY,
+            'limit'           => 100,
             'frequency'       => EmailSchedule::FREQ_DAILY,
             'time'            => '03:00',
             'active'          => true,

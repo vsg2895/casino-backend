@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Contracts\ReceiverCampaignCredential;
 use App\Mail\MailgunReceiverMessage;
-use App\Models\MailgunReceiver;
 use App\Models\MailgunSuppression;
 use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Carbon;
@@ -18,8 +17,11 @@ use Throwable;
 /**
  * Mails ONE chunk of receivers through ONE credential, whatever the channel.
  *
- * The per-address worker both {@see \App\Jobs\SendMailgunReceiverBatchJob} and
- * {@see \App\Jobs\SendSmtpReceiverBatchJob} delegate to. Extracted rather than
+ * The per-address worker {@see \App\Jobs\SendMailgunReceiverBatchJob},
+ * {@see \App\Jobs\SendSmtpReceiverBatchJob} and
+ * {@see \App\Jobs\SendSendgridReceiverBatchJob} delegate to. The list — its
+ * receiver table, its daily-claims table and the receiver column of the
+ * history — comes from the credential's receiver model, never from this class. Extracted rather than
  * copied: the claim ordering, the counter updates and the hard-bounce rule below
  * are subtle enough that two copies would drift, and a drift here means either
  * duplicate mail or a suppression that only one channel honours.
@@ -67,7 +69,12 @@ final class ReceiverCampaignSender
         // an address may have unsubscribed or been suppressed in the seconds
         // between selection and execution, and mailing it then would be exactly
         // the race the suppression list exists to prevent.
-        $receivers = MailgunReceiver::query()
+        $model = $credential->campaignReceiverModel();
+        $receiverTable = (new $model())->getTable();
+        $receiverColumn = $model::receiverForeignKey();
+        $claimsTable = $model::dailyClaimsTable();
+
+        $receivers = $model::query()
             ->whereIn('id', $receiverIds)
             ->sendable()
             ->notSuppressed()
@@ -75,7 +82,8 @@ final class ReceiverCampaignSender
 
         $sent = 0;
         $failed = 0;
-        // Claimed by an earlier run, a parallel worker, or the OTHER channel.
+        // Claimed by an earlier run, a parallel worker, or another channel
+        // mailing the same list.
         $skipped = 0;
         $suppressed = 0;
         $startedAt = microtime(true);
@@ -94,7 +102,7 @@ final class ReceiverCampaignSender
                 // per person per day" true no matter which credentials ran, and
                 // it must happen before the per-channel history row so a loser
                 // leaves no misleading trace.
-                if (! $this->claimDay((int) $receiver->id, $today, $credential, $credentialId)) {
+                if (! $this->claimDay($claimsTable, $receiverColumn, (int) $receiver->id, $today, $credential, $credentialId)) {
                     $skipped++;
 
                     continue;
@@ -106,14 +114,14 @@ final class ReceiverCampaignSender
                 // treated the same way: skip, never send twice.
                 try {
                     $claimId = DB::table($historyTable)->insertGetId([
-                        $historyColumn        => $credentialId,
-                        'mailgun_receiver_id' => $receiver->id,
-                        'email'               => $receiver->email,
-                        'status'              => 'sent',
-                        'sent_at'             => now(),
-                        'sent_on'             => $today,
-                        'created_at'          => now(),
-                        'updated_at'          => now(),
+                        $historyColumn  => $credentialId,
+                        $receiverColumn => $receiver->id,
+                        'email'         => $receiver->email,
+                        'status'        => 'sent',
+                        'sent_at'       => now(),
+                        'sent_on'       => $today,
+                        'created_at'    => now(),
+                        'updated_at'    => now(),
                     ]);
                 } catch (Throwable) {
                     $skipped++;
@@ -129,7 +137,7 @@ final class ReceiverCampaignSender
                     // Counters advance per receiver, immediately — not once per
                     // batch. A crash mid-chunk must not leave everyone eligible
                     // again on the next run.
-                    DB::table('mailgun_receivers')
+                    DB::table($receiverTable)
                         ->where('id', $receiver->id)
                         ->update([
                             'last_sent_at' => now(),
@@ -149,7 +157,7 @@ final class ReceiverCampaignSender
                         'updated_at' => now(),
                     ]);
 
-                    DB::table('mailgun_receivers')->where('id', $receiver->id)->update([
+                    DB::table($receiverTable)->where('id', $receiver->id)->update([
                         'last_error' => mb_strimwidth($message, 0, 1000, '…'),
                         'updated_at' => now(),
                     ]);
@@ -230,26 +238,28 @@ final class ReceiverCampaignSender
     }
 
     /**
-     * Take the receiver's slot for today, across every channel.
+     * Take the receiver's slot for today, across every channel of its list.
      *
-     * The unique index on (mailgun_receiver_id, claim_on) IS the guard — a
+     * The unique index on (receiver, claim_on) IS the guard — a
      * SELECT-then-INSERT would let two workers both see "free" and both send.
      * A violation means somebody already has today, which is a skip, not an
      * error.
      */
     private function claimDay(
+        string $claimsTable,
+        string $receiverColumn,
         int $receiverId,
         string $day,
         ReceiverCampaignCredential $credential,
         int $credentialId,
     ): bool {
         try {
-            DB::table('receiver_daily_claims')->insert([
-                'mailgun_receiver_id' => $receiverId,
-                'claim_on'            => $day,
-                'channel'             => $credential->campaignChannel(),
-                'credential_id'       => $credentialId,
-                'created_at'          => now(),
+            DB::table($claimsTable)->insert([
+                $receiverColumn => $receiverId,
+                'claim_on'      => $day,
+                'channel'       => $credential->campaignChannel(),
+                'credential_id' => $credentialId,
+                'created_at'    => now(),
             ]);
 
             return true;

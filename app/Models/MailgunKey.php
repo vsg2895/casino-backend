@@ -185,6 +185,12 @@ class MailgunKey extends Model implements ReceiverCampaignCredential
     // Shared with SmtpCredential so the selector, the daily claim, the message
     // and the send loop never learn which channel they are running.
 
+    /** @return class-string<MailgunReceiver> */
+    public function campaignReceiverModel(): string
+    {
+        return MailgunReceiver::class;
+    }
+
     public function campaignBatchSize(): int
     {
         return max(1, (int) $this->batch_size);

@@ -18,24 +18,33 @@ use App\Models\Site;
  * - it links to at least one casino, bonus, offer or category page of THIS
  *   site, which is the value this site can add that the source cannot.
  *
- * Deliberately NOT applied in `news:rewrite`: the model has only the source's
- * facts, and asking it for 300 words would only make it pad.
+ * `news:rewrite` applies the same bar to what it saves: a rewrite that clears
+ * it (the model is asked for 350-500 words and offered this site's pages to
+ * link) is indexable, one that does not stays noindex for an editor.
  */
 final class NewsIndexGate
 {
     public const int MIN_WORDS = 300;
 
+    /** Longest editor's note, in characters. */
+    public const int EDITOR_NOTE_MAX = 2000;
+
     /** Site sections an internal link must point into. */
     private const string LINKED_SECTIONS = 'casinos|bonuses|categories|special-offers';
 
-    /** @return list<string> why the body cannot be indexed yet; empty when it can */
-    public static function problems(?string $body, Site $site): array
+    /**
+     * The editor's note counts toward the words (it is this site's own
+     * writing) but not toward the link, which must be in the body.
+     *
+     * @return list<string> why the body cannot be indexed yet; empty when it can
+     */
+    public static function problems(?string $body, Site $site, ?string $editorNote = null): array
     {
         $problems = [];
-        $words = self::wordCount((string) $body);
+        $words = self::wordCount((string) $body) + self::wordCount((string) $editorNote);
 
         if ($words < self::MIN_WORDS) {
-            $problems[] = sprintf('the body has %d words (at least %d)', $words, self::MIN_WORDS);
+            $problems[] = sprintf('the body and editor\'s note have %d words (at least %d)', $words, self::MIN_WORDS);
         }
 
         if (! self::hasInternalLink((string) $body, $site)) {
@@ -50,6 +59,12 @@ final class NewsIndexGate
         $text = trim(html_entity_decode(strip_tags($body)));
 
         return $text === '' ? 0 : count(preg_split('/\s+/u', $text) ?: []);
+    }
+
+    /** A site path an internal link may count with: `/casinos/<slug>` and the like. */
+    public static function isLinkablePath(string $path): bool
+    {
+        return preg_match('#^/(' . self::LINKED_SECTIONS . ')/[a-z0-9-]+/?$#i', $path) === 1;
     }
 
     /**
@@ -82,7 +97,7 @@ final class NewsIndexGate
                 continue;
             }
 
-            if (preg_match('#^/(' . self::LINKED_SECTIONS . ')/[a-z0-9-]+/?$#i', $parts['path'] ?? '') === 1) {
+            if (self::isLinkablePath($parts['path'] ?? '')) {
                 return true;
             }
         }

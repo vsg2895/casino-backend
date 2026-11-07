@@ -78,7 +78,33 @@ class PromotionEmailService
         string $token,
         ?string $fullName = null,
     ): PromotionEmail {
-        $unsubscribeUrl = $template->unsubscribeUrl($site, $token);
+        return $this->mailWithLinks(
+            $site,
+            $template,
+            $email,
+            $template->unsubscribeUrl($site, $token),
+            Unsubscribe::oneClickUrl($token),
+            $fullName,
+        );
+    }
+
+    /**
+     * Build the Mailable with explicit unsubscribe links.
+     *
+     * For a recipient who is NOT a site subscriber — a Custom Receivers address
+     * mailed by a schedule. Their opt-out belongs to their own list
+     * (`/api/v1/mailgun-unsubscribe/{token}` or the SendGrid twin), so the
+     * visible link and the RFC 8058 one-click target are that list's, not the
+     * site's newsletter unsubscribe, which would know nothing about them.
+     */
+    public function mailWithLinks(
+        Site $site,
+        SitePromotionEmail $template,
+        string $email,
+        string $unsubscribeUrl,
+        string $oneClickUrl,
+        ?string $fullName = null,
+    ): PromotionEmail {
         $context = $this->context($site, $email, $unsubscribeUrl);
 
         return new PromotionEmail(
@@ -86,7 +112,7 @@ class PromotionEmailService
             siteName: $site->name,
             siteUrl: $context['site_url'],
             unsubscribeUrl: $unsubscribeUrl,
-            oneClickUrl: Unsubscribe::oneClickUrl($token),
+            oneClickUrl: $oneClickUrl,
             greeting: EmailGreeting::line($fullName),
             // Which optional blocks this template currently shows. Hiding one is a
             // setting: the block's own text stays in the row untouched.

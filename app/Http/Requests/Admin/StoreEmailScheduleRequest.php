@@ -23,15 +23,16 @@ class StoreEmailScheduleRequest extends FormRequest
             'site_id'       => ['required', 'integer', 'exists:sites,id'],
             'name'          => ['nullable', 'string', 'max:120'],
 
-            // Audience is EITHER a sign-up date window OR the newest N subscribers.
-            'date_filter'   => ['nullable', 'required_without:limit', Rule::in(EmailSchedule::DATE_FILTERS)],
-            'specific_date' => [
-                'nullable',
-                'required_if:date_filter,' . EmailSchedule::FILTER_SPECIFIC,
-                'date_format:Y-m-d',
+            // WHICH list: the site's newsletters, a Custom Receivers list, or warmup.
+            'audience'      => ['required', Rule::in(EmailSchedule::AUDIENCES)],
+            // How many addresses one run takes, newest first.
+            'limit'         => ['required', 'integer', 'min:1', 'max:' . EmailSchedule::MAX_LIMIT],
+            // Skip anyone who received this site's promotion within N days.
+            'cooldown_days' => [
+                'required', 'integer',
+                'min:' . EmailSchedule::MIN_COOLDOWN_DAYS,
+                'max:' . EmailSchedule::MAX_COOLDOWN_DAYS,
             ],
-            // Required only when there is no date filter; caps the newest-N send.
-            'limit'         => ['nullable', 'required_without:date_filter', 'integer', 'min:1', 'max:100000'],
 
             'frequency'     => ['required', Rule::in(EmailSchedule::FREQUENCIES)],
             'time'          => ['required', 'date_format:H:i'],
@@ -78,17 +79,16 @@ class StoreEmailScheduleRequest extends FormRequest
             'sendgrid_key_id.exists'      => 'The selected SendGrid key is not available (inactive or removed).',
             'mailgun_key_id.required_if'  => 'Select a Mailgun key to send through.',
             'mailgun_key_id.exists'       => 'The selected Mailgun key is not available (inactive or removed).',
+            'limit.required'              => 'Set how many emails one run sends.',
+            'cooldown_days.required'      => 'Set how many days an address rests after receiving this email.',
         ];
     }
 
     protected function prepareForValidation(): void
     {
-        // Treat an empty-string date_filter from the UI as "no filter".
-        $dateFilter = $this->date_filter === '' ? null : $this->date_filter;
-
-        // Null out fields irrelevant to the chosen audience / cadence so stale
-        // values from the UI don't linger. date_filter and limit are mutually
-        // exclusive: keep the limit only when there is no date filter.
+        // Null out fields irrelevant to the chosen cadence so stale values from
+        // the UI don't linger. The audience defaults to newsletters for a client
+        // that predates it — the list every schedule used to mail.
         // Default the provider to SMTP for back-compat with any client that
         // doesn't send it, and drop a stale sendgrid_key_id when on SMTP.
         $provider = in_array($this->provider, EmailSchedule::PROVIDERS, true)
@@ -96,9 +96,7 @@ class StoreEmailScheduleRequest extends FormRequest
             : EmailSchedule::PROVIDER_SMTP;
 
         $this->merge([
-            'date_filter'     => $dateFilter,
-            'specific_date'   => $dateFilter === EmailSchedule::FILTER_SPECIFIC ? $this->specific_date : null,
-            'limit'           => $dateFilter === null ? $this->limit : null,
+            'audience'        => $this->audience ?? EmailSchedule::AUDIENCE_NEWSLETTERS,
             'day_of_week'     => $this->frequency === EmailSchedule::FREQ_WEEKLY ? $this->day_of_week : null,
             'day_of_month'    => $this->frequency === EmailSchedule::FREQ_MONTHLY ? $this->day_of_month : null,
             'provider'        => $provider,

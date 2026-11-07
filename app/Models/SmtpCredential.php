@@ -204,6 +204,12 @@ class SmtpCredential extends Model implements ReceiverCampaignCredential
 
     // ── ReceiverCampaignCredential ───────────────────────────────────────────
 
+    /** @return class-string<MailgunReceiver> */
+    public function campaignReceiverModel(): string
+    {
+        return MailgunReceiver::class;
+    }
+
     public function campaignBatchSize(): int
     {
         return max(1, (int) $this->batch_size);

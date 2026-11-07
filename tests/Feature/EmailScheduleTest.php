@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
+use App\Models\ScheduleSendHistory;
 use App\Models\SendgridKey;
 use App\Models\Site;
 use App\Models\Unsubscribe;
@@ -31,41 +32,15 @@ class EmailScheduleTest extends TestCase
     private function schedule(Site $site, array $attrs = []): EmailSchedule
     {
         return EmailSchedule::create([
-            'site_id'     => $site->id,
-            'date_filter' => EmailSchedule::FILTER_TODAY,
-            'frequency'   => EmailSchedule::FREQ_DAILY,
+            'site_id'       => $site->id,
+            'audience'      => EmailSchedule::AUDIENCE_NEWSLETTERS,
+            'limit'         => 100,
+            'cooldown_days' => 1,
+            'frequency'     => EmailSchedule::FREQ_DAILY,
             'time'        => '03:00',
             'active'      => true,
             ...$attrs,
         ]);
-    }
-
-    // ── dateRange() presets (whole-day windows) ───────────────────────────
-
-    public function test_date_range_covers_whole_days(): void
-    {
-        [$site] = $this->siteWithKey();
-        $now = Carbon::create(2026, 5, 15, 3, 0); // Fri 2026-05-15
-
-        $today = $this->schedule($site, ['date_filter' => 'today'])->dateRange($now);
-        $this->assertSame('2026-05-15 00:00:00', $today[0]->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-05-15 23:59:59', $today[1]->format('Y-m-d H:i:s'));
-
-        $yest = $this->schedule($site, ['date_filter' => 'yesterday'])->dateRange($now);
-        $this->assertSame('2026-05-14 00:00:00', $yest[0]->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-05-14 23:59:59', $yest[1]->format('Y-m-d H:i:s'));
-
-        $lastMonth = $this->schedule($site, ['date_filter' => 'last_month'])->dateRange($now);
-        $this->assertSame('2026-04-01 00:00:00', $lastMonth[0]->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-04-30 23:59:59', $lastMonth[1]->format('Y-m-d H:i:s'));
-
-        $lastYear = $this->schedule($site, ['date_filter' => 'last_year'])->dateRange($now);
-        $this->assertSame('2025-01-01 00:00:00', $lastYear[0]->format('Y-m-d H:i:s'));
-        $this->assertSame('2025-12-31 23:59:59', $lastYear[1]->format('Y-m-d H:i:s'));
-
-        $specific = $this->schedule($site, ['date_filter' => 'specific', 'specific_date' => '2026-03-09'])->dateRange($now);
-        $this->assertSame('2026-03-09 00:00:00', $specific[0]->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-03-09 23:59:59', $specific[1]->format('Y-m-d H:i:s'));
     }
 
     // ── isDue() cadence logic ─────────────────────────────────────────────
@@ -131,30 +106,35 @@ class EmailScheduleTest extends TestCase
 
     // ── Campaign fan-out targets the right recipients ─────────────────────
 
-    public function test_campaign_targets_only_the_window_and_skips_opt_outs(): void
+    public function test_campaign_targets_the_newest_subscribers_and_skips_opt_outs(): void
     {
         Queue::fake();
         [$site] = $this->siteWithKey();
 
-        $inWindow = Newsletter::create(['site_id' => $site->id, 'email' => 'in@example.com']);
-        $inWindow->forceFill(['created_at' => Carbon::today()->setTime(10, 0)])->save();
+        $newest = Newsletter::create(['site_id' => $site->id, 'email' => 'new@example.com']);
+        $newest->forceFill(['created_at' => Carbon::today()->setTime(10, 0)])->save();
 
         $optedOut = Newsletter::create(['site_id' => $site->id, 'email' => 'out@example.com']);
         $optedOut->forceFill(['created_at' => Carbon::today()->setTime(11, 0)])->save();
         Unsubscribe::record($site->id, 'out@example.com', Unsubscribe::TYPE_PROMOTION);
 
-        $oldContact = Newsletter::create(['site_id' => $site->id, 'email' => 'old@example.com']);
-        $oldContact->forceFill(['created_at' => Carbon::today()->subDays(10)])->save();
+        $older = Newsletter::create(['site_id' => $site->id, 'email' => 'old@example.com']);
+        $older->forceFill(['created_at' => Carbon::today()->subDays(10)])->save();
 
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $oldest = Newsletter::create(['site_id' => $site->id, 'email' => 'oldest@example.com']);
+        $oldest->forceFill(['created_at' => Carbon::today()->subDays(20)])->save();
+
+        // Two per run: the opt-out does not take a slot, so the cap reaches the
+        // next-newest address instead.
+        $schedule = $this->schedule($site, ['limit' => 2]);
 
         (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
-        // One batch job holding only the in-window, non-opted-out subscriber.
         Queue::assertPushed(SendPromotionBatchJob::class, 1);
         Queue::assertPushed(
             SendPromotionBatchJob::class,
-            fn (SendPromotionBatchJob $job): bool => $job->emails === ['in@example.com'],
+            fn (SendPromotionBatchJob $job): bool => $job->emails === ['new@example.com', 'old@example.com']
+                && $job->scheduleId === $schedule->id,
         );
     }
 
@@ -308,10 +288,10 @@ class EmailScheduleTest extends TestCase
         [$site] = $this->siteWithKey();
 
         $this->subscribers($site, 7);
-        $this->subscribers($site, 3, Carbon::today()->subDays(5), 'old');   // outside the window
+        $this->subscribers($site, 3, Carbon::today()->subDays(5), 'old');   // older sign-ups count too
         Unsubscribe::record($site->id, 'sub0@example.com', Unsubscribe::TYPE_PROMOTION); // opted out
 
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
 
         // What the admin previews…
         $previewed = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
@@ -323,7 +303,7 @@ class EmailScheduleTest extends TestCase
         $dispatched = collect(Queue::pushed(SendPromotionBatchJob::class))
             ->sum(fn (SendPromotionBatchJob $j): int => count($j->emails));
 
-        $this->assertSame(6, $previewed); // 7 in window − 1 opt-out
+        $this->assertSame(9, $previewed); // 10 subscribers − 1 opt-out
         $this->assertSame($previewed, $dispatched);
     }
 
@@ -333,10 +313,7 @@ class EmailScheduleTest extends TestCase
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 10);
 
-        $schedule = EmailSchedule::create([
-            'site_id' => $site->id, 'date_filter' => null, 'limit' => 4,
-            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
-        ]);
+        $schedule = $this->schedule($site, ['limit' => 4]);
 
         // The cap must be applied — not the full audience size.
         $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
@@ -374,7 +351,7 @@ class EmailScheduleTest extends TestCase
         $this->subscribers($site, 2, Carbon::today()->subDays(9), 'old');
         Unsubscribe::record($site->id, 'sub1@example.com', Unsubscribe::TYPE_PROMOTION);
 
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
 
         $csv = $this->get("/api/v1/admin/schedules/{$schedule->id}/recipients/export")
             ->assertOk()
@@ -386,11 +363,11 @@ class EmailScheduleTest extends TestCase
 
         // Only the two requested columns.
         $this->assertSame(['email', 'created_at'], $header);
-        // One line per recipient — opt-out and out-of-window rows absent.
-        $this->assertCount(3 + 1, $rows);
+        // One line per recipient — only the opt-out is absent.
+        $this->assertCount(5 + 1, $rows);
         $this->assertStringContainsString('sub0@example.com', $csv);
+        $this->assertStringContainsString('old0@example.com', $csv);
         $this->assertStringNotContainsString('sub1@example.com', $csv); // opted out
-        $this->assertStringNotContainsString('old0@example.com', $csv); // outside window
     }
 
     public function test_export_row_count_equals_the_preview_count(): void
@@ -398,10 +375,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 12);
-        $schedule = EmailSchedule::create([
-            'site_id' => $site->id, 'date_filter' => null, 'limit' => 5,
-            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
-        ]);
+        $schedule = $this->schedule($site, ['limit' => 5]);
 
         $count = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->json('data.count');
         $csv = $this->get("/api/v1/admin/schedules/{$schedule->id}/recipients/export")->streamedContent();
@@ -418,7 +392,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 10);
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
 
         $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
             ->assertOk()->assertJsonPath('data.count', 10);
@@ -440,7 +414,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 5);
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
         $service = app(ScheduleRecipientService::class);
 
         // First run delivers to all five.
@@ -457,27 +431,46 @@ class EmailScheduleTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_newest_n_does_not_reach_deeper_after_a_send(): void
+    public function test_the_next_run_walks_past_addresses_inside_the_cooldown(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
-        // 10 subscribers, schedule targets the newest 4.
-        $this->subscribers($site, 10);
-        $schedule = EmailSchedule::create([
-            'site_id' => $site->id, 'date_filter' => null, 'limit' => 4,
-            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
-        ]);
+        // Ten subscribers, four per run, a two-day rest.
+        for ($i = 0; $i < 10; $i++) {
+            $this->subscribers($site, 1, Carbon::today()->subMinutes(10 - $i), "s{$i}-");
+        }
+        $schedule = $this->schedule($site, ['limit' => 4, 'cooldown_days' => 2]);
+        $service = app(ScheduleRecipientService::class);
 
-        $newest = app(ScheduleRecipientService::class)->sample($schedule, 4)->pluck('email')->all();
-        $this->assertCount(4, $newest);
+        $first = $service->sample($schedule, 4)->pluck('email')->all();
+        $this->assertSame(['s9-0@example.com', 's8-0@example.com', 's7-0@example.com', 's6-0@example.com'], $first);
 
-        // Those four have now been mailed.
-        PromotionEmailHistory::recordMany($site->id, $newest);
+        // Those four were mailed yesterday: still resting on a two-day cooldown,
+        // and outside the 24h promotion dedup — so only the cooldown keeps them out.
+        Carbon::setTestNow(now()->subDay());
+        ScheduleSendHistory::record(array_map(fn (string $email): array => $this->historyRow($site, $schedule, $email), $first));
+        Carbon::setTestNow();
 
-        // The cap must NOT slide down to the next four — the audience is still
-        // "the newest 4", and all of them are done.
-        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")
-            ->assertOk()->assertJsonPath('data.count', 0);
+        // The run walks on to the next four instead of re-offering the head.
+        $this->assertSame(
+            ['s5-0@example.com', 's4-0@example.com', 's3-0@example.com', 's2-0@example.com'],
+            $service->sample($schedule, 4)->pluck('email')->all(),
+        );
+
+        // A one-day cooldown has already released them.
+        $schedule->update(['cooldown_days' => 1]);
+        $this->assertSame($first, $service->sample($schedule->fresh(), 4)->pluck('email')->all());
+    }
+
+    /** @return array<string, mixed> */
+    private function historyRow(Site $site, EmailSchedule $schedule, string $email, string $status = ScheduleSendHistory::STATUS_SENT): array
+    {
+        return [
+            'email_schedule_id' => $schedule->id, 'schedule_name' => null, 'site_id' => $site->id,
+            'audience' => EmailSchedule::AUDIENCE_NEWSLETTERS, 'recipient_id' => null, 'email' => $email,
+            'template' => EmailSchedule::TEMPLATE_PROMOTION, 'provider' => 'smtp', 'credential_id' => null,
+            'credential_label' => 'SMTP (.env)', 'from_address' => null, 'status' => $status, 'error' => null,
+        ];
     }
 
     public function test_failed_and_skipped_attempts_do_not_reduce_the_count(): void
@@ -485,7 +478,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 3);
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
 
         // Only successful deliveries suppress a re-send.
         PromotionEmailHistory::recordAttempts($site->id, [
@@ -502,7 +495,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 2);
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
 
         // Delivered 25 hours ago — outside the window, so eligible again.
         $old = now()->subHours(25);
@@ -524,7 +517,7 @@ class EmailScheduleTest extends TestCase
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
         $this->subscribers($site, 6);
-        $schedule = $this->schedule($site, ['date_filter' => 'today']);
+        $schedule = $this->schedule($site);
         PromotionEmailHistory::recordMany($site->id, ['sub0@example.com', 'sub1@example.com']);
 
         $count = $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->json('data.count');
@@ -561,13 +554,20 @@ class EmailScheduleTest extends TestCase
         $this->postJson('/api/v1/admin/schedules', [
             'site_id' => $site->id,
             'name' => 'Daily blast',
-            'date_filter' => 'yesterday',
+            'audience' => 'mailgun_receivers',
+            'limit' => 500,
+            'cooldown_days' => 2,
             'frequency' => 'daily',
             'time' => '03:00',
             'active' => true,
-        ])->assertCreated()->assertJsonPath('data.frequency', 'daily');
+        ])->assertCreated()
+            ->assertJsonPath('data.frequency', 'daily')
+            ->assertJsonPath('data.audience', 'mailgun_receivers')
+            ->assertJsonPath('data.limit', 500)
+            ->assertJsonPath('data.cooldown_days', 2)
+            ->assertJsonPath('data.blocked_reason', null);
 
-        $this->assertDatabaseHas('email_schedules', ['site_id' => $site->id, 'name' => 'Daily blast']);
+        $this->assertDatabaseHas('email_schedules', ['site_id' => $site->id, 'name' => 'Daily blast', 'audience' => 'mailgun_receivers']);
     }
 
     public function test_weekly_requires_a_day_of_week(): void
@@ -577,23 +577,48 @@ class EmailScheduleTest extends TestCase
 
         $this->postJson('/api/v1/admin/schedules', [
             'site_id' => $site->id,
-            'date_filter' => 'today',
+            'limit' => 10,
+            'cooldown_days' => 1,
             'frequency' => 'weekly',
             'time' => '03:00',
         ])->assertStatus(422)->assertJsonValidationErrorFor('day_of_week');
     }
 
-    public function test_specific_filter_requires_a_date(): void
+    public function test_count_cooldown_and_a_known_audience_are_required(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
         $this->postJson('/api/v1/admin/schedules', [
             'site_id' => $site->id,
-            'date_filter' => 'specific',
+            'audience' => 'everyone',
             'frequency' => 'daily',
             'time' => '03:00',
-        ])->assertStatus(422)->assertJsonValidationErrorFor('specific_date');
+        ])->assertStatus(422)->assertJsonValidationErrors(['audience', 'limit', 'cooldown_days']);
+
+        $this->postJson('/api/v1/admin/schedules', [
+            'site_id' => $site->id,
+            'limit' => 10,
+            'cooldown_days' => 0,
+            'frequency' => 'daily',
+            'time' => '03:00',
+        ])->assertStatus(422)->assertJsonValidationErrorFor('cooldown_days');
+    }
+
+    public function test_a_legacy_schedule_without_a_count_sends_nothing(): void
+    {
+        Queue::fake();
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $this->subscribers($site, 3);
+        // Saved before counts existed: a sign-up-date schedule with no limit.
+        $schedule = $this->schedule($site, ['limit' => null]);
+
+        $this->getJson("/api/v1/admin/schedules/{$schedule->id}/recipients")->assertJsonPath('data.count', 0);
+        $this->postJson("/api/v1/admin/schedules/{$schedule->id}/run")->assertStatus(422)->assertJsonPath('ok', false);
+
+        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
+        Queue::assertNothingPushed();
     }
 
     public function test_run_now_queues_the_campaign(): void
@@ -615,41 +640,7 @@ class EmailScheduleTest extends TestCase
         $this->getJson('/api/v1/admin/schedules')->assertUnauthorized();
     }
 
-    // ── Limit audience (no date filter → newest N by created_at desc) ──────
-
-    public function test_campaign_uses_limit_to_target_the_newest_subscribers(): void
-    {
-        Queue::fake();
-        [$site] = $this->siteWithKey();
-
-        $make = function (string $email, \Illuminate\Support\Carbon $when) use ($site): void {
-            $n = Newsletter::create(['site_id' => $site->id, 'email' => $email]);
-            $n->forceFill(['created_at' => $when])->save();
-        };
-        $make('newest@example.com', now());
-        $make('middle@example.com', now()->subDay());
-        $make('oldest@example.com', now()->subDays(2));
-
-        $schedule = EmailSchedule::create([
-            'site_id' => $site->id,
-            'date_filter' => null,
-            'limit' => 2,
-            'frequency' => 'daily',
-            'time' => '03:00',
-            'active' => true,
-        ]);
-
-        (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
-
-        // One batch job with the two most-recent sign-ups, oldest excluded.
-        Queue::assertPushed(SendPromotionBatchJob::class, 1);
-        Queue::assertPushed(SendPromotionBatchJob::class, function (SendPromotionBatchJob $job): bool {
-            return count($job->emails) === 2
-                && in_array('newest@example.com', $job->emails, true)
-                && in_array('middle@example.com', $job->emails, true)
-                && ! in_array('oldest@example.com', $job->emails, true);
-        });
-    }
+    // ── Count audience: newest N by created_at desc ─────────────────────────
 
     public function test_limit_case_still_excludes_promotion_opt_outs(): void
     {
@@ -659,43 +650,12 @@ class EmailScheduleTest extends TestCase
         Newsletter::create(['site_id' => $site->id, 'email' => 'out@example.com']);
         Unsubscribe::record($site->id, 'out@example.com', Unsubscribe::TYPE_PROMOTION);
 
-        $schedule = EmailSchedule::create([
-            'site_id' => $site->id, 'date_filter' => null, 'limit' => 10,
-            'frequency' => 'daily', 'time' => '03:00', 'active' => true,
-        ]);
+        $schedule = $this->schedule($site, ['limit' => 10]);
 
         (new SendScheduledPromotionJob($schedule->id))->handle(app(ScheduleRecipientService::class));
 
         Queue::assertPushed(SendPromotionBatchJob::class, 1);
         Queue::assertPushed(SendPromotionBatchJob::class, fn (SendPromotionBatchJob $j): bool => $j->emails === ['ok@example.com']);
-    }
-
-    public function test_admin_can_create_a_limit_schedule(): void
-    {
-        $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
-
-        $this->postJson('/api/v1/admin/schedules', [
-            'site_id' => $site->id,
-            'date_filter' => null,
-            'limit' => 250,
-            'frequency' => 'daily',
-            'time' => '03:00',
-        ])->assertCreated()
-            ->assertJsonPath('data.limit', 250)
-            ->assertJsonPath('data.date_filter', null);
-    }
-
-    public function test_limit_is_required_when_no_date_filter(): void
-    {
-        $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
-
-        $this->postJson('/api/v1/admin/schedules', [
-            'site_id' => $site->id,
-            'frequency' => 'daily',
-            'time' => '03:00',
-        ])->assertStatus(422)->assertJsonValidationErrorFor('limit');
     }
 
     // ── Email provider (SMTP via .env / SendGrid via stored key) ──────────
@@ -718,9 +678,10 @@ class EmailScheduleTest extends TestCase
         // A client that predates the provider field sends nothing — the
         // schedule must behave exactly as before (SMTP).
         $this->postJson('/api/v1/admin/schedules', [
-            'site_id'     => $site->id,
-            'date_filter' => 'today',
-            'frequency'   => 'daily',
+            'site_id'       => $site->id,
+            'limit'         => 10,
+            'cooldown_days' => 1,
+            'frequency'     => 'daily',
             'time'        => '03:00',
         ])->assertCreated()
             ->assertJsonPath('data.provider', 'smtp')
@@ -733,9 +694,10 @@ class EmailScheduleTest extends TestCase
         [$site] = $this->siteWithKey();
 
         $this->postJson('/api/v1/admin/schedules', [
-            'site_id'     => $site->id,
-            'date_filter' => 'today',
-            'frequency'   => 'daily',
+            'site_id'       => $site->id,
+            'limit'         => 10,
+            'cooldown_days' => 1,
+            'frequency'     => 'daily',
             'time'        => '03:00',
             'provider'    => 'sendgrid',
         ])->assertStatus(422)->assertJsonValidationErrorFor('sendgrid_key_id');
@@ -749,7 +711,8 @@ class EmailScheduleTest extends TestCase
 
         $this->postJson('/api/v1/admin/schedules', [
             'site_id'         => $site->id,
-            'date_filter'     => 'today',
+            'limit'           => 10,
+            'cooldown_days'   => 1,
             'frequency'       => 'daily',
             'time'            => '03:00',
             'provider'        => 'sendgrid',
@@ -765,7 +728,8 @@ class EmailScheduleTest extends TestCase
 
         $this->postJson('/api/v1/admin/schedules', [
             'site_id'         => $site->id,
-            'date_filter'     => 'today',
+            'limit'           => 10,
+            'cooldown_days'   => 1,
             'frequency'       => 'daily',
             'time'            => '03:00',
             'provider'        => 'sendgrid',
@@ -784,7 +748,8 @@ class EmailScheduleTest extends TestCase
         // Switching back to SMTP with a leftover key id must not persist it.
         $this->postJson('/api/v1/admin/schedules', [
             'site_id'         => $site->id,
-            'date_filter'     => 'today',
+            'limit'           => 10,
+            'cooldown_days'   => 1,
             'frequency'       => 'daily',
             'time'            => '03:00',
             'provider'        => 'smtp',
@@ -863,22 +828,5 @@ class EmailScheduleTest extends TestCase
 
         Mail::assertNothingSent();
         $this->assertDatabaseCount('promotion_email_histories', 0);
-    }
-
-    public function test_limit_is_dropped_when_a_date_filter_is_set(): void
-    {
-        $this->actingAsAdmin();
-        [$site] = $this->siteWithKey();
-
-        // Supplying both: the date filter wins, the limit is nulled.
-        $this->postJson('/api/v1/admin/schedules', [
-            'site_id' => $site->id,
-            'date_filter' => 'today',
-            'limit' => 99,
-            'frequency' => 'daily',
-            'time' => '03:00',
-        ])->assertCreated()
-            ->assertJsonPath('data.date_filter', 'today')
-            ->assertJsonPath('data.limit', null);
     }
 }

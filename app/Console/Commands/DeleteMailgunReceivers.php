@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\CampaignReceiver;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunSuppression;
 use Carbon\Exceptions\InvalidFormatException;
@@ -14,9 +15,10 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 /**
- * PERMANENTLY removes addresses from the Mailgun receiver list — a real
- * `DELETE FROM mailgun_receivers`, not the soft delete the admin's own Delete
- * button performs.
+ * PERMANENTLY removes addresses from a Custom Receivers list — a real
+ * `DELETE FROM mailgun_receivers` (or, with `--list=sendgrid`, from
+ * `sendgrid_receivers`), not the soft delete the admin's own Delete button
+ * performs.
  *
  *   php artisan mailgun:delete-receivers                        → the whole list
  *   php artisan mailgun:delete-receivers --trashed              → only rows already soft-deleted
@@ -25,6 +27,7 @@ use Illuminate\Support\Str;
  *   php artisan mailgun:delete-receivers --since=2026-09-01     → only rows added since that day
  *   php artisan mailgun:delete-receivers --dry-run              → report, write nothing
  *   php artisan mailgun:delete-receivers --force                → no confirmation prompt
+ *   php artisan mailgun:delete-receivers --list=sendgrid        → the SendGrid list instead
  *
  * Filters are optional and compose; omitting them all targets every receiver,
  * soft-deleted rows included. There is no soft-delete mode — the admin already
@@ -52,10 +55,12 @@ use Illuminate\Support\Str;
  *
  * WHAT THE DATABASE DOES WITH THE CHILD ROWS (no cleanup needed here — these are
  * the FK rules in the migrations):
- *   - `receiver_daily_claims`  ON DELETE CASCADE  — today's claim goes with the
+ *   - `receiver_daily_claims` / `sendgrid_receiver_daily_claims`  ON DELETE
+ *     CASCADE  — today's claim goes with the
  *     row. Correct: the claim exists to stop a second send to an address that is
  *     about to not exist.
- *   - `mailgun_receiver_sends` and `smtp_receiver_sends`  ON DELETE SET NULL —
+ *   - `mailgun_receiver_sends`, `smtp_receiver_sends` and
+ *     `sendgrid_receiver_sends`  ON DELETE SET NULL —
  *     the send history SURVIVES with a null receiver id. Both tables denormalise
  *     `email`, so the audit trail stays readable: it remains the record of what
  *     was actually delivered, which is never destroyed to tidy a list.
@@ -66,6 +71,7 @@ use Illuminate\Support\Str;
 class DeleteMailgunReceivers extends Command
 {
     protected $signature = 'mailgun:delete-receivers
+        {--list=mailgun : Which Custom Receivers list: mailgun or sendgrid}
         {--email=* : Only this address (repeatable). Matched after the same lowercase+trim the column stores.}
         {--trashed : Only receivers already soft-deleted — empty the recycle bin and nothing else}
         {--unsubscribed : Only receivers who opted out}
@@ -74,7 +80,7 @@ class DeleteMailgunReceivers extends Command
         {--dry-run : Report what would be deleted and change nothing}
         {--force : Skip the confirmation prompt}';
 
-    protected $description = 'Permanently delete Mailgun receivers (hard delete), carrying opt-outs over to the suppression list';
+    protected $description = 'Permanently delete Custom Receivers (hard delete), carrying opt-outs over to the suppression list';
 
     /** Rows removed per round-trip. */
     private const int CHUNK = 1000;
@@ -84,6 +90,12 @@ class DeleteMailgunReceivers extends Command
 
     public function handle(): int
     {
+        if (CampaignReceiver::forList((string) $this->option('list')) === null) {
+            $this->error('Unknown --list value. Use --list=mailgun or --list=sendgrid.');
+
+            return self::INVALID;
+        }
+
         try {
             $since = $this->since();
         } catch (InvalidFormatException) {
@@ -186,11 +198,11 @@ class DeleteMailgunReceivers extends Command
      * just removed.
      *
      * @param  list<string>  $emails
-     * @return Builder<MailgunReceiver>
+     * @return Builder<CampaignReceiver>
      */
     private function query(array $emails, ?Carbon $since): Builder
     {
-        $query = MailgunReceiver::withTrashed();
+        $query = $this->model()::withTrashed();
 
         if ($emails !== []) {
             $query->whereIn('email', $emails);
@@ -216,7 +228,7 @@ class DeleteMailgunReceivers extends Command
     /** @param  list<string>  $emails */
     private function reportUnmatched(array $emails): void
     {
-        $found = MailgunReceiver::withTrashed()
+        $found = $this->model()::withTrashed()
             ->whereIn('email', $emails)
             ->pluck('email')
             ->all();
@@ -369,7 +381,7 @@ class DeleteMailgunReceivers extends Command
 
             $suppressed += $this->preserveOptOuts($rows);
 
-            $removed = MailgunReceiver::withTrashed()->whereKey($rows->pluck('id'))->forceDelete();
+            $removed = $this->model()::withTrashed()->whereKey($rows->pluck('id'))->forceDelete();
 
             // A pass that matches rows but removes none would spin forever.
             if ($removed === 0) {
@@ -399,7 +411,7 @@ class DeleteMailgunReceivers extends Command
      *
      * Returns the number of suppression rows actually written.
      *
-     * @param  Collection<int, MailgunReceiver>  $rows
+     * @param  Collection<int, CampaignReceiver>  $rows
      */
     private function preserveOptOuts(Collection $rows): int
     {
@@ -410,8 +422,8 @@ class DeleteMailgunReceivers extends Command
         $now = Carbon::now();
 
         $records = $rows
-            ->filter(static fn (MailgunReceiver $receiver): bool => $receiver->unsubscribed_at !== null)
-            ->map(static fn (MailgunReceiver $receiver): array => [
+            ->filter(static fn (CampaignReceiver $receiver): bool => $receiver->unsubscribed_at !== null)
+            ->map(static fn (CampaignReceiver $receiver): array => [
                 'email'      => $receiver->email,
                 'reason'     => MailgunSuppression::REASON_UNSUBSCRIBE,
                 'detail'     => 'Receiver row permanently deleted on ' . $now->toDateString(),
@@ -426,6 +438,16 @@ class DeleteMailgunReceivers extends Command
         }
 
         return MailgunSuppression::query()->insertOrIgnore($records);
+    }
+
+    /**
+     * The list --list names. Validated in handle(), so this never sees a typo.
+     *
+     * @return class-string<CampaignReceiver>
+     */
+    private function model(): string
+    {
+        return CampaignReceiver::forList((string) $this->option('list')) ?? MailgunReceiver::class;
     }
 
     private function keepsOptOuts(): bool

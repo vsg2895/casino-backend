@@ -7,30 +7,57 @@ namespace App\Models;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 
 /**
- * An admin-defined scheduled promotion campaign. See the create_email_schedules
- * migration. {@see dateRange()} resolves the subscriber window (on
- * newsletters.created_at) and {@see isDue()} decides whether it should run now.
+ * An admin-defined scheduled promotion campaign: a site's promotion email, sent
+ * to the newest `limit` addresses of one list, skipping anyone who received that
+ * template from that site within `cooldown_days`.
+ *
+ * {@see isDue()} decides whether it should run now; who it reaches is
+ * {@see \App\Services\ScheduleRecipientService}'s alone.
+ *
+ * `date_filter` / `specific_date` are retired columns — the sign-up-date
+ * audience was replaced by count + cooldown — and nothing reads them.
  */
 class EmailSchedule extends Model
 {
-    // Subscriber window (relative to "now" when the campaign runs).
-    public const string FILTER_TODAY = 'today';
-    public const string FILTER_YESTERDAY = 'yesterday';
-    public const string FILTER_LAST_WEEK = 'last_week';
-    public const string FILTER_LAST_MONTH = 'last_month';
-    public const string FILTER_LAST_QUARTER = 'last_quarter';
-    public const string FILTER_LAST_YEAR = 'last_year';
-    public const string FILTER_SPECIFIC = 'specific';
+    /*
+     * Which list a schedule mails.
+     *
+     * Newsletters are the site's own subscribers. The other three are global
+     * lists that carry no site: the site only chooses the template, and the
+     * cooldown is still per site.
+     */
+    public const string AUDIENCE_NEWSLETTERS = 'newsletters';
+    public const string AUDIENCE_MAILGUN_RECEIVERS = 'mailgun_receivers';
+    public const string AUDIENCE_SENDGRID_RECEIVERS = 'sendgrid_receivers';
+    public const string AUDIENCE_WARMUP = 'warmup';
 
     /** @var list<string> */
-    public const array DATE_FILTERS = [
-        self::FILTER_TODAY, self::FILTER_YESTERDAY, self::FILTER_LAST_WEEK,
-        self::FILTER_LAST_MONTH, self::FILTER_LAST_QUARTER, self::FILTER_LAST_YEAR,
-        self::FILTER_SPECIFIC,
+    public const array AUDIENCES = [
+        self::AUDIENCE_NEWSLETTERS,
+        self::AUDIENCE_MAILGUN_RECEIVERS,
+        self::AUDIENCE_SENDGRID_RECEIVERS,
+        self::AUDIENCE_WARMUP,
     ];
+
+    /** Human labels, for history rows and messages. */
+    public const array AUDIENCE_LABELS = [
+        self::AUDIENCE_NEWSLETTERS        => 'Newsletters',
+        self::AUDIENCE_MAILGUN_RECEIVERS  => 'Mailgun Receivers',
+        self::AUDIENCE_SENDGRID_RECEIVERS => 'Sendgrid Receivers',
+        self::AUDIENCE_WARMUP             => 'Warmup',
+    ];
+
+    /** The template every schedule sends: the site's promotion email. */
+    public const string TEMPLATE_PROMOTION = 'promotion';
+
+    /** Bounds on the count per run and on the cooldown, shared by request and UI. */
+    public const int MAX_LIMIT = 100000;
+
+    public const int MIN_COOLDOWN_DAYS = 1;
+
+    public const int MAX_COOLDOWN_DAYS = 365;
 
     // Cadence.
     public const string FREQ_DAILY = 'daily';
@@ -72,9 +99,9 @@ class EmailSchedule extends Model
     protected $fillable = [
         'site_id',
         'name',
-        'date_filter',
-        'specific_date',
+        'audience',
         'limit',
+        'cooldown_days',
         'frequency',
         'time',
         'day_of_week',
@@ -88,8 +115,8 @@ class EmailSchedule extends Model
     protected function casts(): array
     {
         return [
-            'specific_date' => 'date',
             'limit'         => 'integer',
+            'cooldown_days' => 'integer',
             'day_of_week'     => 'integer',
             'day_of_month'    => 'integer',
             'sendgrid_key_id' => 'integer',
@@ -143,36 +170,79 @@ class EmailSchedule extends Model
         return $column === null ? null : ($this->{$column} === null ? null : (int) $this->{$column});
     }
 
-    /**
-     * Whether this schedule targets the newest N subscribers (by created_at)
-     * rather than a sign-up date window. True when no date filter is set.
-     */
-    public function usesLimit(): bool
+    /** The audience, defaulting to newsletters for a row that predates the column. */
+    public function audienceKey(): string
     {
-        return $this->date_filter === null;
+        return in_array($this->audience, self::AUDIENCES, true) ? (string) $this->audience : self::AUDIENCE_NEWSLETTERS;
     }
 
     /**
-     * Inclusive [start, end] window on newsletters.created_at for this campaign,
-     * resolved relative to $now. Always spans whole days (start-of-day →
-     * end-of-day) so partial-day times never exclude a subscriber.
+     * The receiver list model for a list audience, or null for newsletters.
      *
-     * @return array{0: CarbonInterface, 1: CarbonInterface}
+     * @return class-string<Model>|null
      */
-    public function dateRange(CarbonInterface $now): array
+    public function audienceModel(): ?string
     {
-        return match ($this->date_filter) {
-            self::FILTER_TODAY        => [$now->copy()->startOfDay(), $now->copy()->endOfDay()],
-            self::FILTER_YESTERDAY    => [$now->copy()->subDay()->startOfDay(), $now->copy()->subDay()->endOfDay()],
-            self::FILTER_LAST_WEEK    => [$now->copy()->subWeek()->startOfWeek(), $now->copy()->subWeek()->endOfWeek()],
-            self::FILTER_LAST_MONTH   => [$now->copy()->subMonthNoOverflow()->startOfMonth(), $now->copy()->subMonthNoOverflow()->endOfMonth()],
-            self::FILTER_LAST_QUARTER => [$now->copy()->subQuarterNoOverflow()->startOfQuarter(), $now->copy()->subQuarterNoOverflow()->endOfQuarter()],
-            self::FILTER_LAST_YEAR    => [$now->copy()->subYear()->startOfYear(), $now->copy()->subYear()->endOfYear()],
-            self::FILTER_SPECIFIC     => [
-                Carbon::parse((string) $this->specific_date)->startOfDay(),
-                Carbon::parse((string) $this->specific_date)->endOfDay(),
-            ],
-            default => [$now->copy()->startOfDay(), $now->copy()->endOfDay()],
+        return self::modelForAudience($this->audienceKey());
+    }
+
+    /**
+     * The list model behind an audience key, or null for newsletters (and for
+     * anything unknown, which is never a list).
+     *
+     * @return class-string<Model>|null
+     */
+    public static function modelForAudience(string $audience): ?string
+    {
+        return match ($audience) {
+            self::AUDIENCE_MAILGUN_RECEIVERS  => MailgunReceiver::class,
+            self::AUDIENCE_SENDGRID_RECEIVERS => SendgridReceiver::class,
+            self::AUDIENCE_WARMUP             => WarmupEmail::class,
+            default                           => null,
+        };
+    }
+
+    /** How many addresses one run takes; 0 when no count is set. */
+    public function runLimit(): int
+    {
+        return max(0, (int) $this->limit);
+    }
+
+    /** Days an address rests after receiving this site's promotion, clamped to the allowed range. */
+    public function cooldownDays(): int
+    {
+        return max(self::MIN_COOLDOWN_DAYS, min((int) ($this->cooldown_days ?? 1), self::MAX_COOLDOWN_DAYS));
+    }
+
+    /**
+     * Why this schedule would send nothing, or null when it can run.
+     *
+     * The one configuration hole the model itself can see: a schedule saved
+     * before counts existed (a sign-up-date schedule) has no `limit`. It sends
+     * nobody until an admin gives it one — mailing "the whole list" in its
+     * place would turn a daily trickle into a blast.
+     */
+    public function runBlocker(): ?string
+    {
+        if ($this->runLimit() < 1) {
+            return 'This schedule has no count of emails to send. Edit it and set one.';
+        }
+
+        return null;
+    }
+
+    /**
+     * "SendGrid · Main key" — what the history records as the email config used.
+     *
+     * Resolved by id at send time and stored as text, so a key renamed or
+     * deleted later leaves the history readable.
+     */
+    public static function credentialLabel(string $provider, ?int $credentialId): string
+    {
+        return match ($provider) {
+            self::PROVIDER_SENDGRID => 'SendGrid · ' . (SendgridKey::query()->whereKey($credentialId)->value('name') ?? 'key #' . $credentialId),
+            self::PROVIDER_MAILGUN  => 'Mailgun · ' . (MailgunKey::query()->whereKey($credentialId)->value('name') ?? 'key #' . $credentialId),
+            default                 => 'SMTP (.env)',
         };
     }
 

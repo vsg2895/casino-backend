@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Mail;
 
 use App\Contracts\ReceiverCampaignCredential;
-use App\Models\MailgunReceiver;
+use App\Models\CampaignReceiver;
 use App\Support\Mail\MailgunReceiverTemplate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -16,11 +16,11 @@ use Illuminate\Mail\Mailables\Headers;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * One message to one receiver on the Mailgun receiver list.
+ * One message to one receiver on a Custom Receivers list.
  *
- * The credential is whatever is sending — a Mailgun API key or a stored SMTP
- * server. Both implement {@see ReceiverCampaignCredential}, so this mailable
- * never learns which, and the two channels cannot drift into composing
+ * The credential is whatever is sending — a Mailgun API key, a stored SMTP
+ * server or a SendGrid key. All of them implement {@see ReceiverCampaignCredential}, so this mailable
+ * never learns which, and the channels cannot drift into composing
  * different messages from the same authored template.
  *
  * The body is the credential's own `message_html`, authored in the admin. What
@@ -45,7 +45,7 @@ class MailgunReceiverMessage extends Mailable
 
     public function __construct(
         public readonly ReceiverCampaignCredential $credential,
-        public readonly MailgunReceiver $receiver,
+        public readonly CampaignReceiver $receiver,
     ) {}
 
     public function envelope(): Envelope
@@ -115,12 +115,10 @@ class MailgunReceiverMessage extends Mailable
         ]);
     }
 
-    /** Absolute, token-addressed, and unguessable — see MailgunReceiver::newToken(). */
+    /** The receiver's own list's link — see CampaignReceiver::unsubscribeUrl(). */
     private function unsubscribeUrl(): string
     {
-        return rtrim((string) config('app.url'), '/')
-            . '/api/v1/mailgun-unsubscribe/'
-            . $this->receiver->unsubscribe_token;
+        return $this->receiver->unsubscribeUrl();
     }
 
     /**

@@ -10,9 +10,9 @@ use App\Http\Requests\Admin\UpdateEmailScheduleRequest;
 use App\Http\Resources\EmailScheduleResource;
 use App\Jobs\SendScheduledPromotionJob;
 use App\Models\EmailSchedule;
-use App\Models\Newsletter;
 use App\Services\ScheduleRecipientService;
 use App\Support\CsvExport;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -91,10 +91,11 @@ class EmailScheduleController extends Controller
             'data' => [
                 'count'       => $recipients->count($schedule),
                 'sample_size' => $sampleSize,
+                'audience'    => $schedule->audienceKey(),
                 'sample'      => $recipients->sample($schedule, $sampleSize)
-                    ->map(fn (Newsletter $n): array => [
-                        'email'      => $n->email,
-                        'created_at' => $n->created_at?->toDateTimeString(),
+                    ->map(fn (Model $row): array => [
+                        'email'      => $row->email,
+                        'created_at' => $row->created_at?->toDateTimeString(),
                     ])->all(),
                 'generated_at' => now()->toDateTimeString(),
             ],
@@ -147,6 +148,10 @@ class EmailScheduleController extends Controller
 
         if (! $site->promotionEmailOrDefault()->active) {
             return $this->refuse("The promotion email for {$site->name} is switched off, so nothing would be sent.");
+        }
+
+        if ($schedule->runBlocker() !== null) {
+            return $this->refuse($schedule->runBlocker());
         }
 
         // Held for the fan-out's lifetime; the job releases it on completion or

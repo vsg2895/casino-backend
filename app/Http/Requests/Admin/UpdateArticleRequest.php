@@ -47,6 +47,8 @@ class UpdateArticleRequest extends FormRequest
             ],
             'excerpt' => ['nullable', 'string', 'max:500'],
             'body'    => ['nullable', 'string'],
+            // Plain text; the page escapes it. Counts toward NewsIndexGate.
+            'editor_note' => ['nullable', 'string', 'max:' . NewsIndexGate::EDITOR_NOTE_MAX],
             'hero_image_path' => ['nullable', 'string', 'max:500'],
             'published_at'    => ['nullable', 'date'],
             'meta_title'      => ['nullable', 'string', 'max:255'],
@@ -57,7 +59,6 @@ class UpdateArticleRequest extends FormRequest
             // The news page's "Most Popular" rail. Its own flag, not a
             // synonym for `featured` — see the migration.
             'to_be_most_popular' => ['sometimes', 'boolean'],
-            'news_category_id' => ['nullable', 'integer', 'exists:news_categories,id'],
             'noindex'         => ['sometimes', 'boolean'],
             // Byline: authors of THIS site only.
             'author_id'        => ['nullable', 'integer', Rule::exists('authors', 'id')->where('site_id', $this->route('site')?->id)],
@@ -114,7 +115,11 @@ class UpdateArticleRequest extends FormRequest
                     return;
                 }
 
-                $problems = NewsIndexGate::problems($this->has('body') ? $this->input('body') : $article->body, $site);
+                $problems = NewsIndexGate::problems(
+                    $this->has('body') ? $this->input('body') : $article->body,
+                    $site,
+                    $this->has('editor_note') ? $this->input('editor_note') : $article->editor_note,
+                );
 
                 if ($problems !== []) {
                     $validator->errors()->add('noindex', 'Keep "Keep out of search results" on: ' . implode('; ', $problems) . '.');

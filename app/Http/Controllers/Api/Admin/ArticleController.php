@@ -37,7 +37,7 @@ class ArticleController extends Controller
     private const array LIST_COLUMNS = [
         'id', 'site_id', 'title', 'slug', 'excerpt', 'read_minutes', 'hero_image_path',
         'published_at', 'active', 'featured', 'to_be_most_popular', 'noindex', 'type',
-        'news_category_id', 'source_name', 'source_url', 'updated_at',
+        'source_name', 'source_url', 'updated_at',
     ];
 
     /**
@@ -71,7 +71,6 @@ class ArticleController extends Controller
         // simplePaginate: no COUNT of the whole section here — the screen's
         // total comes from count() below.
         $articles = $base()
-            ->with('newsCategory')
             ->inListingOrder()
             ->simplePaginate($filters['per_page'] ?? self::PER_PAGE, [
                 ...self::LIST_COLUMNS,

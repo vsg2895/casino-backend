@@ -11,8 +11,10 @@ use Illuminate\Console\Command;
  * Takes the facts of recent stories from the configured feeds and files them as
  * drafts for an editor to approve.
  *
- * Writes NO original copy — that is `news:rewrite`, deliberately separate so a
- * re-run of this command cannot re-bill the rewriting of items already written.
+ * Then hands the new drafts to `news:rewrite`, which writes original copy and
+ * makes each one indexable when it clears NewsIndexGate. That command selects
+ * only drafts with no body, so a re-run never re-bills items already written.
+ * `--no-rewrite` stops after collecting; so does a missing GEMINI_API_KEY.
  *
  * Takes only the last day's items (`news.max_age_hours`), and the first run of
  * a day that brings any in deletes the site's oldest day of news, covers
@@ -21,15 +23,17 @@ use Illuminate\Console\Command;
  *   php artisan news:scrape --dry-run
  *   php artisan news:scrape
  *   php artisan news:scrape --no-prune
+ *   php artisan news:scrape --no-rewrite
  */
 class ScrapeNews extends Command
 {
     protected $signature = 'news:scrape
                             {--dry-run : Fetch and parse, reporting what would change, without writing}
                             {--source= : Limit the run to one source key from config/news.php}
-                            {--no-prune : Keep the oldest day of news instead of deleting it}';
+                            {--no-prune : Keep the oldest day of news instead of deleting it}
+                            {--no-rewrite : Only collect; leave the drafts for news:rewrite}';
 
-    protected $description = 'Collect news facts from the configured RSS feeds as unpublished drafts';
+    protected $description = 'Collect news facts from the configured RSS feeds as unpublished drafts, then rewrite them';
 
     public function handle(NewsScrapeService $scraper): int
     {
@@ -77,12 +81,39 @@ class ScrapeNews extends Command
         ));
 
         if (! $dryRun && $totals['created'] > 0) {
-            $this->line('All of them are drafts and hidden. Rewrite them with: php artisan news:rewrite');
+            $this->rewriteNewDrafts($totals['created']);
         }
 
         // A run in which every source failed is a failure, even though the
         // individual items were handled gracefully — otherwise a feed that has
         // gone permanently 403 looks like a quiet day in cron's output.
         return $totals['failed'] > 0 && $totals['created'] === 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Rewrite what this run filed, through `news:rewrite` itself so the quota,
+     * the checks, the delay and the report are the same as a run by hand. Its
+     * outcome never fails the scrape: what it could not write is retried by
+     * the next `news:rewrite`.
+     */
+    private function rewriteNewDrafts(int $created): void
+    {
+        if ($this->option('no-rewrite')) {
+            $this->line('Drafts are hidden and unwritten. Rewrite them with: php artisan news:rewrite');
+
+            return;
+        }
+
+        if (trim((string) config('news.rewrite.api_key')) === '') {
+            $this->warn('GEMINI_API_KEY is not set — the drafts were not rewritten. Set it, then run: php artisan news:rewrite');
+
+            return;
+        }
+
+        $this->newLine();
+        $this->line('Rewriting the new drafts…');
+        // At least the usual batch, so drafts a capped or failed run left
+        // behind are picked up too; newest first, so this run's come first.
+        $this->call('news:rewrite', ['--limit' => (string) max(10, $created)]);
     }
 }

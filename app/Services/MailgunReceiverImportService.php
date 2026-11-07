@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\MailgunReceiver;
+use App\Models\CampaignReceiver;
+use App\Models\CampaignReceiverImport;
 use App\Support\Mail\ReceiverSource;
-use App\Models\MailgunReceiverImport;
 use App\Support\Spreadsheet\EmailSpreadsheetReader;
 use App\Support\Spreadsheet\SpreadsheetScan;
 use Illuminate\Support\Carbon;
@@ -14,7 +14,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Writes an uploaded spreadsheet into `mailgun_receivers`.
+ * Writes an uploaded spreadsheet into a Custom Receivers list.
+ *
+ * The list is the import row's: a {@see \App\Models\MailgunReceiverImport}
+ * writes `mailgun_receivers`, a {@see \App\Models\SendgridReceiverImport}
+ * writes `sendgrid_receivers`. Duplicates are resolved within that list only;
+ * the suppression check is shared, because the suppression list is.
  *
  * Mirrors {@see NewsletterImportService}: the same streaming reader, the same
  * batched writes, the same "collect failures, never abort the file" contract.
@@ -44,10 +49,13 @@ final class MailgunReceiverImportService
      * @return array{imported:int, duplicates:int, suppressed:int, rejected:int}
      */
     public function import(
-        MailgunReceiverImport $import,
+        CampaignReceiverImport $import,
         string $path,
         string $extension,
     ): array {
+        $model = $import->receiverModel();
+        $table = (new $model())->getTable();
+
         /*
          * One source for the whole file: ours or somebody else's.
          *
@@ -82,7 +90,7 @@ final class MailgunReceiverImportService
             // One query for addresses we already hold. `withTrashed` matters:
             // a soft-deleted receiver still occupies the unique index, so
             // inserting it again would throw rather than silently duplicate.
-            $existing = MailgunReceiver::withTrashed()
+            $existing = $model::withTrashed()
                 ->whereIn('email', $emails)
                 ->pluck('email')
                 ->all();
@@ -120,10 +128,10 @@ final class MailgunReceiverImportService
                 $insert[] = [
                     'email'               => $email,
                     'name'                => null,
-                    'source'              => MailgunReceiver::SOURCE_IMPORT,
+                    'source'              => CampaignReceiver::SOURCE_IMPORT,
                     'source_label'        => $sourceLabel,
                     'consent_recorded_at' => $now,
-                    'unsubscribe_token'   => MailgunReceiver::newToken(),
+                    'unsubscribe_token'   => CampaignReceiver::newToken(),
                     'is_active'           => true,
                     'sent_count'          => 0,
                     'created_at'          => $now,
@@ -137,9 +145,9 @@ final class MailgunReceiverImportService
                 // and fail the whole batch. Ignored rows are counted as
                 // duplicates below, which is what they are.
                 $before = count($insert);
-                DB::table('mailgun_receivers')->insertOrIgnore($insert);
+                DB::table($table)->insertOrIgnore($insert);
 
-                $written = MailgunReceiver::whereIn('email', array_column($insert, 'email'))->count();
+                $written = $model::whereIn('email', array_column($insert, 'email'))->count();
                 $imported += $written;
                 $duplicates += max(0, $before - $written);
             }
@@ -147,7 +155,7 @@ final class MailgunReceiverImportService
             // Progress is written per batch so the admin's poll shows movement
             // on a long file rather than jumping from 0 to done.
             $import->forceFill([
-                'status'     => MailgunReceiverImport::STATUS_RUNNING,
+                'status'     => CampaignReceiverImport::STATUS_RUNNING,
                 'total'      => $scan->rows,
                 'imported'   => $imported,
                 'duplicates' => $duplicates,
@@ -159,7 +167,7 @@ final class MailgunReceiverImportService
         }
 
         $import->forceFill([
-            'status'        => MailgunReceiverImport::STATUS_FINISHED,
+            'status'        => CampaignReceiverImport::STATUS_FINISHED,
             'total'         => $scan->rows,
             'imported'      => $imported,
             'duplicates'    => $duplicates,

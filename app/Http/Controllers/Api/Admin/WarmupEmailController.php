@@ -294,7 +294,7 @@ class WarmupEmailController extends Controller
      * Per-address delivery history: which address, from which site, with which
      * template, and when.
      *
-     * Read-only and paginated, matching `promotion-history` and
+     * Read-only and paginated, matching `schedule-history` and
      * `newsletter-phones/history`. The site is eager-loaded so a page costs two
      * queries rather than one per row.
      */

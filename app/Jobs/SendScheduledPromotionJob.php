@@ -19,14 +19,18 @@ use Throwable;
 /**
  * Fans a scheduled promotion campaign out into recipient BATCHES.
  *
- * The audience (sign-up date window OR newest N, minus promotion opt-outs) is
- * resolved by {@see ScheduleRecipientService} — the single shared definition
- * also used by the admin's recipient preview, count and CSV export, so what an
- * admin previews is precisely who gets mailed.
+ * The audience (the newest `limit` addresses of the schedule's list — site
+ * newsletters, Mailgun or Sendgrid Receivers, or warmup — minus anyone who may
+ * not be mailed or is resting inside the cooldown) is resolved by
+ * {@see ScheduleRecipientService} — the single shared definition also used by
+ * the admin's recipient preview, count and CSV export, so what an admin
+ * previews is precisely who gets mailed.
  *
- * Dispatches ONE {@see SendPromotionBatchJob} per batch of addresses — not one
- * job per email — streaming the audience so the whole list never loads into
- * memory; per-recipient tokens are fetched inside each batch job. Runs on the
+ * Dispatches ONE batch job per batch of addresses — not one job per email —
+ * streaming the audience so the whole list never loads into memory: a
+ * {@see SendPromotionBatchJob} of emails for newsletters, a
+ * {@see SendScheduleListBatchJob} of row ids for the other lists. Both carry
+ * the schedule id, which is what writes `schedule_send_histories`. Runs on the
  * LOW queue.
  *
  * Sizing is two-dimensional (see config/promotions.php): the database is read
@@ -108,6 +112,17 @@ class SendScheduledPromotionJob implements ShouldQueue
             return;
         }
 
+        // A schedule with no count (one saved before counts existed) sends
+        // nobody until it is given one — never "the whole list".
+        if ($schedule->runBlocker() !== null) {
+            Log::info('Promotion schedule skipped', [
+                'schedule_id' => $this->scheduleId,
+                'reason'      => $schedule->runBlocker(),
+            ]);
+
+            return;
+        }
+
         $siteId = $schedule->site_id;
 
         // Delivery transport is per-schedule. Only the provider name + the
@@ -128,6 +143,9 @@ class SendScheduledPromotionJob implements ShouldQueue
         $readChunk = max($batchSize, $this->positiveConfig('promotions.read_chunk', self::READ_CHUNK));
 
         $queued = 0;
+        $scheduleId = $this->scheduleId;
+        $audience = $schedule->audienceKey();
+        $isList = $schedule->audienceModel() !== null;
 
         // The audience comes from the shared resolver — the SAME query the admin
         // preview, count and CSV export use, so what an admin previews is
@@ -136,15 +154,24 @@ class SendScheduledPromotionJob implements ShouldQueue
         $recipients->eachChunk(
             $schedule,
             $readChunk,
-            function (Collection $rows) use ($siteId, $provider, $sendgridKeyId, $credentialId, $batchSize, &$queued): void {
-                // Reduce the chunk to a flat address list immediately: the
-                // hydrated rows are not needed past this point and holding them
-                // while dispatching would keep a whole read chunk alive.
-                $emails = $rows->pluck('email')->all();
+            function (Collection $rows) use ($siteId, $provider, $sendgridKeyId, $credentialId, $batchSize, $scheduleId, $audience, $isList, &$queued): void {
+                // Reduce the chunk to a flat list immediately: the hydrated rows
+                // are not needed past this point and holding them while
+                // dispatching would keep a whole read chunk alive. Newsletters
+                // travel as emails (the batch re-reads tokens by email); the
+                // global lists as row ids, which is what their tables key on.
+                $keys = $isList
+                    ? $rows->pluck('id')->map(static fn ($id): int => (int) $id)->all()
+                    : $rows->pluck('email')->all();
                 unset($rows);
 
-                foreach (array_chunk($emails, $batchSize) as $payload) {
-                    SendPromotionBatchJob::dispatch($siteId, $payload, $provider, $sendgridKeyId, $credentialId);
+                foreach (array_chunk($keys, $batchSize) as $payload) {
+                    if ($isList) {
+                        SendScheduleListBatchJob::dispatch($scheduleId, $siteId, $audience, $payload, $provider, $credentialId);
+                    } else {
+                        SendPromotionBatchJob::dispatch($siteId, $payload, $provider, $sendgridKeyId, $credentialId, $scheduleId);
+                    }
+
                     $queued += count($payload);
                 }
             },
@@ -153,6 +180,7 @@ class SendScheduledPromotionJob implements ShouldQueue
         Log::info('Promotion campaign fanned out', [
             'schedule_id' => $this->scheduleId,
             'site_id'     => $siteId,
+            'audience'    => $audience,
             'recipients'  => $queued,
             'batch_size'  => $batchSize,
         ]);

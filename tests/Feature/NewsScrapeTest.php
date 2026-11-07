@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /**
@@ -147,8 +148,6 @@ class NewsScrapeTest extends TestCase
             $this->assertNotNull($article->published_at);
             // No body yet — that is the "not rewritten" flag.
             $this->assertNull($article->body);
-            // The source's taxonomy is not this site's.
-            $this->assertNull($article->news_category_id);
 
             // Provenance: which publication reported the facts, and where.
             $this->assertNotNull($article->source_ref);
@@ -433,5 +432,48 @@ class NewsScrapeTest extends TestCase
     private function svgFor(\App\Services\News\NewsCoverGenerator $covers, string $slug, string $headline): string
     {
         return Storage::disk('public')->get($covers->generate($slug, $headline));
+    }
+
+    // ── the command hands new drafts to the rewriter ─────────────────────────
+
+    public function test_the_command_rewrites_what_it_filed(): void
+    {
+        config(['news.rewrite.api_key' => 'test-key']);
+        // The rewriter's retry backoff and per-item delay cost no wall-clock time.
+        Sleep::fake();
+        Http::fake([
+            'example.test/robots.txt' => Http::response("User-agent: *\nDisallow:\n"),
+            'example.test/feed/'      => Http::response($this->feed(), 200, ['Content-Type' => 'application/rss+xml']),
+            // No usable reply: the point is that the rewriter was asked.
+            'generativelanguage.googleapis.com/*' => Http::response([], 500),
+        ]);
+
+        $this->artisan('news:scrape')
+            ->expectsOutputToContain('Rewriting the new drafts')
+            ->assertSuccessful();
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com'));
+    }
+
+    public function test_no_rewrite_only_collects(): void
+    {
+        config(['news.rewrite.api_key' => 'test-key']);
+        $this->fakeFeed();
+
+        $this->artisan('news:scrape', ['--no-rewrite' => true])
+            ->expectsOutputToContain('Rewrite them with: php artisan news:rewrite')
+            ->assertSuccessful();
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com'));
+    }
+
+    public function test_without_a_key_the_drafts_are_left_for_later(): void
+    {
+        config(['news.rewrite.api_key' => '']);
+        $this->fakeFeed();
+
+        $this->artisan('news:scrape')
+            ->expectsOutputToContain('GEMINI_API_KEY is not set — the drafts were not rewritten')
+            ->assertSuccessful();
     }
 }

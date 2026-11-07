@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\CampaignReceiver;
 use App\Models\MailgunReceiver;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Clears the send counters on Mailgun receivers — the "Last sent" and "Sent"
- * columns in the admin Receivers table.
+ * Clears the send counters on one Custom Receivers list — the "Last sent" and
+ * "Sent" columns in the admin Receivers table.
+ *
+ * The list is a constructor argument: the container builds the Mailgun one,
+ * which is what every caller meant before the SendGrid list existed, and
+ * `new MailgunReceiverSendStateResetter(SendgridReceiver::class)` resets the
+ * other. One list per reset, never both — they are reset from different
+ * screens and mean different campaigns.
  *
  * The single expression of the reset. The artisan command and the admin button
  * both call this, so the two can never drift into resetting different things —
@@ -41,6 +48,11 @@ class MailgunReceiverSendStateResetter
 {
     /** Rows updated per round-trip. */
     private const int CHUNK = 1000;
+
+    /**
+     * @param  class-string<CampaignReceiver>  $receiverModel
+     */
+    public function __construct(private readonly string $receiverModel = MailgunReceiver::class) {}
 
     /**
      * How many receivers still carry send state.
@@ -88,7 +100,7 @@ class MailgunReceiverSendStateResetter
 
             // toBase(): an Eloquent update() would silently add updated_at and
             // overwrite the real edit time on every row in the table.
-            $updated = MailgunReceiver::withTrashed()->whereKey($ids)->toBase()->update($values);
+            $updated = $this->receiverModel::withTrashed()->whereKey($ids)->toBase()->update($values);
 
             // A pass that matches rows but writes none would spin forever.
             if ($updated === 0) {
@@ -108,7 +120,7 @@ class MailgunReceiverSendStateResetter
     /** Receivers still carrying send state. Also what makes the chunk loop terminate. */
     private function query(bool $clearErrors): Builder
     {
-        return MailgunReceiver::withTrashed()
+        return $this->receiverModel::withTrashed()
             ->where(static function (Builder $q) use ($clearErrors): void {
                 $q->whereNotNull('last_sent_at')->orWhere('sent_count', '>', 0);
 

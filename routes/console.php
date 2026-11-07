@@ -66,14 +66,14 @@ Schedule::command('promotions:dispatch-verification')
 // rewrite is under the same switch — with no scrape there is nothing to
 // rewrite, and a rewrite schedule alone would be a key spending on nothing.
 //
-// Hourly, ten minutes apart, so the rewrite picks up what that hour's scrape
-// filed. withoutOverlapping() with a 50-minute lock rather than the default
-// 24 hours: a run that died holding the mutex must not mute the command for a
-// day. A rewrite of ten items is bounded by its delay and timeouts well inside
-// that window.
+// news:scrape rewrites what it filed itself; the separate news:rewrite ten
+// minutes later retries drafts that were rejected or failed. withoutOverlapping()
+// with a 50-minute lock rather than the default 24 hours: a run that died
+// holding the mutex must not mute the command for a day. A rewrite of ten items
+// is bounded by its delay and timeouts well inside that window.
 //
-// news:rewrite never publishes: everything it writes stays `active = false`
-// until an editor approves it.
+// news:rewrite never publishes: everything it writes keeps its `active` value
+// until an editor approves it. It is indexable when it clears NewsIndexGate.
 if (config('news.scheduled')) {
     Schedule::command('news:scrape')->hourlyAt(7)->withoutOverlapping(50);
     Schedule::command('news:rewrite --limit=10')->hourlyAt(17)->withoutOverlapping(50);
@@ -91,7 +91,7 @@ Schedule::command('promotions:manage-history-partitions')
 // answer "was I signed out, or did something else happen?".
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
 
-// Revalidation attempts accumulate at roughly (sites x saves) per day. Thirty
+// Revalidation attempts to accumulate at roughly (sites x saves) per day. Thirty
 // days is well past the point where an old attempt tells anyone anything, and
 // keeping them forever would make the history query slower every week.
 Schedule::call(function (): void {

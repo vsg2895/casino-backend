@@ -6,6 +6,9 @@ namespace App\Services\News;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Models\Casino;
+use App\Models\Category;
+use App\Models\Site;
 use App\Support\SchemaGuard;
 use App\Support\SiteCache;
 use Illuminate\Database\Eloquent\Collection;
@@ -54,6 +57,26 @@ use Throwable;
  * only safe while the article has never been public. An article an editor has
  * already switched on keeps its URL, because changing it would 404 every link
  * already pointing there.
+ *
+ * ── Indexing ────────────────────────────────────────────────────────────────
+ *
+ * The model is handed this site's own category and casino pages and asked to
+ * link one or two that genuinely relate. Every href it returns is checked
+ * against that list, so it cannot invent a URL. A saved rewrite is indexable
+ * (`noindex = false`) only when the body clears {@see NewsIndexGate}; otherwise
+ * it stays noindex and the reason is reported. `active` is never touched —
+ * publishing stays an editor's act.
+ *
+ * The model is also handed what THIS site knows that the source does not: the
+ * casinos the story bears on, with their stored licence and withdrawal facts
+ * ({@see NewsSiteFacts}), for a section that states them and links each one.
+ *
+ * ── Rewriting again ─────────────────────────────────────────────────────────
+ *
+ * `news:rewrite --all` selects scraped posts that already have a body too. The
+ * source's headline and teaser were replaced by the first rewrite, so a repeat
+ * works from this site's own title, standfirst and body — which is why the
+ * checks against the source's wording are skipped for it.
  */
 class NewsRewriteService
 {
@@ -68,15 +91,26 @@ class NewsRewriteService
     private const array REPLY_SCHEMA = [
         'type'       => 'object',
         'properties' => [
-            'title'     => ['type' => 'string'],
-            'excerpt'   => ['type' => 'string'],
-            'body_html' => ['type' => 'string'],
+            'title'            => ['type' => 'string'],
+            'excerpt'          => ['type' => 'string'],
+            'body_html'        => ['type' => 'string'],
+            'meta_title'       => ['type' => 'string'],
+            'meta_description' => ['type' => 'string'],
         ],
-        'required' => ['title', 'excerpt', 'body_html'],
+        'required' => ['title', 'excerpt', 'body_html', 'meta_title', 'meta_description'],
     ];
 
-    /** What the body may contain. No links, no images, no h1 — the page owns those. */
-    private const string BODY_TAGS = '<p><h2><ul><ol><li><strong><em>';
+    /**
+     * What the body may contain. No images, no h1 — the page owns those. Links
+     * only survive when they point at a page from {@see linkCatalog()}.
+     */
+    private const string BODY_TAGS = '<p><h2><ul><ol><li><strong><em><a>';
+
+    /** Internal links kept per body; more reads as link stuffing. */
+    private const int MAX_LINKS = 5;
+
+    /** Casino pages offered to the model, highest-placed first. */
+    private const int CATALOG_CASINOS = 20;
 
     /** Shorter than this is a stub, not an article. */
     private const int MIN_BODY_WORDS = 100;
@@ -91,6 +125,14 @@ class NewsRewriteService
 
     private const int EXCERPT_MAX = 200;
 
+    /**
+     * What a results page shows of a title and a description — the same 60 and
+     * 155 as the site's lib/seo/meta.ts, which fits them again on render.
+     */
+    private const int META_TITLE_MAX = 60;
+
+    private const int META_DESCRIPTION_MAX = 155;
+
     private const int SLUG_MAX = 80;
 
     /**
@@ -99,8 +141,12 @@ class NewsRewriteService
      */
     private const float TEMPERATURE = 0.8;
 
+    /** @var array<int, list<array{label: string, path: string}>> link catalog per site id, for one run */
+    private array $catalogs = [];
+
     public function __construct(
         private readonly NewsCoverGenerator $covers,
+        private readonly NewsSiteFacts $siteFacts,
     ) {}
 
     /**
@@ -111,7 +157,7 @@ class NewsRewriteService
      *
      * @return Collection<int, Article>
      */
-    public function pending(int $limit, ?int $id = null): Collection
+    public function pending(int $limit, ?int $id = null, bool $all = false): Collection
     {
         $drafts = Article::query()
             ->ofType(Article::TYPE_NEWS)
@@ -119,7 +165,8 @@ class NewsRewriteService
             // to rewrite, and sending it would bill a request for nothing.
             ->fromASource()
             // The guard. No body means no original copy has been written yet.
-            ->whereNull('body')
+            // `--all` is the operator asking for everything to be written again.
+            ->when(! $all, fn ($q) => $q->whereNull('body'))
             ->when($id !== null, fn ($q) => $q->whereKey($id))
             ->orderByDesc('published_at')
             ->orderByDesc('id')
@@ -128,8 +175,8 @@ class NewsRewriteService
             // are a day or two of feed items, pruned daily by news:scrape.
             ->get();
 
-        // `--id` is the operator naming one article: no quota applies.
-        if ($id !== null) {
+        // `--id` / `--all` is the operator naming the work: no quota applies.
+        if ($id !== null || $all) {
             return $drafts->take($limit)->values();
         }
 
@@ -189,15 +236,22 @@ class NewsRewriteService
      * Rewrite one draft. Never throws: every outcome is a status a run can
      * report and continue past.
      *
-     * @return array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string}
+     * @return array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string, indexed: ?bool}
      */
     public function rewrite(Article $article, bool $dryRun = false): array
     {
         $sourceTitle = (string) $article->title;
         $sourceTeaser = (string) $article->excerpt;
+        // A body means this is a repeat: the input is our own earlier copy.
+        $again = trim((string) $article->body) !== '';
+        $site = $article->site;
+        $casinos = $site === null ? [] : $this->siteFacts->matching($site, $sourceTitle . ' ' . $sourceTeaser . ' ' . $article->body);
+        $links = $site === null ? [] : $this->linkCatalog($site);
+        $paths = array_values(array_unique([...array_column($links, 'path'), ...array_column($casinos, 'path')]));
+        $facts = $this->facts($sourceTitle, $sourceTeaser, $again ? (string) $article->body : null, $links, $casinos);
 
         try {
-            $written = $this->ask($sourceTitle, $sourceTeaser);
+            $written = $this->ask($facts, $paths);
         } catch (Throwable $e) {
             // The key travels in a header and is never part of the message;
             // only the status or the transport error is.
@@ -218,7 +272,7 @@ class NewsRewriteService
             return $this->outcome('failed', $written);
         }
 
-        $reason = $this->rejection($sourceTitle, $sourceTeaser, $written);
+        $reason = $this->rejection($sourceTitle, $sourceTeaser, $written, checkEcho: ! $again);
 
         if ($reason !== null) {
             // Not saved: the row keeps body = NULL and is retried next run.
@@ -230,12 +284,16 @@ class NewsRewriteService
             return $this->outcome('rejected', $reason);
         }
 
+        // The editor's note is never rewritten, but it is part of the page.
+        $problems = $site === null ? ['the post has no site'] : NewsIndexGate::problems($written['body'], $site, $article->editor_note);
+        $indexReason = $problems === [] ? null : 'kept noindex: ' . implode('; ', $problems);
+
         if ($dryRun) {
-            return $this->outcome('rewritten', null, $this->slugFor($article, $written['title']));
+            return $this->outcome('rewritten', $indexReason, $this->slugFor($article, $written['title']), $problems === []);
         }
 
         try {
-            $slug = $this->save($article, $written);
+            $slug = $this->save($article, $written, noindex: $problems !== []);
         } catch (Throwable $e) {
             Log::warning('news:rewrite could not save', [
                 'article_id' => $article->id,
@@ -245,7 +303,7 @@ class NewsRewriteService
             return $this->outcome('failed', 'save failed: ' . $e->getMessage());
         }
 
-        return $this->outcome('rewritten', null, $slug);
+        return $this->outcome('rewritten', $indexReason, $slug, $problems === []);
     }
 
     /**
@@ -255,16 +313,16 @@ class NewsRewriteService
      * file it just wrote; the OLD cover is only deleted after the commit, so a
      * rollback can never leave the article pointing at a file that is gone.
      *
-     * @param array{title: string, excerpt: string, body: string} $written
+     * @param array{title: string, excerpt: string, body: string, meta_title: ?string, meta_description: ?string} $written
      */
-    private function save(Article $article, array $written): string
+    private function save(Article $article, array $written, bool $noindex): string
     {
         $oldSlug = (string) $article->slug;
         $oldCover = $article->hero_image_path;
         $newCover = null;
 
         try {
-            $slug = DB::transaction(function () use ($article, $written, $oldCover, &$newCover): string {
+            $slug = DB::transaction(function () use ($article, $written, $noindex, $oldCover, &$newCover): string {
                 $slug = $this->slugFor($article, $written['title']);
                 $newCover = $this->covers->generate($slug, $written['title'], $written['excerpt']);
 
@@ -272,12 +330,18 @@ class NewsRewriteService
                     'title'   => $written['title'],
                     'excerpt' => $written['excerpt'],
                     'body'    => $written['body'],
+                    // Replaced with the copy they describe: a meta title kept
+                    // from the old headline would advertise a different text.
+                    // Null (the model sent nothing usable) falls back to the
+                    // title and excerpt on the page.
+                    'meta_title'       => $written['meta_title'],
+                    'meta_description' => $written['meta_description'],
                     'slug'    => $slug,
                     // Null means drawing failed; keep the cover it already had.
                     'hero_image_path' => $newCover ?? $oldCover,
-                    // `noindex` is deliberately left ON. Original wording is not
-                    // added value: an editor unticks it once the post clears
-                    // NewsIndexGate (length + a link into this site).
+                    // Indexable only when the body clears NewsIndexGate (length
+                    // + a link into this site), the same bar the admin applies.
+                    'noindex' => $noindex,
                     // `active` is deliberately absent: approval stays a human act.
                 ]);
 
@@ -308,9 +372,10 @@ class NewsRewriteService
      * Call the model. Returns the sanitised fields, or a reason string when the
      * reply was unusable; throws only on transport errors.
      *
+     * @param  list<string>  $allowedPaths  internal hrefs the body may keep
      * @return array{title: string, excerpt: string, body: string}|string
      */
-    private function ask(string $headline, string $teaser): array|string
+    private function ask(string $facts, array $allowedPaths): array|string
     {
         $response = Http::withHeaders([
             // A header, never the query string: URLs end up in access logs and
@@ -325,7 +390,7 @@ class NewsRewriteService
             ->post(self::ENDPOINT, [
                 'model'              => (string) config('news.rewrite.model'),
                 'system_instruction' => self::PROMPT,
-                'input'              => $this->facts($headline, $teaser),
+                'input'              => $facts,
                 'generation_config'  => ['temperature' => self::TEMPERATURE],
                 'response_mime_type' => 'application/json',
                 'response_format'    => self::REPLY_SCHEMA,
@@ -357,7 +422,7 @@ class NewsRewriteService
         $title = $this->plain($json['title'] ?? null);
         $excerpt = $this->plain($json['excerpt'] ?? null);
         $body = is_string($json['body_html'] ?? null)
-            ? trim(strip_tags($json['body_html'], self::BODY_TAGS))
+            ? $this->cleanBody($json['body_html'], $allowedPaths)
             : '';
 
         if ($title === '' || $excerpt === '' || $body === '') {
@@ -368,6 +433,10 @@ class NewsRewriteService
             'title'   => Str::limit($title, self::TITLE_MAX, ''),
             'excerpt' => Str::limit($excerpt, self::EXCERPT_MAX, ''),
             'body'    => $body,
+            // Optional in effect: a missing or empty one is null, never a
+            // reason to throw the article away.
+            'meta_title'       => $this->fitted($this->plain($json['meta_title'] ?? null), self::META_TITLE_MAX),
+            'meta_description' => $this->fitted($this->plain($json['meta_description'] ?? null), self::META_DESCRIPTION_MAX),
         ];
     }
 
@@ -380,8 +449,9 @@ class NewsRewriteService
     editorial stance is consumer protection: licence checks, withdrawal terms,
     payment practice and safer-play tools. The audience is adult players.
 
-    You will be given the facts of one news story: a headline and a teaser.
-    Write an ORIGINAL item from those facts.
+    You will be given the facts of one news story: a headline and a teaser,
+    and sometimes an earlier version of the article. Write an ORIGINAL item
+    from those facts. You may also be given a list of this site's own pages.
 
     Rules:
     - Write from scratch. Do not reuse the source's sentences, phrasing or
@@ -389,38 +459,174 @@ class NewsRewriteService
     - Use only the given facts. Never invent numbers, names, dates, quotes or
       outcomes. Brief, widely known general background is allowed, but it must
       add no new specifics.
-    - 150 to 280 words in the body.
+    - 350 to 500 words in the body. Reach that length with useful context for
+      players (how licensing, payments or safer-play rules like this usually
+      work in general), never by repeating yourself or adding new specifics.
     - Neutral tone. No promotional language, no hype, no exclamation marks.
       Never imply gambling is a way to make money.
     - End the body with <h2>What this means for players</h2> followed by one
       short paragraph.
-    - HTML in the body is limited to p, h2, ul, ol, li, strong and em. No
-      links, no images, no h1.
+    - HTML in the body is limited to p, h2, ul, ol, li, strong, em and a. No
+      images, no h1.
+    - Link one or two of the listed site pages that genuinely relate to the
+      story, as <a href="/path">natural anchor text</a>, using the path exactly
+      as listed. Never link anything that is not on the list. If no page is
+      listed, or none relates, use no links.
+    - You may be given "Casinos on this site this story bears on", with facts
+      from the site's own records. When given, add before the final section
+      <h2>Casinos on our site this affects</h2> with one short paragraph or a
+      list: state those facts for each casino, attributed to that casino, and
+      link each casino by its path. Use only the facts listed for it, and do
+      not say how the story will change any of them. Without that list, leave
+      this section out.
     - Do not name the source publication; the page credits it separately.
     - title: at most 90 characters, and not the source's headline.
     - excerpt: one or two sentences, at most 200 characters.
+    - meta_title: the search result title, 40 to 50 characters. Lead with the
+      main subject (the regulator, operator or rule), say what happened, and
+      do not copy the title word for word. No site name, no quotes, no
+      clickbait, nothing the facts do not support.
+    - meta_description: the search result snippet, 120 to 155 characters, one
+      or two plain sentences: what happened and why it matters to players. Not
+      a copy of the excerpt. No calls to action like "click" or "sign up".
 
     Reply with a single JSON object and nothing else:
-    {"title": "...", "excerpt": "...", "body_html": "<p>...</p>"}
+    {"title": "...", "excerpt": "...", "body_html": "<p>...</p>",
+     "meta_title": "...", "meta_description": "..."}
     TXT;
 
-    /** The facts, and only the facts — two of them, because two is what the row holds. */
-    private function facts(string $headline, string $teaser): string
+    /**
+     * The facts, and only the facts: the row's headline and teaser, the
+     * earlier body when this is a repeat, and the pages the body may link.
+     *
+     * @param list<array{label: string, path: string}> $links
+     * @param list<array{name: string, path: string, facts: list<string>}> $casinos
+     */
+    private function facts(string $headline, string $teaser, ?string $earlierBody = null, array $links = [], array $casinos = []): string
     {
-        return "Headline: {$headline}\nTeaser: {$teaser}";
+        $facts = "Headline: {$headline}\nTeaser: {$teaser}";
+
+        if ($earlierBody !== null) {
+            // A space for every tag, so paragraphs do not run into each other.
+            $text = html_entity_decode(strip_tags(str_replace('<', ' <', $earlierBody)), ENT_QUOTES | ENT_HTML5);
+            $facts .= "\nEarlier version of the article:\n" . trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+        }
+
+        if ($links !== []) {
+            $facts .= "\n\nSite pages you may link:\n" . implode("\n", array_map(
+                static fn (array $link): string => "- {$link['label']}: {$link['path']}",
+                $links,
+            ));
+        }
+
+        if ($casinos !== []) {
+            $facts .= "\n\nCasinos on this site this story bears on (site records; state only these facts):\n"
+                . implode("\n", array_map(
+                    static fn (array $c): string => "- {$c['name']} ({$c['path']}): " . implode(' ', $c['facts']),
+                    $casinos,
+                ));
+        }
+
+        return $facts;
+    }
+
+    /**
+     * This site's own pages the body may link: categories that list at least
+     * one of its active casinos (the public listing's rule, so none of them
+     * 404s) and its active casinos by placement. Paths match NewsIndexGate.
+     *
+     * @return list<array{label: string, path: string}>
+     */
+    private function linkCatalog(Site $site): array
+    {
+        return $this->catalogs[$site->id] ??= $this->buildLinkCatalog($site);
+    }
+
+    /** @return list<array{label: string, path: string}> */
+    private function buildLinkCatalog(Site $site): array
+    {
+        $attached = static fn ($query) => $query->where('casinos.active', true)->attachedToSite($site->id);
+
+        $categories = Category::query()
+            ->whereHas('casinos', $attached)
+            ->where('noindex', false)
+            ->ordered()
+            ->get(['name', 'slug'])
+            ->map(static fn (Category $c): array => ['label' => $c->name . ' casinos', 'path' => '/categories/' . $c->slug]);
+
+        $casinos = Casino::query()
+            ->where('casinos.active', true)
+            ->join('casino_site', 'casino_site.casino_id', '=', 'casinos.id')
+            ->where('casino_site.site_id', $site->id)
+            ->where('casino_site.active', true)
+            ->orderBy('casino_site.position')
+            ->limit(self::CATALOG_CASINOS)
+            ->get(['casinos.name', 'casinos.slug'])
+            ->map(static fn (Casino $c): array => ['label' => $c->name . ' review', 'path' => '/casinos/' . $c->slug]);
+
+        return $categories->concat($casinos)
+            ->filter(static fn (array $link): bool => NewsIndexGate::isLinkablePath($link['path']))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * The body reduced to the allowed tags, every attribute dropped, and each
+     * link kept only when its href is one of the offered paths (at most
+     * MAX_LINKS); any other link is unwrapped to its text.
+     *
+     * @param list<string> $allowedPaths
+     */
+    private function cleanBody(string $html, array $allowedPaths): string
+    {
+        $body = strip_tags($html, self::BODY_TAGS);
+
+        // strip_tags keeps attributes; nothing but an href is ever wanted.
+        $body = preg_replace('/<(p|h2|ul|ol|li|strong|em)\b[^>]*>/i', '<$1>', $body) ?? '';
+
+        $kept = [];
+        $body = preg_replace_callback(
+            '/<a\b([^>]*)>(.*?)<\/a\s*>/is',
+            function (array $m) use ($allowedPaths, &$kept): string {
+                $text = strip_tags($m[2]);
+                $href = preg_match('/\bhref\s*=\s*(["\'])(.*?)\1/i', $m[1], $h) === 1 ? rtrim(trim($h[2]), '/') : '';
+
+                if (count($kept) >= self::MAX_LINKS || ! in_array($href, $allowedPaths, true) || trim($text) === '') {
+                    return $text;
+                }
+
+                $kept[] = '<a href="' . e($href) . '">' . e(html_entity_decode($text, ENT_QUOTES | ENT_HTML5)) . '</a>';
+
+                // A placeholder, so the stray-tag pass below cannot touch it.
+                return "\x00" . (count($kept) - 1) . "\x00";
+            },
+            $body,
+        ) ?? '';
+
+        // Unclosed or stray <a> tags left after the pass carry no safe href.
+        $body = preg_replace('/<\/?a\b[^>]*>/i', '', $body) ?? '';
+
+        return trim(preg_replace_callback('/\x00(\d+)\x00/', static fn (array $m): string => $kept[(int) $m[1]], $body) ?? '');
     }
 
     /**
      * Why this rewrite must not be saved, or null when it may.
      *
+     * `checkEcho` off for a repeat rewrite: the "source" is then this site's
+     * own earlier copy, and resembling it is not copying anyone.
+     *
      * @param array{title: string, excerpt: string, body: string} $written
      */
-    private function rejection(string $headline, string $teaser, array $written): ?string
+    private function rejection(string $headline, string $teaser, array $written, bool $checkEcho = true): ?string
     {
         $words = count($this->words(strip_tags($written['body'])));
 
         if ($words < self::MIN_BODY_WORDS) {
             return "body is {$words} words, under " . self::MIN_BODY_WORDS;
+        }
+
+        if (! $checkEcho) {
+            return null;
         }
 
         similar_text(mb_strtolower($headline), mb_strtolower($written['title']), $similarity);
@@ -431,7 +637,8 @@ class NewsRewriteService
 
         $overlap = $this->overlap(
             $headline . ' ' . $teaser,
-            $written['title'] . ' ' . $written['excerpt'] . ' ' . strip_tags($written['body']),
+            $written['title'] . ' ' . $written['excerpt'] . ' ' . strip_tags($written['body'])
+                . ' ' . $written['meta_title'] . ' ' . $written['meta_description'],
         );
         $max = (float) config('news.rewrite.max_overlap', 0.15);
 
@@ -538,6 +745,27 @@ class NewsRewriteService
         return ($cut !== false && $cut > 40) ? substr($slug, 0, $cut) : rtrim($slug, '-');
     }
 
+    /**
+     * Cut at the last whole word that fits, trailing punctuation dropped; null
+     * when there is nothing to keep. No ellipsis: the site adds its own when
+     * it has to shorten again.
+     */
+    private function fitted(string $text, int $max): ?string
+    {
+        if ($text === '') {
+            return null;
+        }
+
+        if (mb_strlen($text) <= $max) {
+            return $text;
+        }
+
+        $cut = mb_substr($text, 0, $max + 1);
+        $head = preg_replace(['/\s+\S*$/u', '/[\s,;:.\x{2014}\x{2013}-]+$/u'], '', $cut) ?? '';
+
+        return $head !== '' ? $head : mb_substr($text, 0, $max);
+    }
+
     private function plain(mixed $value): string
     {
         return is_string($value)
@@ -546,9 +774,14 @@ class NewsRewriteService
             : '';
     }
 
-    /** @return array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string} */
-    private function outcome(string $status, ?string $reason, ?string $slug = null): array
+    /**
+     * `indexed` is null unless the post was (or, on a dry run, would be) saved;
+     * a saved post's `reason` says why it was kept noindex, if it was.
+     *
+     * @return array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string, indexed: ?bool}
+     */
+    private function outcome(string $status, ?string $reason, ?string $slug = null, ?bool $indexed = null): array
     {
-        return ['status' => $status, 'reason' => $reason, 'slug' => $slug];
+        return ['status' => $status, 'reason' => $reason, 'slug' => $slug, 'indexed' => $indexed];
     }
 }

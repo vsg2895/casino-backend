@@ -55,17 +55,13 @@ class NewsSectionTest extends TestCase
     /**
      * @return list<string> titles in the public news feed
      *
-     * The endpoint returns `data.posts` alongside `data.popular` and
-     * `data.categories` — one request feeds the whole page, so the feed is a
-     * key rather than the whole payload.
+     * The endpoint returns `data.posts` alongside `data.popular` — one request
+     * feeds the whole page, so the feed is a key rather than the whole payload.
      */
-    private function feed(?string $categorySlug = null): array
+    private function feed(): array
     {
-        $url = $this->publicBase($this->site) . '/news'
-            . ($categorySlug !== null ? '?category=' . $categorySlug : '');
-
         return array_column(
-            $this->getJson($url, $this->siteHeaders($this->key))->assertOk()->json('data.posts'),
+            $this->getJson($this->publicBase($this->site) . '/news', $this->siteHeaders($this->key))->assertOk()->json('data.posts'),
             'title',
         );
     }
@@ -827,157 +823,6 @@ class NewsSectionTest extends TestCase
 
         $this->putJson($url, ['title' => $post->title, 'body' => $post->body, 'featured' => false])->assertOk();
         $this->assertSame([], $this->featuredFeed());
-    }
-
-    // ── news categories ─────────────────────────────────────────────────────
-
-    private function category(string $name, int $position = 0, bool $active = true): \App\Models\NewsCategory
-    {
-        return \App\Models\NewsCategory::create([
-            'site_id' => $this->site->id, 'name' => $name, 'position' => $position, 'active' => $active,
-        ]);
-    }
-
-    /** @return array<string, int> category name => visible post count */
-    private function topics(): array
-    {
-        $data = $this->getJson($this->publicBase($this->site) . '/news', $this->siteHeaders($this->key))
-            ->assertOk()->json('data.categories');
-
-        return array_column($data, 'articles_count', 'name');
-    }
-
-    public function test_a_post_carries_its_category(): void
-    {
-        $licensing = $this->category('Licensing');
-        $post = $this->article(Article::TYPE_NEWS, 'Regulator news');
-        $post->update(['news_category_id' => $licensing->id]);
-
-        $row = $this->getJson($this->publicBase($this->site) . '/news', $this->siteHeaders($this->key))
-            ->assertOk()->json('data.posts.0');
-
-        $this->assertSame('Licensing', $row['news_category']['name']);
-        $this->assertSame('licensing', $row['news_category']['slug']);
-    }
-
-    public function test_a_post_without_a_category_still_publishes(): void
-    {
-        $this->article(Article::TYPE_NEWS, 'Uncategorised');
-
-        $this->assertSame(['Uncategorised'], $this->feed());
-    }
-
-    public function test_the_feed_can_be_filtered_by_category(): void
-    {
-        $licensing = $this->category('Licensing');
-        $payments = $this->category('Payments');
-
-        $a = $this->article(Article::TYPE_NEWS, 'Licence story');
-        $a->update(['news_category_id' => $licensing->id]);
-        $b = $this->article(Article::TYPE_NEWS, 'Payment story');
-        $b->update(['news_category_id' => $payments->id]);
-        $this->article(Article::TYPE_NEWS, 'No category');
-
-        $this->assertSame(['Licence story'], $this->feed('licensing'));
-        $this->assertCount(3, $this->feed());
-    }
-
-    /** A stale topic link must show that the topic is gone, not silently show everything. */
-    public function test_an_unknown_category_slug_returns_an_empty_feed(): void
-    {
-        $this->article(Article::TYPE_NEWS, 'Something');
-
-        $this->assertSame([], $this->feed('does-not-exist'));
-    }
-
-    /** A pill leading to an empty feed is a broken promise, so it is not offered. */
-    public function test_topics_list_only_categories_that_have_visible_posts(): void
-    {
-        $used = $this->category('Licensing');
-        $this->category('Empty section');
-        $hidden = $this->category('Switched off', 10, active: false);
-
-        $a = $this->article(Article::TYPE_NEWS, 'Licence story');
-        $a->update(['news_category_id' => $used->id]);
-        $b = $this->article(Article::TYPE_NEWS, 'Hidden section story');
-        $b->update(['news_category_id' => $hidden->id]);
-
-        $this->assertSame(['Licensing' => 1], $this->topics());
-    }
-
-    public function test_the_popular_rail_holds_the_picks_and_ignores_the_filter(): void
-    {
-        $licensing = $this->category('Licensing');
-        $payments = $this->category('Payments');
-
-        $pick = $this->article(Article::TYPE_NEWS, 'Picked payment story');
-        // `to_be_most_popular`, not `featured`: the rail and the home page strip
-        // are separate picks now — see NewsMostPopularTest.
-        $pick->update(['to_be_most_popular' => true, 'news_category_id' => $payments->id]);
-        $other = $this->article(Article::TYPE_NEWS, 'Licence story');
-        $other->update(['news_category_id' => $licensing->id]);
-
-        $popular = array_column(
-            $this->getJson($this->publicBase($this->site) . '/news?category=licensing', $this->siteHeaders($this->key))
-                ->assertOk()->json('data.popular'),
-            'title',
-        );
-
-        // Filtered to Licensing, but the rail still offers the way out.
-        $this->assertSame(['Picked payment story'], $popular);
-    }
-
-    public function test_admin_can_manage_categories(): void
-    {
-        $this->actingAsAdmin();
-        $base = "/api/v1/admin/sites/{$this->site->id}/news-categories";
-
-        $id = $this->postJson($base, ['name' => 'Licensing', 'position' => 10])
-            ->assertCreated()->json('data.id');
-        $this->assertSame('licensing', \App\Models\NewsCategory::findOrFail($id)->slug);
-
-        $this->putJson("{$base}/{$id}", ['name' => 'Licences & Regulators', 'active' => false])
-            ->assertOk()
-            ->assertJsonPath('data.name', 'Licences & Regulators')
-            ->assertJsonPath('data.active', false);
-
-        // The slug is in /news?category=… — a rename must not move the address.
-        $this->assertSame('licensing', \App\Models\NewsCategory::findOrFail($id)->slug);
-
-        $this->assertCount(1, $this->getJson($base)->assertOk()->json('data'));
-
-        $this->deleteJson("{$base}/{$id}")->assertOk();
-        $this->assertNull(\App\Models\NewsCategory::find($id));
-    }
-
-    public function test_deleting_a_category_leaves_its_posts_published(): void
-    {
-        $category = $this->category('Licensing');
-        $post = $this->article(Article::TYPE_NEWS, 'Survives');
-        $post->update(['news_category_id' => $category->id]);
-        $this->actingAsAdmin();
-
-        $this->deleteJson("/api/v1/admin/sites/{$this->site->id}/news-categories/{$category->id}")
-            ->assertOk()
-            ->assertJsonPath('orphaned', 1);
-
-        $post->refresh();
-        $this->assertNull($post->news_category_id);
-        $this->assertSame(['Survives'], $this->feed(), 'The post must stay published.');
-    }
-
-    public function test_one_site_cannot_edit_another_sites_category(): void
-    {
-        [$other] = $this->siteWithKey(['news_enabled' => true]);
-        $theirs = \App\Models\NewsCategory::create(['site_id' => $other->id, 'name' => 'Theirs']);
-        $this->actingAsAdmin();
-
-        $this->putJson("/api/v1/admin/sites/{$this->site->id}/news-categories/{$theirs->id}", ['name' => 'Hijacked'])
-            ->assertNotFound();
-        $this->deleteJson("/api/v1/admin/sites/{$this->site->id}/news-categories/{$theirs->id}")
-            ->assertNotFound();
-
-        $this->assertSame('Theirs', $theirs->fresh()->name);
     }
 
     // ── reading time ────────────────────────────────────────────────────────

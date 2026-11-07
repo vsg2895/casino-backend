@@ -8,10 +8,12 @@ use App\Exceptions\PromotionMailerException;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
+use App\Models\ScheduleSendHistory;
 use App\Models\Site;
 use App\Models\SitePromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
+use App\Support\Mail\ScheduleSendContext;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Query\Builder;
@@ -48,6 +50,11 @@ use Throwable;
  *     `history_flush_size` attempts — not only at the end. A worker killed
  *     mid-batch (timeout, OOM, deploy) therefore leaves at most one flush
  *     window of delivered addresses unrecorded, instead of the whole batch.
+ *
+ * SCHEDULE HISTORY. A batch dispatched by a schedule carries its id, and then
+ * also skips anyone resting inside the schedule's cooldown and writes every
+ * outcome to `schedule_send_histories` — the Schedule tab of Email History. A
+ * payload queued before that existed carries no id and behaves as it always did.
  *
  * Runs on the LOW queue (marketing).
  */
@@ -89,6 +96,21 @@ class SendPromotionBatchJob implements ShouldQueue
      */
     public ?int $credentialId = null;
 
+    /**
+     * The schedule that dispatched this batch, for its cooldown and history.
+     * A plain defaulted property for the same reason as $credentialId: an older
+     * payload lacks it and must still run.
+     */
+    public ?int $scheduleId = null;
+
+    /**
+     * email => newsletter id for this batch, so a history row can point at the
+     * subscriber. Filled in handle(); never serialised with meaning.
+     *
+     * @var array<string, int>
+     */
+    private array $recipientIds = [];
+
     /** @param list<string> $emails */
     public function __construct(
         public readonly int $siteId,
@@ -97,8 +119,10 @@ class SendPromotionBatchJob implements ShouldQueue
         /** @deprecated Superseded by $credentialId; kept so old payloads and callers keep working. */
         public readonly ?int $sendgridKeyId = null,
         ?int $credentialId = null,
+        ?int $scheduleId = null,
     ) {
         $this->onQueue(self::ON_QUEUE);
+        $this->scheduleId = $scheduleId;
         $this->timeout = (int) config('promotions.batch_timeout', 240);
         // A caller that still passes only $sendgridKeyId (or an old payload)
         // resolves exactly as before.
@@ -136,7 +160,7 @@ class SendPromotionBatchJob implements ShouldQueue
                     ->where('unsubscribes.site_id', $this->siteId);
             })
             ->toBase()
-            ->get(['email', 'full_name', 'promotion_unsubscribe_token']);
+            ->get(['id', 'email', 'full_name', 'promotion_unsubscribe_token']);
 
         // Idempotency: one query against the history for who already received
         // this promotion within the last 24 hours (successes only), so neither
@@ -168,6 +192,33 @@ class SendPromotionBatchJob implements ShouldQueue
         $mailer = $resolved->mailer;
         $fromAddress = $resolved->fromAddress;
         $flushEvery = $this->flushSize();
+
+        // The schedule's cooldown and history, when a schedule sent this batch.
+        // Resting addresses are skipped exactly like the 24h dedup's.
+        $context = null;
+
+        if ($this->scheduleId !== null) {
+            $schedule = EmailSchedule::find($this->scheduleId);
+            $this->recipientIds = $recipients->pluck('id', 'email')->map(static fn ($id): int => (int) $id)->all();
+            $context = ScheduleSendContext::for(
+                $schedule,
+                $this->scheduleId,
+                $this->siteId,
+                EmailSchedule::AUDIENCE_NEWSLETTERS,
+                $this->provider,
+                $this->credentialId ?? $this->sendgridKeyId,
+                $fromAddress,
+            );
+
+            foreach (ScheduleSendHistory::restingAmong(
+                $this->siteId,
+                EmailSchedule::TEMPLATE_PROMOTION,
+                $schedule?->cooldownDays() ?? EmailSchedule::MIN_COOLDOWN_DAYS,
+                $recipients->pluck('email')->all(),
+            ) as $resting) {
+                $alreadySent[$resting] = true;
+            }
+        }
 
         // Outcome of every processed address (email => success|failed|skipped),
         // buffered for a BULK history insert — never one write per recipient.
@@ -214,7 +265,7 @@ class SendPromotionBatchJob implements ShouldQueue
             // Checkpoint: everything decided so far is durable, so a retry after
             // a crash resumes rather than re-sending.
             if (count($attempts) >= $flushEvery) {
-                $this->recordHistory($attempts, $errors);
+                $this->recordHistory($attempts, $errors, $context);
                 $attempts = [];
                 $errors = [];
             }
@@ -224,7 +275,7 @@ class SendPromotionBatchJob implements ShouldQueue
         // them, and the job may sit in a long-lived worker process.
         unset($recipients, $alreadySent);
 
-        $this->recordHistory($attempts, $errors);
+        $this->recordHistory($attempts, $errors, $context);
 
         // One line per batch (not per recipient): a 50k campaign produces ~500
         // log lines instead of 50,000.
@@ -325,7 +376,7 @@ class SendPromotionBatchJob implements ShouldQueue
      * @param  array<string, string>       $attempts  email => STATUS_* value
      * @param  array<string, string|null>  $errors    email => failure message
      */
-    private function recordHistory(array $attempts, array $errors = []): void
+    private function recordHistory(array $attempts, array $errors = [], ?ScheduleSendContext $context = null): void
     {
         if ($attempts === []) {
             return;
@@ -333,6 +384,20 @@ class SendPromotionBatchJob implements ShouldQueue
 
         try {
             PromotionEmailHistory::recordAttempts($this->siteId, $attempts, $errors);
+
+            if ($context !== null) {
+                $rows = [];
+
+                foreach ($attempts as $email => $status) {
+                    $rows[] = $context->row((string) $email, $this->recipientIds[$email] ?? null, match ($status) {
+                        PromotionEmailHistory::STATUS_SUCCESS => ScheduleSendHistory::STATUS_SENT,
+                        PromotionEmailHistory::STATUS_FAILED  => ScheduleSendHistory::STATUS_FAILED,
+                        default                               => ScheduleSendHistory::STATUS_SKIPPED,
+                    }, $errors[$email] ?? null);
+                }
+
+                ScheduleSendHistory::record($rows);
+            }
         } catch (Throwable $e) {
             Log::warning('Promotion history write failed', [
                 'site_id' => $this->siteId,

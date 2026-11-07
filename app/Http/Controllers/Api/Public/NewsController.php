@@ -6,9 +6,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ArticleResource;
-use App\Http\Resources\NewsCategoryResource;
 use App\Models\Article;
-use App\Models\NewsCategory;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
@@ -51,7 +49,7 @@ class NewsController extends Controller
 
     /** @var list<string> The columns a listing row needs — never the body. */
     private const array LIST_COLUMNS = [
-        'id', 'site_id', 'type', 'news_category_id', 'title', 'slug', 'excerpt', 'read_minutes',
+        'id', 'site_id', 'type', 'title', 'slug', 'excerpt', 'read_minutes',
         'hero_image_path', 'published_at', 'active', 'featured', 'to_be_most_popular', 'updated_at',
         // Credited on the detail page. Carried on listing rows too so a card
         // can show its provenance without a second request.
@@ -74,16 +72,6 @@ class NewsController extends Controller
         $site = app('current_site');
         $this->assertEnabled($site);
 
-        /*
-         * `?category=slug` narrows the feed. Part of the cache key, so the
-         * filtered and unfiltered views cache apart instead of overwriting each
-         * other.
-         *
-         * An unknown slug yields an EMPTY feed rather than the full one: a
-         * reader who followed a stale topic link should see that the topic is
-         * gone, not silently get everything.
-         */
-        $categorySlug = $request->string('category')->trim()->value() ?: null;
         $page = max(1, $request->integer('page', 1));
 
         /*
@@ -102,22 +90,15 @@ class NewsController extends Controller
         $data = SiteCache::remember(
             $site->id,
             ['news'],
-            'news:index:site:' . $site->id . ':cat:' . ($categorySlug ?? 'all')
-                . ($all ? ':all' : ':page:' . $page),
+            'news:index:site:' . $site->id . ($all ? ':all' : ':page:' . $page),
             3600,
-            function () use ($site, $categorySlug, $page, $all) {
+            function () use ($site, $page, $all) {
                 $base = fn () => Article::query()
                     ->where('site_id', $site->id)
                     ->ofType(Article::TYPE_NEWS)
                     ->visible();
 
-                $feed = $base()->with('newsCategory');
-
-                if ($categorySlug !== null) {
-                    $feed->whereHas('newsCategory', fn ($q) => $q->where('slug', $categorySlug)->where('active', true));
-                }
-
-                $ordered = $feed->inListingOrder();
+                $ordered = $base()->inListingOrder();
 
                 if ($all) {
                     $posts = $ordered->get(self::LIST_COLUMNS);
@@ -161,12 +142,7 @@ class NewsController extends Controller
                 }
 
                 /*
-                 * The sidebar list is NOT filtered by the chosen category.
-                 * It is the site's standing picks; re-filtering it would leave a
-                 * near-empty rail next to a narrow feed, and the whole point of
-                 * the rail is to offer a way OUT of a narrow view.
-                 *
-                 * Driven by `to_be_most_popular`, its OWN flag — it used to
+                 * The sidebar list: the site's standing picks. Driven by `to_be_most_popular`, its OWN flag — it used to
                  * reuse `featured`, which meant promoting a post to the home
                  * page silently put it in this rail too, and the two surfaces
                  * could never be curated apart.
@@ -179,27 +155,14 @@ class NewsController extends Controller
                  */
                 $popular = $base()
                     ->toBeMostPopular()
-                    ->with('newsCategory')
                     ->mostPopularFirst()
                     ->limit(self::POPULAR_LIMIT)
                     ->get(self::LIST_COLUMNS);
 
-                // Only categories that actually have a visible post. A topic pill
-                // leading to an empty feed is the same broken promise as a menu
-                // entry leading to an empty section.
-                $categories = NewsCategory::query()
-                    ->where('site_id', $site->id)
-                    ->active()
-                    ->whereHas('articles', fn ($q) => $q->ofType(Article::TYPE_NEWS)->visible())
-                    ->withCount(['articles' => fn ($q) => $q->ofType(Article::TYPE_NEWS)->visible()])
-                    ->ordered()
-                    ->get();
-
                 return [
-                    'posts'      => ArticleResource::collection($posts)->resolve(),
-                    'popular'    => ArticleResource::collection($popular)->resolve(),
-                    'categories' => NewsCategoryResource::collection($categories)->resolve(),
-                    'meta'       => $meta,
+                    'posts'   => ArticleResource::collection($posts)->resolve(),
+                    'popular' => ArticleResource::collection($popular)->resolve(),
+                    'meta'    => $meta,
                 ];
             },
         );
@@ -234,7 +197,6 @@ class NewsController extends Controller
                 // cards into it — the limit is a layout decision, so it belongs
                 // where the layout cannot be bypassed.
                 ->limit(self::FEATURED_LIMIT)
-                ->with('newsCategory')
                 ->get(self::LIST_COLUMNS);
 
             return ArticleResource::collection($articles)->resolve();
@@ -273,7 +235,6 @@ class NewsController extends Controller
                     ->ofType(Article::TYPE_NEWS)
                     ->visible()
                     ->toBeMostPopular()
-                    ->with('newsCategory')
                     ->mostPopularFirst()
                     ->paginate(self::PER_PAGE, self::LIST_COLUMNS, 'page', $page);
 
@@ -309,7 +270,7 @@ class NewsController extends Controller
                     ->ofType(Article::TYPE_NEWS)
                     ->where('slug', $slug)
                     ->visible()
-                    ->with(['newsCategory', 'author' => fn ($q) => $q->visible(), 'reviewer' => fn ($q) => $q->visible()])
+                    ->with(['author' => fn ($q) => $q->visible(), 'reviewer' => fn ($q) => $q->visible()])
                     ->firstOrFail();
 
                 return (new ArticleResource($article))->resolve();

@@ -22,7 +22,6 @@ use App\Http\Controllers\Api\Admin\SiteForumController;
 use App\Http\Controllers\Api\Admin\MailgunKeyController;
 use App\Http\Controllers\Api\Admin\MailgunReceiverController;
 use App\Http\Controllers\Api\Admin\SmtpCredentialController;
-use App\Http\Controllers\Api\Admin\PromotionEmailHistoryController;
 use App\Http\Controllers\Api\Admin\NewsletterController as AdminNewsletterController;
 use App\Http\Controllers\Api\Admin\NewsletterPhoneController;
 use App\Http\Controllers\Api\Admin\SmsTemplateController;
@@ -30,6 +29,8 @@ use App\Http\Controllers\Api\Admin\TwilioConfigController;
 use App\Http\Controllers\Api\Admin\EmailTemplateTypeController;
 use App\Http\Controllers\Api\Admin\RedirectController as AdminRedirectController;
 use App\Http\Controllers\Api\Admin\SendgridKeyController;
+use App\Http\Controllers\Api\Admin\SendgridReceiverController;
+use App\Http\Controllers\Api\Admin\ScheduleSendHistoryController;
 use App\Http\Controllers\Api\Admin\SeoTemplateController;
 use App\Http\Controllers\Api\Admin\SiteController;
 use App\Http\Controllers\Api\Admin\SiteRevalidationController;
@@ -56,7 +57,6 @@ use App\Http\Controllers\Api\Public\CategoryController as PublicCategoryControll
 use App\Http\Controllers\Api\Public\SitemapController as PublicSitemapController;
 use App\Http\Controllers\Api\Public\CountryController as PublicCountryController;
 use App\Http\Controllers\Api\Admin\BonusCategoryController as AdminBonusCategoryController;
-use App\Http\Controllers\Api\Admin\NewsCategoryController as AdminNewsCategoryController;
 use App\Http\Controllers\Api\Public\BonusController as PublicBonusController;
 use App\Http\Controllers\Api\Public\NewsController as PublicNewsController;
 use App\Http\Controllers\Api\Public\CmsPageController as PublicCmsPageController;
@@ -65,6 +65,8 @@ use App\Http\Controllers\Api\Public\ArticleController as PublicArticleController
 use App\Http\Controllers\Api\Public\EditorialController;
 use App\Http\Controllers\Api\Public\MailgunUnsubscribeController;
 use App\Http\Controllers\Api\Public\MailgunWebhookController;
+use App\Http\Controllers\Api\Public\SendgridUnsubscribeController;
+use App\Http\Controllers\Api\Public\SendgridWebhookController;
 use App\Http\Controllers\Api\Public\NavigationController as PublicNavigationController;
 use App\Http\Controllers\Api\Public\RedirectController as PublicRedirectController;
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
@@ -160,12 +162,6 @@ Route::prefix('v1')->group(function () {
         Route::get('sites/{site}/authors/{author}', [AdminAuthorController::class, 'show']);
         Route::put('sites/{site}/authors/{author}', [AdminAuthorController::class, 'update']);
         Route::delete('sites/{site}/authors/{author}', [AdminAuthorController::class, 'destroy']);
-
-        // News categories — one site's editorial sections.
-        Route::get('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'index']);
-        Route::post('sites/{site}/news-categories', [AdminNewsCategoryController::class, 'store']);
-        Route::put('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'update']);
-        Route::delete('sites/{site}/news-categories/{newsCategory}', [AdminNewsCategoryController::class, 'destroy']);
 
         // Literal before `articles/{article}`, or "count" is read as an id.
         Route::get('sites/{site}/articles/count', [AdminArticleController::class, 'count']);
@@ -516,6 +512,30 @@ Route::prefix('v1')->group(function () {
         Route::get('mailgun-keys/{mailgun_key}/receiver-template-source', [MailgunKeyController::class, 'receiverTemplateSource']);
         Route::post('mailgun-keys/{mailgun_key}/receiver-run', [MailgunKeyController::class, 'runReceiverCampaign']);
 
+        // ── SendGrid receivers ───────────────────────────────────────────────
+        // The second Custom Receivers list, mailed by sendgrid-keys only. The
+        // same contract as mailgun-receivers above, against its own table — and
+        // the same rule: literal segments BEFORE the apiResource.
+        Route::get('sendgrid-receivers/count', [SendgridReceiverController::class, 'count']);
+        Route::get('sendgrid-receivers/sources', [SendgridReceiverController::class, 'sources']);
+        Route::post('sendgrid-receivers/import', [SendgridReceiverController::class, 'import']);
+        Route::get('sendgrid-receivers/imports/{sendgrid_receiver_import}', [SendgridReceiverController::class, 'importStatus']);
+        Route::post('sendgrid-receivers/bulk', [SendgridReceiverController::class, 'bulk']);
+        // Whole-list reset; the artisan twin is mailgun:reset-receiver-sends --list=sendgrid.
+        Route::post('sendgrid-receivers/reset-sends', [SendgridReceiverController::class, 'resetSends']);
+        Route::apiResource('sendgrid-receivers', SendgridReceiverController::class)
+            ->parameters(['sendgrid-receivers' => 'sendgrid_receiver'])
+            ->except(['show']);
+
+        // Per-key receiver targeting, the same endpoints as mailgun-keys above.
+        // No scheduler reads them: a SendGrid key runs only from receiver-run.
+        Route::get('sendgrid-keys/{sendgrid_key}/receiver-settings', [SendgridKeyController::class, 'receiverSettings']);
+        Route::put('sendgrid-keys/{sendgrid_key}/receiver-settings', [SendgridKeyController::class, 'updateReceiverSettings']);
+        Route::get('sendgrid-keys/{sendgrid_key}/receiver-preview', [SendgridKeyController::class, 'previewReceiverBatch']);
+        Route::post('sendgrid-keys/{sendgrid_key}/receiver-message-preview', [SendgridKeyController::class, 'previewReceiverMessage']);
+        Route::get('sendgrid-keys/{sendgrid_key}/receiver-template-source', [SendgridKeyController::class, 'receiverTemplateSource']);
+        Route::post('sendgrid-keys/{sendgrid_key}/receiver-run', [SendgridKeyController::class, 'runReceiverCampaign']);
+
         // ── SMTP credentials (Email Configs) ─────────────────────────────────
         // Own SMTP servers that mail the SAME receiver list through a different
         // transport. Same CRUD / toggle / test / receiver-targeting contract as
@@ -545,13 +565,14 @@ Route::prefix('v1')->group(function () {
         Route::get('schedules/{schedule}/recipients', [EmailScheduleController::class, 'recipients']);
         Route::get('schedules/{schedule}/recipients/export', [EmailScheduleController::class, 'exportRecipients']);
 
-        // Promotion delivery history (read-only; partitioned + prefix search)
-        Route::get('promotion-history', [PromotionEmailHistoryController::class, 'index']);
-        Route::get('promotion-history/count', [PromotionEmailHistoryController::class, 'count']);
-        // `{history}` is an INT, not a model: the table is partitioned and the
-        // controller deletes by (id, sent_date) so MySQL can prune to one month.
-        Route::delete('promotion-history/{history}', [PromotionEmailHistoryController::class, 'destroy'])
-            ->whereNumber('history');
+        // Schedule send history (Email History → Schedules): every address a
+        // schedule mailed, with its list and email config. Literal segments
+        // before the parameter route.
+        Route::get('schedule-history/count', [ScheduleSendHistoryController::class, 'count']);
+        Route::get('schedule-history/schedules', [ScheduleSendHistoryController::class, 'schedules']);
+        Route::get('schedule-history', [ScheduleSendHistoryController::class, 'index']);
+        Route::delete('schedule-history/{scheduleSendHistory}', [ScheduleSendHistoryController::class, 'destroy'])
+            ->whereNumber('scheduleSendHistory');
 
         // Unsubscribes (per-stream opt-out log)
         // Email address validation (SendGrid). READ-ONLY: stats and the audit
@@ -604,10 +625,25 @@ Route::prefix('v1')->group(function () {
     Route::post('mailgun-unsubscribe/{token}/confirm', [MailgunUnsubscribeController::class, 'confirm'])
         ->middleware('throttle:60,1');
 
+    // SendGrid receiver unsubscribe — the same three routes, the same
+    // reasoning, against the SendGrid list.
+    Route::post('sendgrid-unsubscribe/{token}', [SendgridUnsubscribeController::class, 'oneClick'])
+        ->middleware('throttle:60,1');
+    Route::get('sendgrid-unsubscribe/{token}', [SendgridUnsubscribeController::class, 'show'])
+        ->middleware('throttle:60,1');
+    Route::post('sendgrid-unsubscribe/{token}/confirm', [SendgridUnsubscribeController::class, 'confirm'])
+        ->middleware('throttle:60,1');
+
     // Mailgun delivery events. Public by necessity — Mailgun sends no bearer
     // token — so the HMAC signature is the only authentication; see the
     // controller. Throttled generously: a large send produces many events.
     Route::post('mailgun-webhook', MailgunWebhookController::class)
+        ->middleware('throttle:600,1');
+
+    // SendGrid Event Webhook (bounces, spam reports, unsubscribes). Public by
+    // necessity; the ECDSA signature is the only authentication — see the
+    // controller. Same generous throttle: a large send produces many batches.
+    Route::post('sendgrid-webhook', SendgridWebhookController::class)
         ->middleware('throttle:600,1');
 
     // ── Double opt-in verify (keyless, token is the credential) ──────────────

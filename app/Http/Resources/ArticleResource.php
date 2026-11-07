@@ -35,19 +35,13 @@ class ArticleResource extends JsonResource
             // Null when the body is empty — the card shows nothing rather than
             // claiming "0 min read".
             'read_minutes' => $this->read_minutes,
-            'news_category_id' => $this->news_category_id,
-            // Only when eager-loaded — a listing that forgot to load it gets
-            // null rather than an N+1 query per card.
-            'news_category' => $this->whenLoaded('newsCategory', fn () => [
-                'id'   => $this->newsCategory->id,
-                'name' => $this->newsCategory->name,
-                'slug' => $this->newsCategory->slug,
-            ]),
             'title' => $this->title,
             'slug'    => $this->slug,
             'excerpt' => $this->excerpt,
             // Only present when the controller selected it — see the class note.
             'body'    => $this->when(! is_null($this->body) || $this->isLoadedForDetail(), $this->body),
+            // Detail responses only, like the body. Plain text.
+            'editor_note' => $this->when($this->isLoadedForDetail(), fn (): ?string => $this->editor_note),
             'hero_image_path' => $this->hero_image_path,
             // Detail responses only: whether the cover is big enough to be the
             // share image. Null for an SVG, a remote URL or a missing file —

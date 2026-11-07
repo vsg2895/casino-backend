@@ -19,9 +19,13 @@ class EmailScheduleResource extends JsonResource
             'site_id'       => $this->site_id,
             'site'          => new SiteResource($this->whenLoaded('site')),
             'name'          => $this->name,
-            'date_filter'   => $this->date_filter,
-            'specific_date' => $this->specific_date?->format('Y-m-d'),
+            // Which list, how many per run, and the rest period. The retired
+            // date_filter / specific_date columns are not exposed.
+            'audience'      => $this->audienceKey(),
             'limit'         => $this->limit,
+            'cooldown_days' => $this->cooldownDays(),
+            // Non-null when the schedule cannot send (a legacy row with no count).
+            'blocked_reason' => $this->runBlocker(),
             'frequency'     => $this->frequency,
             'time'          => substr((string) $this->time, 0, 5),
             'day_of_week'   => $this->day_of_week,

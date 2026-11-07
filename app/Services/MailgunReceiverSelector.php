@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Contracts\ReceiverCampaignCredential;
-use App\Models\MailgunReceiver;
+use App\Models\CampaignReceiver;
 use Generator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -13,6 +13,13 @@ use Illuminate\Support\Collection;
 
 /**
  * Resolves WHICH receivers a credential sends to on its next run.
+ *
+ * Serves both Custom Receivers lists. The credential names its list
+ * ({@see ReceiverCampaignCredential::campaignReceiverModel()}) and every query
+ * below starts from that model, so a SendGrid key selects from
+ * `sendgrid_receivers` with exactly the rule a Mailgun key applies to
+ * `mailgun_receivers`. The class keeps its Mailgun name because it predates the
+ * second list.
  *
  * THE single definition of that question. The live count in the settings modal,
  * the "Preview batch" listing and the sending job all enter through this class,
@@ -39,7 +46,7 @@ final class MailgunReceiverSelector
      */
     public function selection(ReceiverCampaignCredential $credential): Builder
     {
-        return MailgunReceiver::query()
+        return $this->receivers($credential)
             ->sendable()
             ->notSuppressed()
             // Whose list this credential is allowed to mail. Empty means every
@@ -78,13 +85,13 @@ final class MailgunReceiverSelector
         // Zero to send. Walk the filters in the order they apply and name the
         // one that emptied it — each has a different fix, and "nothing to send"
         // on its own tells an admin nothing.
-        $sendable = MailgunReceiver::query()->sendable()->notSuppressed()->count();
+        $sendable = $this->receivers($credential)->sendable()->notSuppressed()->count();
 
         if ($sendable === 0) {
             return 'there are no sendable receivers — the list is empty, or every address is unsubscribed or suppressed';
         }
 
-        $afterCooldown = MailgunReceiver::query()
+        $afterCooldown = $this->receivers($credential)
             ->sendable()
             ->notSuppressed()
             ->notContactedWithin($credential->campaignCooldownDays())
@@ -97,7 +104,7 @@ final class MailgunReceiverSelector
         }
 
         // Survived the cooldown, so the only filter left is today's claim.
-        return "all {$afterCooldown} remaining receiver(s) were already mailed today by another credential — one message per address per day, across every credential and both channels. They become sendable again tomorrow";
+        return "all {$afterCooldown} remaining receiver(s) were already mailed today by another credential — one message per address per day, across every credential that mails this list. They become sendable again tomorrow";
     }
 
     /**
@@ -128,7 +135,7 @@ final class MailgunReceiverSelector
      * Capped at $limit ?? batch_size, so previewing a 100k list still returns one
      * page. Selects only the columns the preview renders.
      *
-     * @return Collection<int, MailgunReceiver>
+     * @return Collection<int, CampaignReceiver>
      */
     public function preview(ReceiverCampaignCredential $credential, ?int $limit = null): Collection
     {
@@ -155,14 +162,14 @@ final class MailgunReceiverSelector
      * and the same technique the warmup sender uses.
      *
      * @param  int  $chunkSize  Rows per yielded chunk.
-     * @return Generator<int, Collection<int, MailgunReceiver>>
+     * @return Generator<int, Collection<int, CampaignReceiver>>
      */
     public function stream(ReceiverCampaignCredential $credential, int $chunkSize = 500): Generator
     {
         $remaining = $credential->campaignBatchSize();
         $chunkSize = max(1, $chunkSize);
         $order = $credential->campaignSelectionOrder();
-        $descending = $order !== MailgunReceiver::ORDER_OLDEST;
+        $descending = $order !== CampaignReceiver::ORDER_OLDEST;
         $cursor = null;
 
         while ($remaining > 0) {
@@ -184,7 +191,7 @@ final class MailgunReceiverSelector
                 });
             }
 
-            /** @var Collection<int, MailgunReceiver> $rows */
+            /** @var Collection<int, CampaignReceiver> $rows */
             $rows = $page->get(['id', 'email', 'name', 'created_at', 'last_sent_at', 'sent_count']);
 
             if ($rows->isEmpty()) {
@@ -201,5 +208,17 @@ final class MailgunReceiverSelector
             // chunk, not the whole batch.
             unset($rows, $last);
         }
+    }
+
+    /**
+     * A fresh query on the credential's own list.
+     *
+     * @return Builder<CampaignReceiver>
+     */
+    private function receivers(ReceiverCampaignCredential $credential): Builder
+    {
+        $model = $credential->campaignReceiverModel();
+
+        return $model::query();
     }
 }

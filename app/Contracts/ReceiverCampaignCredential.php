@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace App\Contracts;
 
 /**
- * A stored credential that can run a campaign against the Mailgun receiver list.
+ * A stored credential that can run a campaign against a Custom Receivers list.
  *
  * Implemented by {@see \App\Models\MailgunKey} (Mailgun API) and
- * {@see \App\Models\SmtpCredential} (an own SMTP server). The two differ ONLY in
- * how they authenticate — the audience, the selection rule, the per-day claim,
- * the message and the history are one shared implementation, reached through
- * this interface.
+ * {@see \App\Models\SmtpCredential} (an own SMTP server), which both mail the
+ * Mailgun receiver list, and by {@see \App\Models\SendgridKey}, which mails the
+ * SendGrid receiver list. They differ ONLY in how they authenticate and which
+ * list they name — the selection rule, the per-day claim, the message and the
+ * history writer are one shared implementation, reached through this interface.
  *
  * That is the whole point of the interface: {@see \App\Services\ReceiverCampaignSender}
  * and {@see \App\Services\MailgunReceiverSelector} must never learn which channel
@@ -25,7 +26,16 @@ interface ReceiverCampaignCredential
     /** Receivers this credential takes per run. */
     public function campaignBatchSize(): int;
 
-    /** One of {@see \App\Models\MailgunReceiver::ORDERS}. */
+    /**
+     * The list this credential mails: a {@see \App\Models\CampaignReceiver}
+     * subclass. Its tables (receivers, daily claims) and its unsubscribe route
+     * all come from that class.
+     *
+     * @return class-string<\App\Models\CampaignReceiver>
+     */
+    public function campaignReceiverModel(): string;
+
+    /** One of {@see \App\Models\CampaignReceiver::ORDERS}. */
     public function campaignSelectionOrder(): string;
 
     /** Days a receiver rests after a send; null or < 1 disables the filter. */
@@ -61,15 +71,18 @@ interface ReceiverCampaignCredential
     /** True when the credential holds everything it needs to authenticate a send. */
     public function canAuthenticate(): bool;
 
-    /** 'mailgun' | 'smtp' — recorded on the daily claim for diagnosis. */
+    /** 'mailgun' | 'smtp' | 'sendgrid' — recorded on the daily claim for diagnosis. */
     public function campaignChannel(): string;
 
-    /** History table for this channel: `mailgun_receiver_sends` or `smtp_receiver_sends`. */
+    /**
+     * History table for this channel: `mailgun_receiver_sends`,
+     * `smtp_receiver_sends` or `sendgrid_receiver_sends`.
+     */
     public function campaignHistoryTable(): string;
 
     /**
-     * The credential foreign key in that table — `mailgun_key_id` or
-     * `smtp_credential_id`.
+     * The credential foreign key in that table — `mailgun_key_id`,
+     * `smtp_credential_id` or `sendgrid_key_id`.
      *
      * Each channel keeps its own history table, so the writer has to know where
      * to write and which key to fill. Keeping both here, rather than branching on

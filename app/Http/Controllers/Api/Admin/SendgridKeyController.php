@@ -4,17 +4,21 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Http\Controllers\Concerns\ManagesReceiverCampaign;
 use App\Http\Controllers\Concerns\ResolvesTestSubscriber;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\PreviewReceiverMessageRequest;
 use App\Http\Requests\Admin\SendSendgridKeyTestRequest;
 use App\Http\Requests\Admin\StoreSendgridKeyRequest;
 use App\Http\Requests\Admin\UpdateSendgridKeyRequest;
+use App\Http\Requests\Admin\UpdateSendgridReceiverSettingsRequest;
 use App\Http\Resources\SendgridKeyResource;
-use App\Models\Newsletter;
+use App\Jobs\SendSendgridReceiverCampaignJob;
 use App\Models\SendgridKey;
 use App\Models\Site;
 use App\Services\Mail\EmailTemplateCatalog;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Services\MailgunReceiverSelector;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -28,11 +32,17 @@ use Throwable;
  * The raw key is write-only: accepted on create/update, never returned (the
  * Resource exposes only a masked preview). Deleting a key nulls it out on any
  * schedule that referenced it (FK nullOnDelete) — those schedules then fail
- * gracefully at send time until a new key is chosen.
+ * gracefully at send time until a new key is chosen. Its receiver-campaign
+ * history goes with it (FK cascade), as a Mailgun credential's does.
+ *
+ * Each key also runs campaigns against the SendGrid receiver list, through the
+ * same receiver endpoints as Mailgun credentials and SMTP servers
+ * ({@see ManagesReceiverCampaign}). Like an SMTP server it runs only from
+ * "Run now" — there is no scheduler for this channel.
  */
 class SendgridKeyController extends Controller
 {
-    use ResolvesTestSubscriber;
+    use ManagesReceiverCampaign, ResolvesTestSubscriber;
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -43,7 +53,7 @@ class SendgridKeyController extends Controller
             $query->where('status', $request->query('status'));
         }
 
-        return SendgridKeyResource::collection($query->get());
+        return SendgridKeyResource::collection($query->get(SendgridKey::LIST_COLUMNS));
     }
 
     public function store(StoreSendgridKeyRequest $request): JsonResponse
@@ -143,6 +153,68 @@ class SendgridKeyController extends Controller
                 $sendgridKey->name,
             ),
         ]);
+    }
+
+    /**
+     * Read this key's receiver targeting, with a LIVE eligible count from the
+     * same selector the sending job uses.
+     */
+    public function receiverSettings(SendgridKey $sendgridKey, MailgunReceiverSelector $selector): JsonResponse
+    {
+        return $this->receiverSettingsResponse(
+            $sendgridKey,
+            $selector,
+            SendSendgridReceiverCampaignJob::blockedReason(...),
+        );
+    }
+
+    /** Save the targeting rule and message for this key. */
+    public function updateReceiverSettings(
+        UpdateSendgridReceiverSettingsRequest $request,
+        SendgridKey $sendgridKey,
+        MailgunReceiverSelector $selector,
+    ): JsonResponse {
+        return $this->saveReceiverSettings(
+            $request->validated(),
+            $sendgridKey,
+            $selector,
+            SendSendgridReceiverCampaignJob::blockedReason(...),
+        );
+    }
+
+    /** Re-seed the form from the source site's promotion template. */
+    public function receiverTemplateSource(SendgridKey $sendgridKey): JsonResponse
+    {
+        return $this->receiverTemplateSourceResponse();
+    }
+
+    /** Render the message as it would be sent, from unsaved fields. */
+    public function previewReceiverMessage(PreviewReceiverMessageRequest $request, SendgridKey $sendgridKey): JsonResponse
+    {
+        return $this->receiverMessagePreviewResponse($request->validated());
+    }
+
+    /** The exact receivers the next run would take. */
+    public function previewReceiverBatch(SendgridKey $sendgridKey, MailgunReceiverSelector $selector): JsonResponse
+    {
+        return $this->receiverBatchPreviewResponse($sendgridKey, $selector);
+    }
+
+    /**
+     * Queue one run for this key now, refusing for the same reasons the job
+     * re-checks when it starts.
+     */
+    public function runReceiverCampaign(SendgridKey $sendgridKey): JsonResponse
+    {
+        $reason = SendSendgridReceiverCampaignJob::blockedReason($sendgridKey);
+
+        if ($reason !== null) {
+            return response()->json(['ok' => false, 'message' => ucfirst($reason).'.'], Response::HTTP_CONFLICT);
+        }
+
+        SendSendgridReceiverCampaignJob::dispatch($sendgridKey->id);
+
+        return response()->json(['ok' => true, 'message' => 'Run queued.']);
     }
 
     /** Flip active ⇄ inactive without touching the key value. */

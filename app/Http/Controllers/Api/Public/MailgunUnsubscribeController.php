@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Models\CampaignReceiver;
 use App\Models\MailgunReceiver;
 use App\Models\MailgunSuppression;
 use Illuminate\Http\Request;
@@ -27,6 +28,10 @@ use Illuminate\Support\Facades\DB;
  *    newsletter unsubscribe; see routes/api.php.
  *
  * So the visible link is one click for a human and inert for a robot.
+ *
+ * {@see SendgridUnsubscribeController} is the same flow for the SendGrid list;
+ * it differs only in {@see receiverModel()}, which names the table the token
+ * is looked up in. The pages and the suppression write are shared.
  */
 class MailgunUnsubscribeController extends Controller
 {
@@ -43,12 +48,14 @@ class MailgunUnsubscribeController extends Controller
     /** Human-facing confirmation page. Renders only — never acts. */
     public function show(string $token): Response
     {
-        $receiver = MailgunReceiver::where('unsubscribe_token', $token)->first();
+        $receiver = $this->findReceiver($token);
 
         return response()->view('unsubscribe.mailgun-confirm', [
-            'token'      => $token,
             'email'      => $receiver?->email,
             'alreadyOff' => $receiver?->unsubscribed_at !== null,
+            // Built here rather than in the view, so the page posts back to
+            // the list the token belongs to.
+            'confirmUrl' => url('/api/v1/' . $this->receiverModel()::unsubscribePath() . '/' . $token . '/confirm'),
         ]);
     }
 
@@ -70,7 +77,7 @@ class MailgunUnsubscribeController extends Controller
      */
     private function unsubscribe(string $token): bool
     {
-        $receiver = MailgunReceiver::where('unsubscribe_token', $token)->first();
+        $receiver = $this->findReceiver($token);
 
         if ($receiver === null) {
             return false;
@@ -92,5 +99,22 @@ class MailgunUnsubscribeController extends Controller
         });
 
         return true;
+    }
+
+    /**
+     * The list whose tokens this controller resolves.
+     *
+     * @return class-string<CampaignReceiver>
+     */
+    protected function receiverModel(): string
+    {
+        return MailgunReceiver::class;
+    }
+
+    private function findReceiver(string $token): ?CampaignReceiver
+    {
+        $model = $this->receiverModel();
+
+        return $model::where('unsubscribe_token', $token)->first();
     }
 }

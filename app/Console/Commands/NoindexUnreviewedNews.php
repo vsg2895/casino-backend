@@ -20,7 +20,8 @@ use Illuminate\Console\Command;
  * one site that is still indexable. Nothing is deleted or hidden: the pages
  * stay published, listed and reachable; only search engines are told to skip
  * them, and they leave the sitemap. An editor unticks "Keep out of search results" per
- * post once it clears NewsIndexGate.
+ * post once it clears NewsIndexGate — or `news:rewrite --all` writes them again
+ * and makes indexable each one whose new body clears it.
  *
  * Hand-written news is left alone. Idempotent: a second run finds nothing.
  *

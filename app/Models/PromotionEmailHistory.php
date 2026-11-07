@@ -35,13 +35,12 @@ class PromotionEmailHistory extends Model
      *
      * Both streams write here because the 24-hour dedup below is shared — it is
      * what stops a campaign and the after-verification promotion both reaching
-     * one address on one day, so it has to see every send. The ADMIN, though,
-     * shows one tab per stream, and the after-verification tab has its own log
-     * (`verification_promotion_sends`). Without this column the same send
-     * appeared under both tabs.
+     * one address on one day, so it has to see every send. The dedup reads every
+     * row whatever its stream; the column says which feature wrote it.
      *
-     * So: the dedup reads every row, the Promotion listing reads only
-     * `campaign` ones. {@see scopeCampaign()}.
+     * This table has no admin screen. Schedule sends are listed from
+     * `schedule_send_histories` (Email History → Schedules) and
+     * after-verification sends from `verification_promotion_sends`.
      */
     public const string STREAM_CAMPAIGN = 'campaign';
     public const string STREAM_POST_VERIFICATION = 'post_verification';
@@ -178,20 +177,6 @@ class PromotionEmailHistory extends Model
         if ($emailColumn !== null) {
             $query->whereColumn('promotion_email_histories.email', $emailColumn);
         }
-    }
-
-    /**
-     * Only the scheduled campaigns — what the admin's Promotion tab lists.
-     *
-     * Deliberately NOT applied to the dedup queries: those must keep seeing
-     * every stream, or the two could reach one address on one day.
-     *
-     * @param  Builder<self>  $query
-     * @return Builder<self>
-     */
-    public function scopeCampaign(Builder $query): Builder
-    {
-        return $query->where('stream', self::STREAM_CAMPAIGN);
     }
 
     /**

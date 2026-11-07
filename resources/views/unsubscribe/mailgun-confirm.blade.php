@@ -1,4 +1,4 @@
-{{-- Confirm page for the visible unsubscribe link. Renders only; the POST below acts. --}}
+{{-- Confirm page for the visible unsubscribe link, for both Custom Receivers lists. Renders only; the POST below acts. --}}
 <!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Unsubscribe</title></head>
@@ -13,7 +13,7 @@
     @else
         <h1 style="font-size:18px;margin:0 0 12px;">Unsubscribe {{ $email }}?</h1>
         <p style="font-size:14px;color:#666;margin:0 0 20px;">You will stop receiving these emails immediately.</p>
-        <form method="POST" action="{{ url('/api/v1/mailgun-unsubscribe/' . $token . '/confirm') }}">
+        <form method="POST" action="{{ $confirmUrl }}">
             @csrf
             <button type="submit" style="background:#c0392b;color:#fff;border:0;border-radius:6px;padding:11px 20px;font-size:15px;cursor:pointer;">
                 Yes, unsubscribe me

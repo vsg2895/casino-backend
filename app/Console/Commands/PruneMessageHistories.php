@@ -43,7 +43,8 @@ use Illuminate\Support\Facades\Schema;
  *
  * ── What it deliberately does NOT prune ─────────────────────────────────────
  *
- * `mailgun_receiver_sends` and `smtp_receiver_sends` look like history and are
+ * `mailgun_receiver_sends`, `smtp_receiver_sends` and `sendgrid_receiver_sends`
+ * look like history and are
  * not: they are the daily claim that stops a receiver being mailed twice, and a
  * credential may carry a cooldown measured in months. Deleting a row there
  * would let an address be mailed again, which is a send decision, not a tidy-up.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Models\CampaignReceiverImport;
 use App\Models\MailgunReceiverImport;
 use App\Services\MailgunReceiverImportService;
 use Illuminate\Bus\Queueable;
@@ -16,7 +17,8 @@ use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
- * Parses an uploaded receiver list into `mailgun_receivers`.
+ * Parses an uploaded receiver list into `mailgun_receivers` — and, through
+ * {@see ImportSendgridReceiversJob}, into `sendgrid_receivers`.
  *
  * Runs on HIGH, like {@see ImportNewslettersJob}: an admin is watching the
  * progress bar, so it must not queue behind a 100k-recipient send on `low`.
@@ -50,9 +52,10 @@ class ImportMailgunReceiversJob implements ShouldQueue
 
     public function handle(MailgunReceiverImportService $importer): void
     {
-        $import = MailgunReceiverImport::find($this->importId);
+        $importModel = $this->importModel();
+        $import = $importModel::find($this->importId);
 
-        if ($import === null || $import->status !== MailgunReceiverImport::STATUS_QUEUED) {
+        if ($import === null || $import->status !== CampaignReceiverImport::STATUS_QUEUED) {
             // Missing, or already picked up — never re-run a finished import.
             return;
         }
@@ -62,7 +65,7 @@ class ImportMailgunReceiversJob implements ShouldQueue
 
         if ($relative === '' || ! is_file($absolute)) {
             $import->forceFill([
-                'status'      => MailgunReceiverImport::STATUS_FAILED,
+                'status'      => CampaignReceiverImport::STATUS_FAILED,
                 'error'       => 'The uploaded file is no longer available.',
                 'finished_at' => now(),
             ])->save();
@@ -78,12 +81,13 @@ class ImportMailgunReceiversJob implements ShouldQueue
             );
         } catch (Throwable $e) {
             $import->forceFill([
-                'status'      => MailgunReceiverImport::STATUS_FAILED,
+                'status'      => CampaignReceiverImport::STATUS_FAILED,
                 'error'       => mb_strimwidth($e->getMessage(), 0, 1000, '…'),
                 'finished_at' => now(),
             ])->save();
 
-            Log::warning('Mailgun receiver import failed', [
+            Log::warning('Receiver import failed', [
+                'list'      => $import->getTable(),
                 'import_id' => $import->id,
                 'error'     => $e->getMessage(),
             ]);
@@ -92,5 +96,19 @@ class ImportMailgunReceiversJob implements ShouldQueue
             // accumulate spreadsheets of personal data on disk indefinitely.
             Storage::disk('local')->delete($relative);
         }
+    }
+
+    /**
+     * The import row class this job reads — and through it, the list it writes.
+     *
+     * Overridden by {@see ImportSendgridReceiversJob}. A method rather than a
+     * constructor argument so payloads already on the queue, serialised before
+     * the SendGrid list existed, still unserialise into a working job.
+     *
+     * @return class-string<CampaignReceiverImport>
+     */
+    protected function importModel(): string
+    {
+        return MailgunReceiverImport::class;
     }
 }

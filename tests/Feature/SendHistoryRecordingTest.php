@@ -6,7 +6,6 @@ namespace Tests\Feature;
 
 use App\Jobs\SendNewsletterWelcomeEmail;
 use App\Models\Newsletter;
-use App\Models\PromotionEmailHistory;
 use App\Models\Site;
 use App\Models\VerificationPromotionSend;
 use App\Models\VerifyEmailSend;
@@ -175,15 +174,6 @@ class SendHistoryRecordingTest extends TestCase
         ]);
         $this->deleteJson("/api/v1/admin/verification-promotion/history/{$send->id}")->assertNoContent();
         $this->assertDatabaseMissing('verification_promotion_sends', ['id' => $send->id]);
-
-        // The partitioned one, deleted by (id, sent_date) so MySQL can prune.
-        PromotionEmailHistory::recordAttempts(
-            $this->site->id,
-            ['fan@example.test' => PromotionEmailHistory::STATUS_SUCCESS],
-        );
-        $id = (int) DB::table('promotion_email_histories')->value('id');
-        $this->deleteJson("/api/v1/admin/promotion-history/{$id}")->assertNoContent();
-        $this->assertSame(0, DB::table('promotion_email_histories')->count());
     }
 
     public function test_deleting_a_history_row_that_is_not_there_is_a_404(): void
@@ -191,7 +181,6 @@ class SendHistoryRecordingTest extends TestCase
         // A stale table in one tab must not report a success it did not have.
         $this->actingAsAdmin();
 
-        $this->deleteJson('/api/v1/admin/promotion-history/999999')->assertNotFound();
         $this->deleteJson('/api/v1/admin/verify-email-sends/999999')->assertNotFound();
     }
 

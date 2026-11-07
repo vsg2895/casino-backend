@@ -31,11 +31,13 @@ class NewsIndexingTest extends TestCase
 
     private Site $site;
 
+    private string $key;
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        [$this->site] = $this->siteWithKey(['news_enabled' => true, 'domain' => 'example-news.com']);
+        [$this->site, $this->key] = $this->siteWithKey(['news_enabled' => true, 'domain' => 'example-news.com']);
         $this->actingAsAdmin();
     }
 
@@ -185,5 +187,47 @@ class NewsIndexingTest extends TestCase
     public function test_the_command_rejects_an_unknown_site(): void
     {
         $this->artisan('news:noindex-unreviewed', ['site' => 'no-such-site'])->assertFailed();
+    }
+
+    // ── the editor's note ────────────────────────────────────────────────────
+
+    public function test_the_editors_note_is_saved_counted_toward_the_bar_and_served(): void
+    {
+        $post = $this->newsPost(['active' => true]);
+        $link = '<a href="/casinos/bitstarz">BitStarz review</a>';
+        $body = '<p>' . implode(' ', array_fill(0, 200, 'word')) . '</p>' . $link;
+        $url = "/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news";
+
+        // 201 words alone are under the bar…
+        $this->putJson($url, ['title' => $post->title, 'body' => $body, 'noindex' => false])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('noindex');
+
+        // …and the note's own words carry it over.
+        $note = implode(' ', array_fill(0, 120, 'note'));
+        $this->putJson($url, ['title' => $post->title, 'body' => $body, 'editor_note' => $note, 'noindex' => false])
+            ->assertOk();
+
+        $post->refresh();
+        $this->assertSame($note, $post->editor_note);
+        $this->assertFalse($post->noindex);
+
+        $this->getJson("/api/v1/public/sites/{$this->site->slug}/news/{$post->slug}", ['X-Site-Key' => $this->key])
+            ->assertOk()
+            ->assertJsonPath('data.editor_note', $note);
+
+        // Listings do not carry it, like the body.
+        $this->getJson("/api/v1/public/sites/{$this->site->slug}/news", ['X-Site-Key' => $this->key])
+            ->assertOk()
+            ->assertJsonMissingPath('data.posts.0.editor_note');
+    }
+
+    public function test_an_overlong_editors_note_is_rejected(): void
+    {
+        $post = $this->newsPost();
+
+        $this->putJson("/api/v1/admin/sites/{$this->site->id}/articles/{$post->id}?type=news", [
+            'title' => $post->title, 'editor_note' => str_repeat('x', 2001),
+        ])->assertUnprocessable()->assertJsonValidationErrors('editor_note');
     }
 }

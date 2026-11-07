@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\CampaignReceiver;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
-use App\Models\Unsubscribe;
+use App\Models\ScheduleSendHistory;
 use Carbon\CarbonInterface;
 use Generator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 
@@ -21,185 +23,78 @@ use Illuminate\Support\Collection;
  * count, and the CSV export — goes through this class, so the four can never
  * drift apart. Nothing else may rebuild the audience query.
  *
- * Three filters compose the audience:
- *   1. the schedule's site;
- *   2. minus anyone who opted out of the promotion stream;
- *   3. minus anyone who ALREADY received this site's promotion in the last
- *      24 hours (see {@see PromotionEmailHistory::scopeDeliveredWithinDay()}),
- *      because the send would skip them — so the previewed count is what is
- *      actually delivered, and a second run of the same schedule resolves to
- *      zero recipients rather than re-mailing.
+ * The audience is "the newest `limit` addresses of the schedule's list, minus
+ * anyone who cannot or should not be mailed now". The list is one of:
  *
- * On top of that sits one of two mutually exclusive audience modes:
- *   - sign-up date window: subscribers created inside dateRange()
- *   - newest N: the `limit` most recent sign-ups, by created_at desc
+ *   newsletters         the site's subscribers, minus promotion opt-outs and
+ *                       anyone this site's promotion reached in the last 24h
+ *                       (the dedup shared with the after-verification email)
+ *   mailgun_receivers   Custom Receivers → Mailgun, minus unsubscribes,
+ *   sendgrid_receivers  Custom Receivers → SendGrid, suppressions and anyone the
+ *                       list already mailed today (its one-per-day claim)
+ *   warmup              the warmup list
  *
- * Every traversal is keyset-paginated ({@see stream()}): memory stays flat
- * regardless of list size, and unlike OFFSET paging a concurrent sign-up can
- * never shift the window and cause a recipient to be skipped.
+ * and, for every list, minus anyone RESTING: who received this site's promotion
+ * template within the schedule's `cooldown_days`
+ * ({@see ScheduleSendHistory::scopeResting()}).
+ *
+ * Filtering happens BEFORE the cap, as warmup's cooldown does: the newest N
+ * that may be mailed, not the newest N minus those that may not. So each run
+ * walks further down the list on its own instead of re-offering the same head.
+ *
+ * Every traversal is keyset-paginated on (created_at, id), newest first
+ * ({@see stream()}): memory stays flat regardless of list size, and a row
+ * inserted mid-run cannot shift the window.
  */
 class ScheduleRecipientService
 {
     /** Rows fetched per round-trip when streaming. */
     public const int STREAM_CHUNK = 500;
 
+    /** The columns every list shares, and all any consumer reads. */
+    private const array COLUMNS = ['id', 'email', 'created_at'];
+
     /**
-     * The audience query — filtered, ordered and (in newest-N mode) already
-     * capped. Never executed here; callers add their own projection.
-     *
-     * @param  array{skipOptOuts: bool, skipDelivered: bool}  $skip
-     *         Exclusions the caller has PROVEN cannot match (see
-     *         {@see skippableExclusions()}). Defaults to skipping nothing, so
-     *         every caller that does not opt in — the send traversal above all —
-     *         gets exactly the query it always got.
+     * Every eligible address, newest first — NOT yet capped at `limit`.
+     * Never executed here; callers add their own projection.
      */
-    public function query(
-        EmailSchedule $schedule,
-        ?CarbonInterface $now = null,
-        array $skip = ['skipOptOuts' => false, 'skipDelivered' => false],
-    ): Builder {
+    public function query(EmailSchedule $schedule, ?CarbonInterface $now = null): Builder
+    {
         $now ??= now();
-        $siteId = $schedule->site_id;
+        $model = $schedule->audienceModel();
 
-        if ($schedule->usesLimit()) {
-            // Take the newest N FIRST, then drop those already delivered to.
-            // Filtering after the slice is essential: filtering before it would
-            // let a second run reach deeper into the list and mail a DIFFERENT
-            // N subscribers, when it should mail nobody.
-            $query = Newsletter::query()
-                ->fromSub($this->newestSlice($schedule, $skip), 'newsletters')
-                ->orderByDesc('created_at')
-                ->orderByDesc('id');
+        $query = $model === null
+            ? $this->newsletters($schedule, $now)
+            : $this->list($model);
 
-            return $skip['skipDelivered']
-                ? $query
-                : $query->whereNotExists($this->alreadyDelivered($siteId, $now));
-        }
+        $table = $query->getModel()->getTable();
+        $siteId = (int) $schedule->site_id;
+        $days = $schedule->cooldownDays();
 
-        [$start, $end] = $schedule->dateRange($now);
-
-        $query = $this->audience($siteId, $skip['skipOptOuts'])
-            ->whereBetween('created_at', [$start, $end]);
-
-        return $skip['skipDelivered']
-            ? $query
-            : $query->whereNotExists($this->alreadyDelivered($siteId, $now));
+        return $query
+            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $days, $table, $now): void {
+                ScheduleSendHistory::scopeResting($sub, $siteId, EmailSchedule::TEMPLATE_PROMOTION, $days, $table . '.email', $now);
+            })
+            ->orderByDesc($table . '.created_at')
+            ->orderByDesc($table . '.id');
     }
 
-    /**
-     * The site's promotion-eligible subscribers: everyone who has not opted out
-     * of the promotion stream. The base every other query here builds on — no
-     * caller may reconstruct it.
-     */
-    /**
-     * @param  bool  $skipOptOuts  Only ever true when the caller has PROVEN the
-     *                             site has no promotion opt-out at all, which
-     *                             makes the clause a no-op.
-     */
-    private function audience(int $siteId, bool $skipOptOuts = false): Builder
-    {
-        $query = Newsletter::query()->where('site_id', $siteId);
-
-        if ($skipOptOuts) {
-            return $query;
-        }
-
-        // Opt-outs, in one correlated pass against the unsubscribes index. Opt-out
-        // is global (Unsubscribe::hasAny) — any template's opt-out excludes the
-        // address — so this is not scoped to a type.
-        return $query->whereNotExists(function (QueryBuilder $sub) use ($siteId): void {
-            $sub->from('unsubscribes')
-                ->whereColumn('unsubscribes.email', 'newsletters.email')
-                ->where('unsubscribes.site_id', $siteId);
-        });
-    }
-
-    /**
-     * The "newest N sign-ups" slice, before the already-delivered filter — the
-     * definition of the audience in limit mode.
-     */
-    private function newestSlice(EmailSchedule $schedule, array $skip = ['skipOptOuts' => false]): Builder
-    {
-        return $this->audience($schedule->site_id, $skip['skipOptOuts'] ?? false)
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
-            ->limit((int) $schedule->limit)
-            // `deleted_at` must travel into the derived table: Newsletter is
-            // soft-deleting, so the outer query's global scope references
-            // newsletters.deleted_at (the inner has already filtered it).
-            ->select(['id', 'email', 'created_at', 'deleted_at']);
-    }
-
-    /**
-     * Exactly how many subscribers would be mailed right now.
-     *
-     * In newest-N mode the cap lives inside the subquery, so counting the outer
-     * query yields the capped, deduplicated total directly.
-     *
-     * Both exclusions are dropped when they provably cannot match anything — see
-     * {@see skippableExclusions()}. That is what keeps this endpoint responsive on
-     * a large list; measured on 100k subscribers, the preview count went 322ms →
-     * 188ms with the delivery-history check skipped, and → 83ms with both skipped.
-     */
+    /** Exactly how many addresses the next run would mail: eligible, capped at `limit`. */
     public function count(EmailSchedule $schedule, ?CarbonInterface $now = null): int
     {
-        $now ??= now();
+        $limit = $schedule->runLimit();
 
-        return $this->query($schedule, $now, $this->skippableExclusions($schedule, $now))
-            ->reorder()
-            ->count();
+        if ($limit < 1) {
+            return 0;
+        }
+
+        return min($limit, $this->query($schedule, $now)->reorder()->count());
     }
 
     /**
-     * Which of the two exclusions can be omitted entirely for this site, right now.
+     * The first $limit recipients, in the order the campaign processes them.
      *
-     * A `NOT EXISTS` whose subquery matches NO rows at all is true for every
-     * candidate row, so removing it cannot change the result — it is an algebraic
-     * simplification, not an approximation. Two probes settle it, and both are
-     * single indexed existence checks measured at ~0.2ms:
-     *
-     *   - opt-outs:  (site_id) against the unsubscribes index (global opt-out)
-     *   - deliveries: the SAME non-correlated conditions the dedup subquery uses,
-     *     via {@see PromotionEmailHistory::scopeDeliveredWithinDay()} with a null
-     *     email column, so the probe can never be laxer than the clause it removes
-     *
-     * Worth it because the correlated form costs one index lookup PER CANDIDATE —
-     * ~100k lookups on a 100k list — while these cost one lookup total. And the
-     * common case is exactly the cheap one: an admin previews a campaign before
-     * sending it, when nothing has been delivered inside the dedup window yet.
-     *
-     * Deliberately NOT applied to the send traversal ({@see stream()}). There the
-     * audience is resolved page by page over minutes, and a probe taken at the
-     * start could authorise mailing someone who unsubscribed at minute three. A
-     * preview is a snapshot and may be one row stale; a send must not be.
-     *
-     * @return array{skipOptOuts: bool, skipDelivered: bool}
-     */
-    private function skippableExclusions(EmailSchedule $schedule, CarbonInterface $now): array
-    {
-        $siteId = $schedule->site_id;
-
-        $hasOptOuts = Unsubscribe::query()
-            ->where('site_id', $siteId)
-            ->exists();
-
-        $hasRecentDeliveries = PromotionEmailHistory::query()
-            ->tap(fn (Builder $q) => PromotionEmailHistory::scopeDeliveredWithinDay(
-                $q->getQuery(), $siteId, null, $now,
-            ))
-            ->exists();
-
-        return [
-            'skipOptOuts'   => ! $hasOptOuts,
-            'skipDelivered' => ! $hasRecentDeliveries,
-        ];
-    }
-
-    /**
-     * The first $limit recipients, in the order the campaign processes them —
-     * email + created_at only, for the preview table.
-     *
-     * @return Collection<int, Newsletter>
+     * @return Collection<int, Model>
      */
     public function sample(EmailSchedule $schedule, int $limit = 25, ?CarbonInterface $now = null): Collection
     {
@@ -222,7 +117,7 @@ class ScheduleRecipientService
      * Hand every recipient to $callback in chunks of $size. Used by the campaign
      * fan-out, so the send and the preview/export share one traversal.
      *
-     * @param  callable(Collection<int, Newsletter>): void  $callback
+     * @param  callable(Collection<int, Model>): void  $callback
      */
     public function eachChunk(EmailSchedule $schedule, int $size, callable $callback, ?CarbonInterface $now = null): void
     {
@@ -244,7 +139,7 @@ class ScheduleRecipientService
         foreach ($this->stream($schedule, self::STREAM_CHUNK, $now) as $chunk) {
             foreach ($chunk as $recipient) {
                 yield [
-                    $recipient->email,
+                    (string) $recipient->email,
                     $recipient->created_at?->toDateTimeString() ?? '',
                 ];
             }
@@ -252,146 +147,90 @@ class ScheduleRecipientService
     }
 
     /**
-     * The "already got this promotion in the last 24h" exclusion, as a
-     * correlated subquery closure. Delegates to the history model so the send
-     * and the preview share one definition of the window.
+     * The site's subscribers who may receive its promotion now.
+     *
+     * Opt-outs are global per site (Unsubscribe::hasAny), so the check is not
+     * scoped to a type. The 24h promotion dedup is kept on top of the cooldown:
+     * it is shared with the after-verification email, which a schedule's own
+     * history knows nothing about.
      */
-    private function alreadyDelivered(int $siteId, ?CarbonInterface $now): callable
+    private function newsletters(EmailSchedule $schedule, CarbonInterface $now): Builder
     {
-        return static function (QueryBuilder $sub) use ($siteId, $now): void {
-            PromotionEmailHistory::scopeDeliveredWithinDay($sub, $siteId, 'newsletters.email', $now);
-        };
+        $siteId = (int) $schedule->site_id;
+
+        return Newsletter::query()
+            ->where('site_id', $siteId)
+            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId): void {
+                $sub->from('unsubscribes')
+                    ->whereColumn('unsubscribes.email', 'newsletters.email')
+                    ->where('unsubscribes.site_id', $siteId);
+            })
+            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $now): void {
+                PromotionEmailHistory::scopeDeliveredWithinDay($sub, $siteId, 'newsletters.email', $now);
+            });
+    }
+
+    /**
+     * A global list. Receivers keep their own rules — never an address that
+     * unsubscribed or is suppressed, and never one the list already mailed
+     * today — so a schedule cannot reach someone the list itself would not.
+     *
+     * @param  class-string<Model>  $model
+     */
+    private function list(string $model): Builder
+    {
+        $query = $model::query();
+
+        if (is_subclass_of($model, CampaignReceiver::class)) {
+            $query->sendable()->notSuppressed()->notClaimedToday();
+        }
+
+        return $query;
     }
 
     /**
      * The one traversal every consumer is built on: keyset pagination over the
-     * audience, yielding one chunk at a time.
+     * eligible set, newest first, stopping at `limit` rows.
      *
-     * Both modes walk the (created_at, id) key — ascending through the window,
-     * descending through the newest-N slice — so each page is served by the
-     * newsletters (site_id, created_at) index, holds a single chunk in memory,
-     * and is immune to rows being inserted mid-traversal.
-     *
-     * @return Generator<int, Collection<int, Newsletter>>
+     * @return Generator<int, Collection<int, Model>>
      */
     private function stream(EmailSchedule $schedule, int $size, ?CarbonInterface $now = null): Generator
     {
         $now ??= now();
-
-        if ($schedule->usesLimit()) {
-            yield from $this->streamNewest($schedule, $size, $now);
-
-            return;
-        }
-
-        yield from $this->streamWindow($schedule, $size, $now);
-    }
-
-    /**
-     * Date-window mode: keyset over (created_at, id) ascending.
-     *
-     * The key deliberately matches the newsletters (site_id, created_at) index —
-     * which implicitly carries the primary key — so both the range filter and
-     * the ordering are index-served and no page needs a sort. Walking plain `id`
-     * instead (the obvious chunkById shape) cannot use that index for ordering,
-     * and degrades into a primary-key scan once a site has enough subscribers.
-     *
-     * @return Generator<int, Collection<int, Newsletter>>
-     */
-    private function streamWindow(EmailSchedule $schedule, int $size, CarbonInterface $now): Generator
-    {
-        $base = $this->query($schedule, $now)->select(['id', 'email', 'created_at']);
+        $remaining = $schedule->runLimit();
+        $size = max(1, $size);
+        $base = $this->query($schedule, $now);
+        $table = $base->getModel()->getTable();
         $cursor = null;
 
-        while (true) {
-            $page = (clone $base)->reorder()->orderBy('created_at')->orderBy('id')->limit($size);
+        while ($remaining > 0) {
+            $page = (clone $base)->limit(min($size, $remaining));
 
             if ($cursor !== null) {
                 [$lastCreatedAt, $lastId] = $cursor;
-                $page->where(function (Builder $q) use ($lastCreatedAt, $lastId): void {
-                    $q->where('created_at', '>', $lastCreatedAt)
-                        ->orWhere(function (Builder $tie) use ($lastCreatedAt, $lastId): void {
-                            $tie->where('created_at', '=', $lastCreatedAt)->where('id', '>', $lastId);
+
+                $page->where(static function (Builder $q) use ($lastCreatedAt, $lastId, $table): void {
+                    $q->where($table . '.created_at', '<', $lastCreatedAt)
+                        ->orWhere(static function (Builder $tie) use ($lastCreatedAt, $lastId, $table): void {
+                            $tie->where($table . '.created_at', '=', $lastCreatedAt)
+                                ->where($table . '.id', '<', $lastId);
                         });
                 });
             }
 
-            $rows = $page->get();
+            $rows = $page->get(array_map(static fn (string $column): string => $table . '.' . $column, self::COLUMNS));
 
             if ($rows->isEmpty()) {
                 return;
             }
 
-            yield $rows;
-
+            $remaining -= $rows->count();
             $last = $rows->last();
             $cursor = [$last->created_at, (int) $last->id];
-        }
-    }
 
-    /**
-     * Newest-N mode: page the SLICE, then filter each page.
-     *
-     * The obvious implementation — paging {@see query()}, whose subquery is
-     * `LIMIT N` — re-runs that subquery for every page, so a 50k campaign sorts
-     * and materialises 50k rows once per page instead of once in total. Here the
-     * cursor walks the slice itself, and the already-delivered filter is applied
-     * per page against the history's unique key.
-     *
-     * Semantics are unchanged: rows count towards N whether or not they survive
-     * the filter, so a second run still resolves to nobody rather than reaching
-     * deeper into the list.
-     *
-     * @return Generator<int, Collection<int, Newsletter>>
-     */
-    private function streamNewest(EmailSchedule $schedule, int $size, CarbonInterface $now): Generator
-    {
-        $siteId = $schedule->site_id;
-        $remaining = (int) $schedule->limit;
-        $cursor = null;
+            yield $rows;
 
-        while ($remaining > 0) {
-            $page = $this->audience($siteId)
-                ->orderByDesc('created_at')
-                ->orderByDesc('id')
-                ->limit(min($size, $remaining));
-
-            if ($cursor !== null) {
-                [$lastCreatedAt, $lastId] = $cursor;
-                $page->where(function (Builder $q) use ($lastCreatedAt, $lastId): void {
-                    $q->where('created_at', '<', $lastCreatedAt)
-                        ->orWhere(function (Builder $tie) use ($lastCreatedAt, $lastId): void {
-                            $tie->where('created_at', '=', $lastCreatedAt)->where('id', '<', $lastId);
-                        });
-                });
-            }
-
-            $slice = $page->get(['id', 'email', 'created_at']);
-
-            if ($slice->isEmpty()) {
-                return;
-            }
-
-            // Advance before filtering: the cap counts sliced rows, not mailed ones.
-            $remaining -= $slice->count();
-            $last = $slice->last();
-            $cursor = [$last->created_at, (int) $last->id];
-
-            // Same 24h definition as the count/preview — one indexed lookup for
-            // the page rather than a correlated subquery per row.
-            $delivered = array_flip(
-                PromotionEmailHistory::sentWithinDayAmong($siteId, $slice->pluck('email')->all(), $now),
-            );
-
-            $rows = $slice
-                ->reject(static fn (Newsletter $recipient): bool => isset($delivered[(string) $recipient->email]))
-                ->values();
-
-            unset($slice, $delivered);
-
-            if ($rows->isNotEmpty()) {
-                yield $rows;
-            }
+            unset($rows, $last);
         }
     }
 }

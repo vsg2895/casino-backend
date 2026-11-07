@@ -6,6 +6,8 @@ namespace Tests\Feature;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Models\Casino;
+use App\Models\Category;
 use App\Models\Site;
 use App\Services\News\NewsRewriteService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -91,6 +93,8 @@ class NewsRewriteTest extends TestCase
             'title'     => self::NEW_TITLE,
             'excerpt'   => 'A periodic review ended with eight renewals. Here is what that changes.',
             'body_html' => $this->originalBody(),
+            'meta_title'       => 'Licence review ends with eight renewals',
+            'meta_description' => 'A periodic licence review renewed eight operators. What it covers, and what it changes for players at those sites.',
             ...$fields,
         ]), $status);
     }
@@ -136,7 +140,7 @@ class NewsRewriteTest extends TestCase
         $result = $this->rewrite($draft);
 
         $draft->refresh();
-        $this->assertSame('rewritten', $result['status']);
+        $this->assertSame('rewritten', $result['status'], (string) $result['reason']);
         $this->assertSame(self::NEW_TITLE, $draft->title);
         $this->assertStringStartsWith('A periodic review', (string) $draft->excerpt);
         $this->assertStringContainsString('What this means for players', (string) $draft->body);
@@ -157,6 +161,49 @@ class NewsRewriteTest extends TestCase
 
         Bus::assertDispatched(RevalidateNextJsSites::class, fn (RevalidateNextJsSites $job) => $job->siteIds === [$this->site->id]
             && $job->tags === ['news', 'news:regulator-renews-eight-operator-licences', 'news:what-the-latest-licence-review-means-for-players']);
+    }
+
+    public function test_the_rewrite_writes_the_meta_title_and_description(): void
+    {
+        $draft = $this->draft(['meta_title' => 'Old headline meta', 'meta_description' => 'Old snippet']);
+        $this->fakeGemini();
+
+        $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertSame('Licence review ends with eight renewals', $draft->meta_title);
+        $this->assertStringStartsWith('A periodic licence review renewed eight operators.', (string) $draft->meta_description);
+    }
+
+    public function test_an_overlong_meta_is_cut_at_a_whole_word(): void
+    {
+        $draft = $this->draft();
+        $this->fakeGemini([
+            'meta_title'       => 'Regulator completes its review and renews eight operator licences, again',
+            'meta_description' => str_repeat('Players should check the licence page. ', 6),
+        ]);
+
+        $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertSame('Regulator completes its review and renews eight operator', $draft->meta_title);
+        $this->assertLessThanOrEqual(155, mb_strlen((string) $draft->meta_description));
+        $this->assertStringEndsWith('licence page', (string) $draft->meta_description);
+    }
+
+    public function test_a_missing_meta_is_left_empty_and_the_rewrite_still_saves(): void
+    {
+        $draft = $this->draft(['meta_title' => 'Old headline meta']);
+        $this->fakeGemini(['meta_title' => '', 'meta_description' => '   ']);
+
+        $result = $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertSame('rewritten', $result['status'], (string) $result['reason']);
+        // Null, so the page falls back to the new title and excerpt rather
+        // than keeping a meta written for the old headline.
+        $this->assertNull($draft->meta_title);
+        $this->assertNull($draft->meta_description);
     }
 
     public function test_an_article_already_published_keeps_its_url(): void
@@ -223,7 +270,7 @@ class NewsRewriteTest extends TestCase
             && str_ends_with($request->url(), '/v1beta/interactions')
             && $request['model'] === 'gemini-test'
             && $request['response_mime_type'] === 'application/json'
-            && $request['response_format']['required'] === ['title', 'excerpt', 'body_html']);
+            && $request['response_format']['required'] === ['title', 'excerpt', 'body_html', 'meta_title', 'meta_description']);
     }
 
     // ── what is refused ──────────────────────────────────────────────────────
@@ -412,10 +459,165 @@ class NewsRewriteTest extends TestCase
         ]);
 
         $this->artisan('news:rewrite')
-            ->expectsOutputToContain('1 rewritten, 0 rejected, 1 failed.')
+            ->expectsOutputToContain('1 rewritten (0 indexable), 0 rejected, 1 failed.')
             ->assertSuccessful();
 
         // The pause sits between items, never before the first.
         Sleep::assertSlept(fn ($duration) => (int) $duration->totalSeconds === 5, 1);
+    }
+
+    // ── internal links and indexing ──────────────────────────────────────────
+
+    /** A category and a casino this site really lists, so both pages exist. */
+    private function linkablePages(): void
+    {
+        $casino = Casino::factory()->create(['name' => 'Northstar', 'slug' => 'northstar', 'active' => true]);
+        $casino->sites()->attach($this->site->id, ['active' => true, 'position' => 1, 'affiliate_url' => 'https://example.com/go']);
+        Category::factory()->create(['name' => 'Fast Payout', 'slug' => 'fast-payout'])->casinos()->attach($casino->id);
+    }
+
+    /** Over NewsIndexGate::MIN_WORDS words, none a six-word run from the source. */
+    private function longBody(string $links): string
+    {
+        $sentence = 'Players who hold accounts with these brands can keep using them while the licence terms stay in force.';
+
+        return '<p>' . implode(' ', array_fill(0, 18, $sentence)) . '</p>'
+            . '<h2>What this means for players</h2><p>' . $links . ' Nothing changes for existing customers.</p>';
+    }
+
+    public function test_the_model_is_offered_only_this_sites_pages(): void
+    {
+        $this->linkablePages();
+        $this->fakeGemini();
+
+        $this->rewrite($this->draft());
+
+        Http::assertSent(fn (Request $request) => str_contains((string) $request['input'], '- Fast Payout casinos: /categories/fast-payout')
+            && str_contains((string) $request['input'], '- Northstar review: /casinos/northstar'));
+    }
+
+    public function test_a_long_rewrite_with_a_real_internal_link_is_indexable_but_stays_hidden(): void
+    {
+        $this->linkablePages();
+        $draft = $this->draft();
+        $this->fakeGemini(['body_html' => $this->longBody(
+            'See our <a href="/categories/fast-payout" onclick="x()">fast payout casinos</a> and '
+            . '<a href="/casinos/made-up">a page that does not exist</a> or <a href="https://evil.test">elsewhere</a>.',
+        )]);
+
+        $result = $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertTrue($result['indexed']);
+        $this->assertNull($result['reason']);
+        $this->assertFalse($draft->noindex, 'it clears NewsIndexGate, so it may be indexed');
+        $this->assertFalse($draft->active, 'publishing stays an editor\'s act');
+
+        $body = (string) $draft->body;
+        $this->assertStringContainsString('<a href="/categories/fast-payout">fast payout casinos</a>', $body);
+        $this->assertStringNotContainsString('onclick', $body);
+        $this->assertStringNotContainsString('made-up', $body, 'a path that was not offered is unwrapped');
+        $this->assertStringNotContainsString('evil.test', $body);
+        $this->assertStringContainsString('a page that does not exist', $body, 'the anchor text survives');
+    }
+
+    public function test_a_rewrite_under_the_bar_stays_noindex_and_says_why(): void
+    {
+        $draft = $this->draft();
+        $this->fakeGemini();
+
+        $result = $this->rewrite($draft);
+
+        $this->assertSame('rewritten', $result['status']);
+        $this->assertFalse($result['indexed']);
+        $this->assertStringContainsString('kept noindex', (string) $result['reason']);
+        $this->assertTrue($draft->refresh()->noindex);
+    }
+
+    public function test_all_rewrites_written_posts_again_from_their_own_copy(): void
+    {
+        $this->linkablePages();
+        config(['news.rewrite.daily_per_site' => 1]);
+        $live = $this->draft([
+            'title'   => self::NEW_TITLE,
+            'excerpt' => 'Our earlier standfirst.',
+            'body'    => '<p>Our earlier body.</p>',
+            'active'  => true,
+            'noindex' => true,
+            'source_ref' => 'a:1',
+        ]);
+        $this->draft(['source_ref' => 'a:2', 'slug' => 'unwritten']);
+
+        // The written post is not pending without --all, and it used today's cap.
+        $this->assertSame([], app(NewsRewriteService::class)->pending(10)->all());
+        // With --all, both are, and the daily cap does not apply.
+        $this->assertCount(2, app(NewsRewriteService::class)->pending(10, all: true));
+
+        // The same title as before is fine: it is our own, not the source's.
+        $this->fakeGemini(['body_html' => $this->longBody('Compare <a href="/casinos/northstar">Northstar</a>.')]);
+
+        $this->artisan('news:rewrite', ['--all' => true, '--id' => $live->id])
+            ->expectsOutputToContain("✓ #{$live->id} → regulator-renews-eight-operator-licences (indexable)")
+            ->expectsOutputToContain('1 rewritten (1 indexable), 0 rejected, 0 failed.')
+            ->assertSuccessful();
+
+        Http::assertSent(fn (Request $request) => str_contains((string) $request['input'], "Earlier version of the article:\nOur earlier body."));
+        $live->refresh();
+        $this->assertFalse($live->noindex);
+        $this->assertTrue($live->active);
+        $this->assertSame('regulator-renews-eight-operator-licences', $live->slug, 'a live URL must not 404');
+    }
+
+    public function test_id_alone_does_not_rewrite_a_written_post(): void
+    {
+        $written = $this->draft(['body' => '<p>Written.</p>']);
+        Http::fake();
+
+        $this->artisan('news:rewrite', ['--id' => $written->id])
+            ->expectsOutputToContain('Add --all to write it again.')
+            ->assertSuccessful();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_the_casinos_a_story_bears_on_are_handed_over_with_their_facts_and_may_be_linked(): void
+    {
+        $this->site->update(['operator_profile_enabled' => true]);
+        // Beyond the 20 casinos the catalog offers, so only the match makes it linkable.
+        $casino = Casino::factory()->create(['name' => 'Riverbend', 'slug' => 'riverbend', 'active' => true]);
+        $casino->sites()->attach($this->site->id, ['active' => true, 'position' => 99, 'affiliate_url' => 'https://example.com/go']);
+        $casino->detail()->create(['licences' => ['MGA'], 'withdrawal_time' => '24 hours']);
+        foreach (range(1, 20) as $n) {
+            Casino::factory()->create(['slug' => "filler-{$n}", 'active' => true])
+                ->sites()->attach($this->site->id, ['active' => true, 'position' => $n, 'affiliate_url' => 'https://example.com/go']);
+        }
+
+        $draft = $this->draft(['title' => 'Malta Gaming Authority fines eight operators']);
+        $this->fakeGemini(['body_html' => $this->longBody('<a href="/casinos/riverbend">Riverbend</a> holds an MGA licence.')]);
+
+        $this->rewrite($draft);
+
+        Http::assertSent(fn (Request $request) => str_contains(
+            (string) $request['input'],
+            '- Riverbend (/casinos/riverbend): It holds a licence from Malta Gaming Authority, the regulator in the story. Licences: MGA. Withdrawal time: 24 hours.',
+        ));
+        $this->assertStringContainsString('<a href="/casinos/riverbend">Riverbend</a>', (string) $draft->refresh()->body);
+        $this->assertFalse($draft->noindex);
+    }
+
+    public function test_the_editors_note_is_kept_and_counts_toward_the_bar(): void
+    {
+        $this->linkablePages();
+        $note = implode(' ', array_fill(0, 200, 'note'));
+        $draft = $this->draft(['editor_note' => $note]);
+        // About 130 words of body: under the bar alone, over it with the note.
+        $this->fakeGemini(['body_html' => $this->originalBody() . '<p><a href="/categories/fast-payout">Fast payouts</a>.</p>']);
+
+        $result = $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertTrue($result['indexed']);
+        $this->assertFalse($draft->noindex);
+        $this->assertSame($note, $draft->editor_note, 'the rewrite never touches it');
     }
 }

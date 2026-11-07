@@ -25,7 +25,7 @@ class StoreMailgunReceiverRequest extends FormRequest
             // fail at the database instead of showing a field error.
             'email' => [
                 'required', 'string', 'email:rfc', 'max:255',
-                Rule::unique('mailgun_receivers', 'email'),
+                Rule::unique($this->receiverTable(), 'email'),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
             // Where this address came from, in the operator's own words. The
@@ -35,6 +35,12 @@ class StoreMailgunReceiverRequest extends FormRequest
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];
+    }
+
+    /** The list this request writes to. Overridden by the SendGrid twin. */
+    protected function receiverTable(): string
+    {
+        return 'mailgun_receivers';
     }
 
     /** @return array<string, string> */

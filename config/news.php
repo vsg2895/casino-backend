@@ -59,11 +59,14 @@ return [
      * items deletes every news post of the OLDEST day on the site — today's
      * news in, the oldest day out. Covers are deleted with them.
      *
+     * OFF by default since 2026-11-06. Deleting a day of news every day turned
+     * URLs Google had indexed into 404s, so the indexed set could never grow.
+     *
      * Once per day, not once per run: with the hourly schedule on, a run every
      * hour would otherwise delete 24 days a day. Posts from the last day are
      * never deleted, and neither are posts with no date.
      */
-    'prune_oldest_day' => (bool) env('NEWS_PRUNE_OLDEST_DAY', true),
+    'prune_oldest_day' => (bool) env('NEWS_PRUNE_OLDEST_DAY', false),
 
     /**
      * OFF by default. The schedule entry in routes/console.php reads this, so
@@ -158,6 +161,34 @@ return [
          *   cardplayer, pokernews, yogonet, gamingintelligence - serve HTML,
          *                      not XML, at their advertised feed URLs.
          */
+    ],
+
+    /**
+     * Regulators a story can name, for {@see \App\Services\News\NewsSiteFacts}.
+     *
+     * A story that names one is matched to this site's casinos whose stored
+     * `licences` name the same regulator, and the rewrite states that from our
+     * own data. Aliases are lowercase ASCII (accents are folded before
+     * matching) and match whole words only, so keep them unambiguous: "gambling
+     * commission" alone, or a three-letter code that means something else
+     * (ADM, KSA), would match stories about other bodies.
+     */
+    'regulators' => [
+        ['name' => 'Malta Gaming Authority', 'aliases' => ['malta gaming authority', 'mga']],
+        ['name' => 'UK Gambling Commission', 'aliases' => ['uk gambling commission', 'ukgc', 'gambling commission of great britain', 'great britain gambling commission', 'british gambling commission']],
+        ['name' => 'Curaçao gaming licence', 'aliases' => ['curacao']],
+        ['name' => 'Kahnawake Gaming Commission', 'aliases' => ['kahnawake']],
+        ['name' => 'Gibraltar Gambling Commissioner', 'aliases' => ['gibraltar']],
+        ['name' => 'Isle of Man Gambling Supervision Commission', 'aliases' => ['isle of man', 'gambling supervision commission']],
+        ['name' => 'Alderney Gambling Control Commission', 'aliases' => ['alderney']],
+        ['name' => 'Anjouan Gaming', 'aliases' => ['anjouan']],
+        ['name' => 'AGCO / iGaming Ontario', 'aliases' => ['agco', 'alcohol and gaming commission of ontario', 'igaming ontario']],
+        ['name' => 'Spelinspektionen (Sweden)', 'aliases' => ['spelinspektionen', 'swedish gambling authority']],
+        ['name' => 'Spillemyndigheden (Denmark)', 'aliases' => ['spillemyndigheden', 'danish gambling authority']],
+        ['name' => 'Estonian Tax and Customs Board', 'aliases' => ['estonian tax and customs board', 'emta']],
+        ['name' => 'DGOJ (Spain)', 'aliases' => ['dgoj', 'direccion general de ordenacion del juego']],
+        ['name' => 'Kansspelautoriteit (Netherlands)', 'aliases' => ['kansspelautoriteit', 'dutch gambling authority']],
+        ['name' => 'GGL (Germany)', 'aliases' => ['ggl', 'gemeinsame glucksspielbehorde', 'german gambling authority']],
     ],
 
     /**

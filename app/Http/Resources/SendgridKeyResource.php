@@ -23,6 +23,12 @@ class SendgridKeyResource extends JsonResource
             'id'         => $this->id,
             'name'       => $this->name,
             'masked_key' => $this->maskedKey(),
+            // Sender of receiver campaigns only; null until one is set.
+            'from_address' => $this->from_address,
+            'from_name'    => $this->from_name,
+            // A PUBLIC key (it verifies SendGrid's signature, it cannot make
+            // one), so it is returned for the form like any other setting.
+            'webhook_verification_key' => $this->webhook_verification_key,
             'status'     => $this->status,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

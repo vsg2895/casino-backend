@@ -171,15 +171,10 @@ class VerificationPromotionHistoryTest extends TestCase
 
     // ── one send, one tab ────────────────────────────────────────────────────
 
-    public function test_an_after_verification_send_is_listed_here_and_not_under_promotion(): void
+    public function test_an_after_verification_send_is_listed_here(): void
     {
-        /*
-         * THE BUG THIS GUARDS. This stream writes to the shared promotion
-         * history as well as to its own log, because the 24-hour dedup lives on
-         * that shared table and has to see these sends. The side effect was
-         * that every one of them appeared under BOTH tabs of a section whose
-         * premise is one tab per stream.
-         */
+        // This stream also writes the shared promotion history (the 24-hour
+        // dedup lives there), but it is listed from its own log.
         PromotionEmailHistory::recordAttempts(
             $this->site->id,
             ['player@example.test' => PromotionEmailHistory::STATUS_SUCCESS],
@@ -188,26 +183,7 @@ class VerificationPromotionHistoryTest extends TestCase
         );
         $this->send('player@example.test');
 
-        // Its own tab shows it…
         $this->history()->assertOk()->assertJsonPath('data.0.email', 'player@example.test');
-
-        // …and the Promotion tab does not, listing or count.
-        $promotion = $this->getJson('/api/v1/admin/promotion-history')->assertOk();
-        $this->assertSame([], $promotion->json('data'), 'an after-verification send must not appear under Promotion');
-        $this->getJson('/api/v1/admin/promotion-history/count')->assertOk()->assertJsonPath('total', 0);
-    }
-
-    public function test_a_campaign_send_is_still_listed_under_promotion(): void
-    {
-        // The other half of the rule: narrowing the tab must not empty it.
-        PromotionEmailHistory::recordAttempts(
-            $this->site->id,
-            ['player@example.test' => PromotionEmailHistory::STATUS_SUCCESS],
-        );
-
-        $this->getJson('/api/v1/admin/promotion-history')
-            ->assertOk()
-            ->assertJsonPath('data.0.email', 'player@example.test');
     }
 
     public function test_the_shared_dedup_still_sees_a_hidden_after_verification_send(): void

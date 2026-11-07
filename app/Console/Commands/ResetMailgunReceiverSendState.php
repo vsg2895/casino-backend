@@ -4,32 +4,45 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\CampaignReceiver;
 use App\Services\MailgunReceiverSendStateResetter;
 use Illuminate\Console\Command;
 
 /**
- * Clears the send counters on Mailgun receivers — the "Last sent" and "Sent"
- * columns in the admin Receivers table.
+ * Clears the send counters on one Custom Receivers list — the "Last sent" and
+ * "Sent" columns in the admin Receivers table.
  *
- *   php artisan mailgun:reset-receiver-sends                  → every receiver
+ *   php artisan mailgun:reset-receiver-sends                  → every Mailgun receiver
+ *   php artisan mailgun:reset-receiver-sends --list=sendgrid  → every SendGrid receiver
  *   php artisan mailgun:reset-receiver-sends --clear-errors   → also blank last_error
  *   php artisan mailgun:reset-receiver-sends --force          → no confirmation
  *
  * The reset itself lives in {@see MailgunReceiverSendStateResetter}, shared with
- * the "Reset send counters" button in the admin Mailgun Credentials screen, so
+ * the "Reset send counters" buttons on the Mailgun Credentials and SendGrid Keys
+ * screens, so
  * the CLI and the panel can never reset different things. Everything here is the
  * console wrapper: confirmation, progress, reporting.
  */
 class ResetMailgunReceiverSendState extends Command
 {
     protected $signature = 'mailgun:reset-receiver-sends
+        {--list=mailgun : Which Custom Receivers list to reset: mailgun or sendgrid}
         {--clear-errors : Also blank last_error, so no stale failure survives the reset}
         {--force : Skip the confirmation prompt}';
 
-    protected $description = 'Reset the last-sent timestamp and sent counter on every Mailgun receiver';
+    protected $description = 'Reset the last-sent timestamp and sent counter on every receiver of one Custom Receivers list';
 
-    public function handle(MailgunReceiverSendStateResetter $resetter): int
+    public function handle(): int
     {
+        $model = CampaignReceiver::forList((string) $this->option('list'));
+
+        if ($model === null) {
+            $this->error('Unknown --list value. Use --list=mailgun or --list=sendgrid.');
+
+            return self::INVALID;
+        }
+
+        $resetter = new MailgunReceiverSendStateResetter($model);
         $clearErrors = (bool) $this->option('clear-errors');
         $total       = $resetter->pendingCount($clearErrors);
 

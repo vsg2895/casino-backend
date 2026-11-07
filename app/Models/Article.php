@@ -47,7 +47,7 @@ class Article extends Model
      *
      * @var list<string>
      */
-    public const array CONTENT_FIELDS = ['title', 'excerpt', 'body', 'hero_image_path'];
+    public const array CONTENT_FIELDS = ['title', 'excerpt', 'body', 'editor_note', 'hero_image_path'];
 
     protected $fillable = [
         'site_id',
@@ -57,11 +57,13 @@ class Article extends Model
         'source_ref',
         'source_name',
         'source_url',
-        'news_category_id',
         'title',
         'slug',
         'excerpt',
         'body',
+        // Plain text, written by an editor, shown as "Editor's note". See the
+        // 2026_11_28 migration.
+        'editor_note',
         'hero_image_path',
         'published_at',
         'active',
@@ -295,12 +297,6 @@ class Article extends Model
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(Author::class, 'reviewed_by_id');
-    }
-
-    /** The editorial section this post sits in. Null is a valid, publishable state. */
-    public function newsCategory(): BelongsTo
-    {
-        return $this->belongsTo(NewsCategory::class);
     }
 
     /**

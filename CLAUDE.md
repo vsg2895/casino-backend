@@ -130,7 +130,7 @@ app/
 │   │   ├── Public/    Casino, CasinoReview, Category, Country, SpecialOffer, CmsPage, SocialLink,
 │   │   │              Newsletter, Unsubscribe, Verify, SiteFeature
 │   │   └── AuthController.php
-│   ├── Controllers/Concerns/   ManagesReceiverCampaign (Mailgun + SMTP receiver endpoints),
+│   ├── Controllers/Concerns/   ManagesReceiverCampaign (Mailgun + SMTP + SendGrid receiver endpoints),
 │   │                          SendsAdminTestEmail, ResolvesTestSubscriber
 │   ├── Requests/{Admin,Public,UniOne}/
 │   ├── Resources/

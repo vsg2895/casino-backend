@@ -17,7 +17,7 @@ class UpdateMailgunReceiverRequest extends FormRequest
         return [
             'email' => [
                 'required', 'string', 'email:rfc', 'max:255',
-                Rule::unique('mailgun_receivers', 'email')->ignore($this->route('mailgun_receiver')),
+                Rule::unique($this->receiverTable(), 'email')->ignore($this->route($this->routeParameter())),
             ],
             'name'           => ['nullable', 'string', 'max:255'],
             // Editable: an address filed under the wrong list should be moved,
@@ -26,5 +26,17 @@ class UpdateMailgunReceiverRequest extends FormRequest
             // No `is_active`: the controller forces it true. A receiver is on
             // the list and mailed, or it is not on the list.
         ];
+    }
+
+    /** The list this request writes to. Overridden by the SendGrid twin. */
+    protected function receiverTable(): string
+    {
+        return 'mailgun_receivers';
+    }
+
+    /** The route parameter holding the receiver being edited. */
+    protected function routeParameter(): string
+    {
+        return 'mailgun_receiver';
     }
 }
