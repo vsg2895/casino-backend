@@ -337,6 +337,8 @@ Route::prefix('v1')->group(function () {
 
         // Literal before `forum-articles/{forumArticle}`, or "count" is read as an id.
         Route::get('sites/{site}/forum-articles/count', [ForumArticleController::class, 'count']);
+        // Also literal: the casinos a topic may be about (the editor's field and the filter).
+        Route::get('sites/{site}/forum-articles/casinos', [ForumArticleController::class, 'casinos']);
         Route::get('sites/{site}/forum-articles', [ForumArticleController::class, 'index']);
         Route::post('sites/{site}/forum-articles', [ForumArticleController::class, 'store']);
         Route::get('sites/{site}/forum-articles/{forumArticle}', [ForumArticleController::class, 'show']);
@@ -735,6 +737,9 @@ Route::prefix('v1')->group(function () {
         Route::get('news/featured',           [PublicNewsController::class, 'featured']);
         // Likewise BEFORE news/{slug}: the Most Popular listing, paginated.
         Route::get('news/popular',            [PublicNewsController::class, 'popular']);
+        // Likewise BEFORE news/{slug}: deleted posts' slugs, answered 410 by
+        // the site's proxy.
+        Route::get('news/gone',               [PublicNewsController::class, 'gone']);
         Route::get('news/{slug}',             [PublicNewsController::class, 'show']);
 
         /*

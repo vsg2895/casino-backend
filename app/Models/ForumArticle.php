@@ -40,6 +40,8 @@ class ForumArticle extends Model
     protected $fillable = [
         'site_id',
         'forum_category_id',
+        // The casino this topic is about; null for a general topic.
+        'casino_id',
         'user_id',
         'title',
         'slug',
@@ -83,6 +85,12 @@ class ForumArticle extends Model
     public function site(): BelongsTo
     {
         return $this->belongsTo(Site::class);
+    }
+
+    /** The casino this topic is about, if any. */
+    public function casino(): BelongsTo
+    {
+        return $this->belongsTo(Casino::class);
     }
 
     public function category(): BelongsTo

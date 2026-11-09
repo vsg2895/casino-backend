@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ArticleResource;
 use App\Models\Article;
+use App\Models\DeletedNewsSlug;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Http\JsonResponse;
@@ -249,6 +250,73 @@ class NewsController extends Controller
                 ];
             },
         );
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * The slugs of this site's DELETED news posts, for the site's proxy to
+     * answer with 410 Gone.
+     *
+     * A deleted post's URL would otherwise be a 404, which search engines keep
+     * re-crawling for a while before they drop it; 410 says the removal was
+     * deliberate. Read from the tombstones hard deletes leave
+     * (DeletedNewsSlug), plus any row still only soft-deleted from before
+     * deletes were permanent. Only posts that were ever public — a draft that
+     * never went live has nothing indexed to clear — and only those deleted
+     * within `news.gone_days`, so the list stays small.
+     *
+     * A slug a live post holds is never listed, whatever the tombstones say:
+     * answering a live article 410 would deindex it.
+     *
+     * Plain slugs, not paths: the proxy owns the `/news/` prefix.
+     */
+    public function gone(): JsonResponse
+    {
+        /** @var Site $site */
+        $site = app('current_site');
+        $this->assertEnabled($site);
+
+        $data = SiteCache::remember($site->id, ['news'], 'news:gone:site:' . $site->id, 3600, function () use ($site): array {
+            $since = now()->subDays(max(1, (int) config('news.gone_days', 365)));
+
+            $tombstones = DeletedNewsSlug::ready()
+                ? DeletedNewsSlug::query()
+                    ->where('site_id', $site->id)
+                    ->where('was_public', true)
+                    ->where('deleted_at', '>=', $since)
+                    ->pluck('slug')
+                    ->all()
+                : [];
+
+            $trashed = Article::onlyTrashed()
+                ->where('site_id', $site->id)
+                ->ofType(Article::TYPE_NEWS)
+                ->whereNotNull('published_at')
+                ->whereNotNull('body')
+                ->where('body', '!=', '')
+                ->where('deleted_at', '>=', $since)
+                ->pluck('slug')
+                ->all();
+
+            $slugs = array_values(array_unique(array_map('strval', [...$tombstones, ...$trashed])));
+
+            if ($slugs === []) {
+                return [];
+            }
+
+            $live = Article::query()
+                ->where('site_id', $site->id)
+                ->whereIn('slug', $slugs)
+                ->pluck('slug')
+                ->map(static fn ($slug): string => (string) $slug)
+                ->all();
+
+            $gone = array_values(array_diff($slugs, $live));
+            sort($gone);
+
+            return $gone;
+        });
 
         return response()->json(['data' => $data]);
     }

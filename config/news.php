@@ -69,6 +69,16 @@ return [
     'prune_oldest_day' => (bool) env('NEWS_PRUNE_OLDEST_DAY', false),
 
     /**
+     * How long a deleted news URL answers 410 Gone instead of 404, in days.
+     *
+     * The site's proxy reads the slugs from `news/gone` (NewsController::gone)
+     * and answers them 410, which search engines drop from the index faster
+     * than a 404. After this window the URL is long out of the index and a
+     * plain 404 is just as good, so the list the proxy fetches stays small.
+     */
+    'gone_days' => (int) env('NEWS_GONE_DAYS', 365),
+
+    /**
      * OFF by default. The schedule entry in routes/console.php reads this, so
      * hourly ingestion starts when an operator turns it on, never because a
      * deploy shipped the code.
@@ -224,5 +234,11 @@ return [
          * schedule alone would allow ~240 a day. `--id` ignores it.
          */
         'daily_per_site' => (int) env('NEWS_REWRITE_DAILY_PER_SITE', 10),
+
+        // When a rewrite saves but misses the index bar (NewsIndexGate: 300+
+        // words and a link into the site), the model is asked again this many
+        // times with the exact shortfall, and the best draft is kept. 0 turns
+        // the repair off. Each attempt is one more model request.
+        'repair_attempts' => (int) env('NEWS_REWRITE_REPAIR_ATTEMPTS', 2),
     ],
 ];

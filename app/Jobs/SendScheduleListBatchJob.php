@@ -12,7 +12,9 @@ use App\Models\ScheduleSendHistory;
 use App\Models\Site;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
+use App\Support\Mail\PacedDelivery;
 use App\Support\Mail\ScheduleSendContext;
+use App\Support\Mail\SendingAccount;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -46,6 +48,10 @@ use Throwable;
  *
  * Outcomes are flushed to `schedule_send_histories` every `history_flush_size`
  * attempts, so a worker killed mid-batch leaves at most one window unrecorded.
+ *
+ * Sending is paced like a campaign platform's: the sending account's rolling
+ * window, one retry on a soft failure, and a time budget that re-queues the
+ * rest instead of overrunning the job ({@see PacedDelivery}).
  */
 class SendScheduleListBatchJob implements ShouldQueue
 {
@@ -142,9 +148,28 @@ class SendScheduleListBatchJob implements ShouldQueue
         $failed = 0;
         $skipped = 0;
 
-        foreach ($recipients as $recipient) {
+        // Throttled per sending account, soft failures retried once, and a time
+        // budget instead of a killed job — see PacedDelivery.
+        $pacer = PacedDelivery::forAccount(
+            SendingAccount::forProvider($this->provider, $this->credentialId),
+            $this->timeout,
+            '[Schedule]',
+        );
+        /** @var list<int> $deferred Ids handed to a follow-up batch. */
+        $deferred = [];
+        $recipients = $recipients->values();
+
+        foreach ($recipients as $index => $recipient) {
             $email = (string) $recipient->email;
             $id = (int) $recipient->id;
+
+            // Out of time: everything from here on — this address included,
+            // before its claim or a slot was taken — goes to a new batch.
+            if ($pacer->budgetSpent()) {
+                $deferred = $recipients->slice((int) $index)->pluck('id')->map(static fn ($v): int => (int) $v)->values()->all();
+
+                break;
+            }
 
             if (isset($resting[$email]) || ($isReceiverList && ! $this->claimDay($model, $id))) {
                 $rows[] = $context->row($email, $id, ScheduleSendHistory::STATUS_SKIPPED);
@@ -162,7 +187,7 @@ class SendScheduleListBatchJob implements ShouldQueue
                         )
                         : $promotions->mailFor($site, $template, $email, Newsletter::generateUnsubscribeToken());
 
-                    $resolved->mailer->to($email)->send($mailable->usingFromAddress($resolved->fromAddress));
+                    $pacer->send($resolved->mailer, $email, $mailable->usingFromAddress($resolved->fromAddress));
                     $rows[] = $context->row($email, $id, ScheduleSendHistory::STATUS_SENT);
                     $sent++;
                 } catch (Throwable $e) {
@@ -196,7 +221,20 @@ class SendScheduleListBatchJob implements ShouldQueue
             'failed'      => $failed,
             'skipped'     => $skipped,
             'total'       => count($this->recipientIds),
+            'deferred'    => count($deferred),
+            'rate'        => $pacer->rate(),
         ]);
+
+        // History is written above, so the continuation never runs ahead of it.
+        if ($deferred !== []) {
+            self::dispatch($this->scheduleId, $this->siteId, $this->audience, $deferred, $this->provider, $this->credentialId);
+
+            Log::info('[Schedule] Time budget reached; remaining addresses re-queued.', [
+                'schedule_id' => $this->scheduleId,
+                'audience'    => $this->audience,
+                'requeued'    => count($deferred),
+            ]);
+        }
     }
 
     /**

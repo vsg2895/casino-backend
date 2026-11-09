@@ -9,6 +9,7 @@ use App\Http\Resources\Forum\ForumArticleResource;
 use App\Http\Resources\Forum\ForumPostResource;
 use App\Services\Forum\ForumPostService;
 use App\Jobs\RevalidateNextJsSites;
+use App\Models\Casino;
 use App\Models\ForumArticle;
 use App\Models\ForumModerationLog;
 use App\Models\ForumPost;
@@ -37,7 +38,7 @@ class ForumArticleController extends Controller
 
     /** Listing columns — never the body. */
     private const array LIST_COLUMNS = [
-        'id', 'site_id', 'forum_category_id', 'user_id', 'title', 'slug', 'excerpt',
+        'id', 'site_id', 'forum_category_id', 'casino_id', 'user_id', 'title', 'slug', 'excerpt',
         'cover_image_path', 'status', 'pinned', 'locked', 'posts_count', 'views_count',
         'published_at', 'last_post_at', 'created_at', 'updated_at',
     ];
@@ -48,7 +49,7 @@ class ForumArticleController extends Controller
 
         // simplePaginate: no COUNT here — the screen's total comes from count().
         $articles = $this->filteredArticles($site, $filters)
-            ->with(['category:id,name,slug', 'author:id,name'])
+            ->with(['category:id,name,slug', 'author:id,name', 'casino:id,name'])
             ->orderByDesc('pinned')
             ->orderByDesc('id')
             ->simplePaginate($filters['per_page'] ?? self::PER_PAGE, self::LIST_COLUMNS);
@@ -56,6 +57,7 @@ class ForumArticleController extends Controller
         return response()->json([
             'data' => collect($articles->items())->map(fn (ForumArticle $a): array => [
                 ...(new ForumArticleResource($a))->withRealAuthor()->resolve(),
+                ...$this->casinoFields($a),
                 'status'     => $a->status,
                 'created_at' => $a->created_at?->toISOString(),
             ])->all(),
@@ -83,6 +85,8 @@ class ForumArticleController extends Controller
     {
         return $request->validate([
             'category_id' => ['nullable', 'integer'],
+            // A casino id, or "none" for topics about no casino.
+            'casino_id'   => ['nullable', 'regex:/^(none|[0-9]+)$/'],
             'status'      => ['nullable', 'string', 'in:draft,published,archived'],
             'pinned'      => ['nullable', 'boolean'],
             'from'        => ['nullable', 'date'],
@@ -129,6 +133,9 @@ class ForumArticleController extends Controller
         return ForumArticle::query()
             ->where('site_id', $site->id)
             ->when($filters['category_id'] ?? null, fn ($q, $id) => $q->where('forum_category_id', $id))
+            ->when($filters['casino_id'] ?? null, fn ($q, $id) => $id === 'none'
+                ? $q->whereNull('casino_id')
+                : $q->where('casino_id', (int) $id))
             ->when($filters['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
             ->when(isset($filters['pinned']), fn ($q) => $q->where('pinned', (bool) $filters['pinned']))
             ->when($createdFrom, fn ($q, $d) => $q->where('created_at', '>=', $d))
@@ -138,13 +145,48 @@ class ForumArticleController extends Controller
             ->when($filters['search'] ?? null, fn ($q, $t) => $q->where('title', 'like', '%' . $t . '%'));
     }
 
+    /**
+     * The casinos a topic of this site may be about — every casino attached to
+     * the site, active or not — as id and name only. Feeds the editor's casino
+     * field and the listing's casino filter.
+     */
+    public function casinos(Site $site): JsonResponse
+    {
+        $rows = Casino::query()
+            ->join('casino_site', 'casino_site.casino_id', '=', 'casinos.id')
+            ->where('casino_site.site_id', $site->id)
+            ->orderBy('casinos.name')
+            ->get(['casinos.id', 'casinos.name'])
+            ->map(static fn (Casino $c): array => ['id' => (int) $c->id, 'name' => (string) $c->name])
+            ->all();
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * Admin-only: the casino a topic is about. Kept out of ForumArticleResource,
+     * which the public forum renders too and has no use for it.
+     *
+     * @return array{casino_id: int|null, casino: array{id: int, name: string}|null}
+     */
+    private function casinoFields(ForumArticle $article): array
+    {
+        $casino = $article->relationLoaded('casino') ? $article->casino : null;
+
+        return [
+            'casino_id' => $article->casino_id === null ? null : (int) $article->casino_id,
+            'casino'    => $casino === null ? null : ['id' => (int) $casino->id, 'name' => (string) $casino->name],
+        ];
+    }
+
     public function show(Site $site, ForumArticle $forumArticle): JsonResponse
     {
         $this->assertOwns($site, $forumArticle);
 
         return response()->json([
             'data' => [
-                ...(new ForumArticleResource($forumArticle->load(['category:id,name,slug', 'author:id,name'])))->withBody()->withRealAuthor()->resolve(),
+                ...(new ForumArticleResource($forumArticle->load(['category:id,name,slug', 'author:id,name', 'casino:id,name'])))->withBody()->withRealAuthor()->resolve(),
+                ...$this->casinoFields($forumArticle),
                 'status' => $forumArticle->status,
             ],
         ]);
@@ -164,7 +206,10 @@ class ForumArticleController extends Controller
 
         $this->refresh($site);
 
-        return response()->json(['data' => (new ForumArticleResource($article))->withBody()->withRealAuthor()->resolve()], Response::HTTP_CREATED);
+        return response()->json(['data' => [
+            ...(new ForumArticleResource($article))->withBody()->withRealAuthor()->resolve(),
+            ...$this->casinoFields($article->load('casino:id,name')),
+        ]], Response::HTTP_CREATED);
     }
 
     public function update(Request $request, Site $site, ForumArticle $forumArticle): JsonResponse
@@ -175,7 +220,10 @@ class ForumArticleController extends Controller
 
         $this->refresh($site);
 
-        return response()->json(['data' => (new ForumArticleResource($forumArticle))->withBody()->withRealAuthor()->resolve()]);
+        return response()->json(['data' => [
+            ...(new ForumArticleResource($forumArticle))->withBody()->withRealAuthor()->resolve(),
+            ...$this->casinoFields($forumArticle->load('casino:id,name')),
+        ]]);
     }
 
     /**
@@ -310,6 +358,12 @@ class ForumArticleController extends Controller
                 Rule::unique('forum_articles', 'slug')
                     ->where('site_id', $site->id)
                     ->ignore($existing?->id),
+            ],
+            // Only a casino this site shows: a topic about a casino the site
+            // does not list would point readers at nothing.
+            'casino_id' => [
+                'nullable', 'integer',
+                Rule::exists('casino_site', 'casino_id')->where('site_id', $site->id),
             ],
             'excerpt' => ['nullable', 'string', 'max:500'],
             'body'    => ['required', 'string', 'max:200000'],

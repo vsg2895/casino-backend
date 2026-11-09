@@ -6,6 +6,7 @@ namespace App\Services\News;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Models\DeletedNewsSlug;
 use App\Models\Site;
 use App\Support\SiteCache;
 use Illuminate\Support\Carbon;
@@ -49,6 +50,7 @@ class NewsScrapeService
     public function __construct(
         private readonly NewsFeedParser $parser,
         private readonly NewsCoverGenerator $covers,
+        private readonly NewsRemovalService $removal,
     ) {}
 
     /**
@@ -119,8 +121,8 @@ class NewsScrapeService
      * that keeps the feed to recent news. Returns the slugs it deleted (or, on
      * a dry run, would delete).
      *
-     * Each row is deleted as a MODEL, never with a bulk query, so
-     * Article::deleted fires and the cover file goes with it.
+     * Deleted through NewsRemovalService, as MODELS, so the cover file goes
+     * with each row, links to it are unwrapped and its URL answers 410.
      *
      * ONCE PER DAY. A scraped row created earlier today means an earlier run
      * already took today's news, and so already removed a day — without this,
@@ -171,15 +173,11 @@ class NewsScrapeService
             ->whereBetween('published_at', [$day, $day->copy()->endOfDay()])
             ->get();
 
-        $slugs = [];
-
-        foreach ($doomed as $article) {
-            if (! $dryRun) {
-                $article->delete();
-            }
-
-            $slugs[] = (string) $article->slug;
-        }
+        // Through the removal service, so links to these posts are unwrapped
+        // and their URLs answer 410; run() refreshes once for the whole run.
+        $slugs = $dryRun
+            ? $doomed->map(static fn (Article $article): string => (string) $article->slug)->all()
+            : $this->removal->remove($site, $doomed, refresh: false);
 
         $say(sprintf(
             '%s %d news post(s) from %s, the oldest day.',
@@ -313,14 +311,17 @@ class NewsScrapeService
      * the `unique(site_id, slug)` index and throw, so it is skipped and
      * reported instead.
      *
-     * withTrashed: a soft-deleted row still holds both unique indexes.
+     * withTrashed: a soft-deleted row still holds both unique indexes. And a
+     * HARD-deleted post's tombstone holds both too: its feed item must not come
+     * back, and its slug answers 410 (DeletedNewsSlug).
      */
     private function exists(Site $site, string $sourceRef, string $slug): bool
     {
         return Article::withTrashed()
             ->where('site_id', $site->id)
             ->where(fn ($q) => $q->where('source_ref', $sourceRef)->orWhere('slug', $slug))
-            ->exists();
+            ->exists()
+            || DeletedNewsSlug::holds($site->id, $slug, $sourceRef);
     }
 
     /** @param array<string, mixed> $item */

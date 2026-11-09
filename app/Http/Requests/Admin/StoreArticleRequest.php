@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests\Admin;
 
 use App\Models\Article;
+use App\Models\DeletedNewsSlug;
 use App\Models\Site;
 use App\Services\News\NewsIndexGate;
 use Illuminate\Foundation\Http\FormRequest;
@@ -38,6 +39,11 @@ class StoreArticleRequest extends FormRequest
                 Rule::unique('articles', 'slug')
                     ->where('site_id', $this->route('site')?->id)
                     ->ignore($this->route('article')?->id),
+                // A deleted news post's URL answers 410 Gone; a new news post
+                // must not take it, or the site would answer it 410 too.
+                ...($this->query('type') === Article::TYPE_NEWS && DeletedNewsSlug::ready()
+                    ? [Rule::unique('deleted_news_slugs', 'slug')->where('site_id', $this->route('site')?->id)]
+                    : []),
             ],
             'excerpt' => ['nullable', 'string', 'max:500'],
             'body'    => ['nullable', 'string'],
@@ -98,7 +104,7 @@ class StoreArticleRequest extends FormRequest
     {
         return [
             'slug.regex'  => 'Use lowercase words separated by hyphens, e.g. bonus-terms-explained.',
-            'slug.unique' => 'This site already has a guide with that slug.',
+            'slug.unique' => 'This site already has (or had, for a deleted news post) an article with that slug.',
         ];
     }
 }

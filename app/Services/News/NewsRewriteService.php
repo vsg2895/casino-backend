@@ -6,6 +6,8 @@ namespace App\Services\News;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Models\DeletedNewsSlug;
+use App\Models\Author;
 use App\Models\Casino;
 use App\Models\Category;
 use App\Models\Site;
@@ -286,6 +288,15 @@ class NewsRewriteService
 
         // The editor's note is never rewritten, but it is part of the page.
         $problems = $site === null ? ['the post has no site'] : NewsIndexGate::problems($written['body'], $site, $article->editor_note);
+
+        // Under the bar: ask again with the exact shortfall, then — if only the
+        // link is still missing — add one to a page the story bears on. No
+        // words are ever added here: length can only come from the model,
+        // under the same rules, or the post stays noindex.
+        if ($site !== null && $problems !== []) {
+            [$written, $problems] = $this->repair($article, $site, $facts, $paths, $written, $problems, $casinos, $links, checkEcho: ! $again);
+        }
+
         $indexReason = $problems === [] ? null : 'kept noindex: ' . implode('; ', $problems);
 
         if ($dryRun) {
@@ -304,6 +315,189 @@ class NewsRewriteService
         }
 
         return $this->outcome('rewritten', $indexReason, $slug, $problems === []);
+    }
+
+    /**
+     * The site's news-desk author — "Winpalack Team" for winpalack — created
+     * the first time a rewrite needs it.
+     *
+     * Honest by construction: a rewritten post IS the site's editorial
+     * output, so the desk is its author; no person is named as having written
+     * it. The row is an ordinary author (Sites → Authors): an editor can give
+     * it a photo and a fuller bio, rename it or hide it, and the next rewrites
+     * keep using it by its slug. Null when the post has no site.
+     */
+    private function teamAuthorId(Article $article): ?int
+    {
+        $site = $article->site;
+
+        if ($site === null) {
+            return null;
+        }
+
+        $slug = Str::slug($site->name . ' team');
+
+        $author = Author::query()->forSite($site->id)->where('slug', $slug)->first();
+
+        if ($author === null) {
+            try {
+                $author = Author::query()->create([
+                    'site_id'   => $site->id,
+                    'name'      => Str::limit($site->name . ' Team', 120, ''),
+                    'slug'      => $slug,
+                    'role'      => 'News desk',
+                    'short_bio' => Str::limit(
+                        "The {$site->name} news desk. Stories are written from the report credited on each page and checked against this site's own casino records.",
+                        300,
+                        '',
+                    ),
+                    'visible'   => true,
+                ]);
+            } catch (Throwable) {
+                // Another worker created it first (unique site + slug).
+                $author = Author::query()->forSite($site->id)->where('slug', $slug)->first();
+            }
+        }
+
+        return $author?->id;
+    }
+
+    /**
+     * Bring a draft that missed NewsIndexGate up to the bar, automatically.
+     *
+     * 1. Up to `news.rewrite.repair_attempts` more requests, each handing the
+     *    model its own previous draft and the exact shortfall ("246 words, at
+     *    least 350"; "no link to a page of this site"). A repaired draft must
+     *    pass every check the first one did — no source echo, nothing
+     *    invented — and it replaces the kept draft only when it is closer to
+     *    the bar (fewer problems, or as many and longer).
+     * 2. If the ONLY problem left is the missing link and the site has a page
+     *    to link, a closing "Related on this site" line links the most
+     *    relevant one: a casino the story names first, else a site page. That
+     *    is navigation, not content — it adds no claim to the article.
+     *
+     * Word count is never padded by code. A draft still short after the
+     * repairs stays noindex, with its reason, as before.
+     *
+     * @param  array{title: string, excerpt: string, body: string, meta_title: ?string, meta_description: ?string}  $written
+     * @param  list<string>  $problems
+     * @param  list<string>  $paths
+     * @param  list<array{name: string, path: string, facts: list<string>}>  $casinos
+     * @param  list<array{label: string, path: string}>  $links
+     * @return array{0: array{title: string, excerpt: string, body: string, meta_title: ?string, meta_description: ?string}, 1: list<string>}
+     */
+    private function repair(
+        Article $article,
+        Site $site,
+        string $facts,
+        array $paths,
+        array $written,
+        array $problems,
+        array $casinos,
+        array $links,
+        bool $checkEcho,
+    ): array {
+        $attempts = max(0, (int) config('news.rewrite.repair_attempts', 2));
+        $source = [(string) $article->title, (string) $article->excerpt];
+
+        for ($i = 0; $i < $attempts && $problems !== []; $i++) {
+            $needsWords = NewsIndexGate::wordCount($written['body']) + NewsIndexGate::wordCount((string) $article->editor_note) < NewsIndexGate::MIN_WORDS;
+            $needsLink = ! NewsIndexGate::hasInternalLink($written['body'], $site);
+
+            // Nothing a request can fix: only the link is missing and the site
+            // offers no page to link.
+            if (! $needsWords && (! $needsLink || $paths === [])) {
+                break;
+            }
+
+            try {
+                $retry = $this->ask($this->repairFacts($facts, $written, $needsWords, $needsLink && $paths !== []), $paths);
+            } catch (Throwable $e) {
+                Log::info('news:rewrite repair request failed', ['article_id' => $article->id, 'error' => $e->getMessage()]);
+
+                break;
+            }
+
+            if (is_string($retry) || $this->rejection($source[0], $source[1], $retry, $checkEcho) !== null) {
+                continue;
+            }
+
+            $retryProblems = NewsIndexGate::problems($retry['body'], $site, $article->editor_note);
+
+            if (count($retryProblems) < count($problems)
+                || (count($retryProblems) === count($problems) && NewsIndexGate::wordCount($retry['body']) > NewsIndexGate::wordCount($written['body']))) {
+                [$written, $problems] = [$retry, $retryProblems];
+            }
+        }
+
+        if ($problems !== [] && NewsIndexGate::wordCount($written['body']) + NewsIndexGate::wordCount((string) $article->editor_note) >= NewsIndexGate::MIN_WORDS) {
+            $target = $this->relatedLink($casinos, $links);
+
+            if ($target !== null) {
+                $written['body'] .= '<p>Related on this site: <a href="' . e($target['path']) . '">' . e($target['label']) . '</a>.</p>';
+                $problems = NewsIndexGate::problems($written['body'], $site, $article->editor_note);
+            }
+        }
+
+        return [$written, $problems];
+    }
+
+    /**
+     * The original facts plus the previous draft and what it lacks.
+     *
+     * @param  array{title: string, excerpt: string, body: string, meta_title: ?string, meta_description: ?string}  $written
+     */
+    private function repairFacts(string $facts, array $written, bool $needsWords, bool $needsLink): string
+    {
+        $fixes = [];
+
+        if ($needsWords) {
+            $fixes[] = sprintf(
+                'The body has %d words; it must have 350 to 500. Add useful general context for players under the same rules — no new specifics, no repetition.',
+                NewsIndexGate::wordCount($written['body']),
+            );
+        }
+
+        if ($needsLink) {
+            $fixes[] = 'The body links none of the listed site pages. Link one or two that genuinely relate, using the path exactly as listed.';
+        }
+
+        return $facts
+            . "
+
+Your previous draft did not meet the requirements. Rewrite it, keeping its facts and everything that was right:
+"
+            . json_encode($written, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+            . "
+
+Fix:
+- " . implode("
+- ", $fixes);
+    }
+
+    /**
+     * The page a fallback link points at: a casino the story bears on, else
+     * the first site page offered.
+     *
+     * @param  list<array{name: string, path: string, facts: list<string>}>  $casinos
+     * @param  list<array{label: string, path: string}>  $links
+     * @return array{label: string, path: string}|null
+     */
+    private function relatedLink(array $casinos, array $links): ?array
+    {
+        foreach ($casinos as $casino) {
+            if (NewsIndexGate::isLinkablePath($casino['path'])) {
+                return ['label' => $casino['name'] . ' review', 'path' => $casino['path']];
+            }
+        }
+
+        foreach ($links as $link) {
+            if (NewsIndexGate::isLinkablePath($link['path'])) {
+                return $link;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -342,6 +536,11 @@ class NewsRewriteService
                     // Indexable only when the body clears NewsIndexGate (length
                     // + a link into this site), the same bar the admin applies.
                     'noindex' => $noindex,
+                    // The byline: the site's own news desk, unless an editor
+                    // already chose an author — a human choice is never
+                    // replaced. The REVIEWER is never set here: "reviewed by"
+                    // claims a person read it, which only that person can do.
+                    'author_id' => $article->author_id ?? $this->teamAuthorId($article),
                     // `active` is deliberately absent: approval stays a human act.
                 ]);
 
@@ -724,6 +923,8 @@ class NewsRewriteService
                 ->where('slug', $slug)
                 ->whereKeyNot($article->getKey())
                 ->exists()
+            // A deleted post's URL answers 410; a new post must not take it.
+            || DeletedNewsSlug::holds((int) $article->site_id, $slug)
         ) {
             $slug = $base . '-' . $n++;
         }

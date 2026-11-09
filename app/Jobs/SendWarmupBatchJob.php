@@ -12,6 +12,7 @@ use App\Services\Mail\RateLimitDecision;
 use App\Services\Mail\WarmupCustomContent;
 use App\Services\Mail\WarmupMailResolver;
 use App\Services\Mail\WarmupRateLimiter;
+use App\Support\Mail\PacedDelivery;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -379,34 +380,14 @@ class SendWarmupBatchJob implements ShouldQueue
      */
     public static function isTemporaryFailure(Throwable $e): bool
     {
-        $message = $e->getMessage();
-        $code = $e->getCode();
-
-        if (is_int($code) && $code >= 400 && $code < 500) {
-            return true;
-        }
-
-        if (preg_match('/\b4[0-9]{2}[ -]|code "4[0-9]{2}"/', $message) === 1 && preg_match('/\b5[0-9]{2}[ -]|code "5[0-9]{2}"/', $message) !== 1) {
-            return true;
-        }
-
-        return preg_match('/connection (could not be established|reset|refused|timed out)|timed out|broken pipe|unable to (connect|write)/i', $message) === 1;
+        // One definition for every paced sender, warmup included.
+        return PacedDelivery::isTemporaryFailure($e);
     }
 
     /** Drop the SMTP session so the retry opens a fresh one. Best effort. */
     private function resetTransport(Mailer $mailer): void
     {
-        try {
-            if (method_exists($mailer, 'getSymfonyTransport')) {
-                $transport = $mailer->getSymfonyTransport();
-
-                if (method_exists($transport, 'stop')) {
-                    $transport->stop();
-                }
-            }
-        } catch (Throwable) {
-            // A transport that cannot be stopped is already disconnected.
-        }
+        PacedDelivery::resetTransport($mailer);
     }
 
     /**

@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
+use App\Models\Author;
 use App\Models\Casino;
 use App\Models\Category;
 use App\Models\Site;
@@ -15,6 +16,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
@@ -363,7 +365,9 @@ class NewsRewriteTest extends TestCase
 
         $this->assertSame('rewritten', $result['status']);
         $this->assertSame('what-the-latest-licence-review-means-for-players', $result['slug']);
-        Http::assertSentCount(1);
+        // The fake draft is under the index bar, so the two repair requests run
+        // too — a dry run shows what a real run would do.
+        Http::assertSentCount(3);
         $this->assertUntouched($draft);
         Storage::disk('public')->assertMissing('news/what-the-latest-licence-review-means-for-players.svg');
     }
@@ -416,7 +420,8 @@ class NewsRewriteTest extends TestCase
             ->expectsOutputToContain("✓ #{$second->id} → what-the-latest-licence-review-means-for-players")
             ->assertSuccessful();
 
-        Http::assertSentCount(1);
+        // One article: its request plus the two repairs of a short draft.
+        Http::assertSentCount(3);
         $this->assertNull($first->refresh()->body);
         $this->assertNotNull($second->refresh()->body);
     }
@@ -532,6 +537,112 @@ class NewsRewriteTest extends TestCase
         $this->assertFalse($result['indexed']);
         $this->assertStringContainsString('kept noindex', (string) $result['reason']);
         $this->assertTrue($draft->refresh()->noindex);
+    }
+
+    /** A Gemini reply carrying this JSON, for a sequence. */
+    private function geminiReply(array $fields): array
+    {
+        return ['steps' => [['type' => 'model_output', 'content' => [['type' => 'text', 'text' => json_encode([
+            'title'            => self::NEW_TITLE,
+            'excerpt'          => 'A periodic review ended with eight renewals. Here is what that changes.',
+            'body_html'        => $this->originalBody(),
+            'meta_title'       => 'Licence review ends with eight renewals',
+            'meta_description' => 'A periodic licence review renewed eight operators. What it covers, and what it changes for players at those sites.',
+            ...$fields,
+        ])]]]]];
+    }
+
+    public function test_a_draft_under_the_bar_is_repaired_automatically(): void
+    {
+        $this->linkablePages();
+        $draft = $this->draft();
+        Http::fake(['generativelanguage.googleapis.com/*' => Http::sequence()
+            ->push($this->geminiReply([]))
+            ->push($this->geminiReply(['body_html' => $this->longBody('See our <a href="/categories/fast-payout">fast payout casinos</a>.')]))]);
+
+        $result = $this->rewrite($draft);
+
+        $this->assertTrue($result['indexed']);
+        $this->assertNull($result['reason']);
+        $this->assertFalse($draft->refresh()->noindex);
+        Http::assertSentCount(2);
+        // The repair hands back the draft and names exactly what is missing.
+        Http::assertSent(fn (Request $request) => str_contains((string) $request['input'], 'Your previous draft did not meet the requirements')
+            && str_contains((string) $request['input'], 'it must have 350 to 500')
+            && str_contains((string) $request['input'], 'links none of the listed site pages'));
+    }
+
+    public function test_a_long_draft_that_only_lacks_a_link_gets_a_related_link(): void
+    {
+        $this->linkablePages();
+        $draft = $this->draft();
+        // Every reply, repairs included, is long but links nothing.
+        $this->fakeGemini(['body_html' => $this->longBody('No links here.')]);
+
+        $result = $this->rewrite($draft);
+
+        $this->assertTrue($result['indexed']);
+        $this->assertMatchesRegularExpression(
+            '#<p>Related on this site: <a href="/(categories|casinos)/[a-z0-9-]+">[^<]+</a>\.</p>$#',
+            (string) $draft->refresh()->body,
+        );
+        $this->assertFalse($draft->noindex);
+    }
+
+    public function test_a_draft_still_short_after_the_repairs_stays_noindex_with_no_padding(): void
+    {
+        $this->linkablePages();
+        $draft = $this->draft();
+        $this->fakeGemini();
+
+        $result = $this->rewrite($draft);
+
+        $this->assertFalse($result['indexed']);
+        $this->assertStringContainsString('words (at least 300)', (string) $result['reason']);
+        // No link was bolted on to a draft that is short anyway.
+        $this->assertStringNotContainsString('Related on this site', (string) $draft->refresh()->body);
+        Http::assertSentCount(3);
+    }
+
+    public function test_repairs_can_be_switched_off(): void
+    {
+        config(['news.rewrite.repair_attempts' => 0]);
+        $this->fakeGemini();
+
+        $this->rewrite($this->draft());
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_the_site_news_desk_becomes_the_author_and_no_reviewer_is_set(): void
+    {
+        $first = $this->draft(['source_ref' => 'a:1', 'slug' => 'first']);
+        $second = $this->draft(['source_ref' => 'a:2', 'slug' => 'second']);
+        $this->fakeGemini();
+
+        $this->rewrite($first);
+        $this->rewrite($second);
+
+        $desk = Author::query()->where('site_id', $this->site->id)->where('slug', Str::slug($this->site->name . ' team'))->sole();
+        $this->assertSame($this->site->name . ' Team', $desk->name);
+        $this->assertSame('News desk', $desk->role);
+        $this->assertTrue($desk->visible);
+        // One desk author per site, reused.
+        $this->assertSame($desk->id, $first->refresh()->author_id);
+        $this->assertSame($desk->id, $second->refresh()->author_id);
+        $this->assertNull($first->reviewed_by_id);
+    }
+
+    public function test_an_author_an_editor_chose_is_kept(): void
+    {
+        $person = Author::factory()->create(['site_id' => $this->site->id, 'name' => 'Ann Editor']);
+        $draft = $this->draft(['author_id' => $person->id]);
+        $this->fakeGemini();
+
+        $this->rewrite($draft);
+
+        $this->assertSame($person->id, $draft->refresh()->author_id);
+        $this->assertSame(1, Author::query()->where('site_id', $this->site->id)->count(), 'no desk author is created for it');
     }
 
     public function test_all_rewrites_written_posts_again_from_their_own_copy(): void

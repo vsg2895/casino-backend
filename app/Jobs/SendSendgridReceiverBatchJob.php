@@ -77,12 +77,26 @@ class SendSendgridReceiverBatchJob implements ShouldQueue
             return;
         }
 
-        $stats = $sender->sendChunk($credential, $mailer, $this->receiverIds);
+        $stats = $sender->sendChunk($credential, $mailer, $this->receiverIds, $this->timeout);
+        $deferred = $stats['deferred'];
+        $stats['deferred'] = count($deferred);
 
         Log::info('SendGrid receiver batch finished', [
             'sendgrid_key_id' => $credential->id,
             'credential'      => $credential->name,
             ...$stats,
         ]);
+
+        // The paced send ran out of time for this invocation: the receivers it
+        // did not reach go to a new batch of the same credential. Each kept its
+        // place — no claim and no slot was taken for them.
+        if ($deferred !== []) {
+            self::dispatch($credential->id, $deferred);
+
+            Log::info('SendGrid receiver batch: time budget reached; remaining receivers re-queued', [
+                'credential_id' => $credential->id,
+                'requeued'      => count($deferred),
+            ]);
+        }
     }
 }

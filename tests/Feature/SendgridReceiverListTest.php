@@ -142,7 +142,6 @@ class SendgridReceiverListTest extends TestCase
 
     public function test_a_run_mails_the_sendgrid_list_and_records_it_in_the_sendgrid_tables(): void
     {
-        config(['newsletters.receiver_campaign_per_minute' => 0]);
         $key = $this->key();
         $receiver = $this->receiver('person@example.com');
         // Same id space, other list: must be neither selected nor stamped.

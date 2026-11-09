@@ -13,7 +13,9 @@ use App\Models\Site;
 use App\Models\SitePromotionEmail;
 use App\Services\Mail\PromotionMailerFactory;
 use App\Services\PromotionEmailService;
+use App\Support\Mail\PacedDelivery;
 use App\Support\Mail\ScheduleSendContext;
+use App\Support\Mail\SendingAccount;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Query\Builder;
@@ -55,6 +57,12 @@ use Throwable;
  * also skips anyone resting inside the schedule's cooldown and writes every
  * outcome to `schedule_send_histories` — the Schedule tab of Email History. A
  * payload queued before that existed carries no id and behaves as it always did.
+ *
+ * PACED LIKE A CAMPAIGN PLATFORM. Every send takes a slot in its sending
+ * account's rolling window (WARMUP_EMAILS_PER_MINUTE a minute, evenly spaced,
+ * across every worker), a soft failure is retried once, and when the job's time
+ * budget runs out the addresses it did not reach go to a new batch rather than
+ * being killed mid-send. See {@see PacedDelivery}.
  *
  * Runs on the LOW queue (marketing).
  */
@@ -230,8 +238,28 @@ class SendPromotionBatchJob implements ShouldQueue
         $sent = 0;
         $failed = 0;
 
-        foreach ($recipients as $recipient) {
+        // Throttled per sending account, soft failures retried once, and a
+        // time budget instead of a killed job — see PacedDelivery.
+        $pacer = PacedDelivery::forAccount(
+            SendingAccount::forProvider($this->provider, $this->credentialId ?? $this->sendgridKeyId),
+            $this->timeout,
+            '[Schedule]',
+        );
+        /** @var list<string> $deferred Addresses handed to a follow-up batch. */
+        $deferred = [];
+        $recipients = $recipients->values();
+
+        foreach ($recipients as $index => $recipient) {
             $email = (string) $recipient->email;
+
+            // Out of time for this invocation: everything from here on goes
+            // to a new batch, including this address — nothing was attempted
+            // for it and no slot was taken.
+            if ($pacer->budgetSpent()) {
+                $deferred = $recipients->slice((int) $index)->pluck('email')->map(static fn ($e): string => (string) $e)->values()->all();
+
+                break;
+            }
 
             // Delivered within the last 24h — skip, and record the skip.
             if (isset($alreadySent[$email])) {
@@ -242,7 +270,7 @@ class SendPromotionBatchJob implements ShouldQueue
                     // from_name as display name, so the SMTP server accepts it.
                     $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
                         ->usingFromAddress($fromAddress);
-                    $mailer->to($email)->send($mailable);
+                    $pacer->send($mailer, $email, $mailable);
                     $attempts[$email] = PromotionEmailHistory::STATUS_SUCCESS;
                     $sent++;
                 } catch (Throwable $e) {
@@ -280,13 +308,35 @@ class SendPromotionBatchJob implements ShouldQueue
         // One line per batch (not per recipient): a 50k campaign produces ~500
         // log lines instead of 50,000.
         Log::info('Promotion batch processed', [
-            'site_id' => $this->siteId,
-            'sent'    => $sent,
-            'failed'  => $failed,
-            'total'   => count($this->emails),
+            'site_id'  => $this->siteId,
+            'sent'     => $sent,
+            'failed'   => $failed,
+            'total'    => count($this->emails),
+            'deferred' => count($deferred),
+            'rate'     => $pacer->rate(),
         ]);
 
         $this->logProgressMilestone($sent);
+
+        // History is already written, so the continuation can never be in
+        // flight while the attempts before it are only in memory. The same
+        // batch, the same schedule — a continuation, not a retry.
+        if ($deferred !== []) {
+            self::dispatch(
+                $this->siteId,
+                $deferred,
+                $this->provider,
+                $this->sendgridKeyId,
+                $this->credentialId,
+                $this->scheduleId,
+            );
+
+            Log::info('[Schedule] Time budget reached; remaining addresses re-queued.', [
+                'site_id'     => $this->siteId,
+                'schedule_id' => $this->scheduleId,
+                'requeued'    => count($deferred),
+            ]);
+        }
     }
 
     /**

@@ -109,6 +109,18 @@ class Article extends Model
         static::creating(function (self $article): void {
             if (trim((string) $article->slug) === '') {
                 $article->slug = Str::slug((string) $article->title);
+
+                // A generated news slug steps past a deleted post's URL, which
+                // answers 410 Gone (DeletedNewsSlug). A slug typed by an editor
+                // is checked by the Form Request instead.
+                if ($article->isNews()) {
+                    $base = (string) $article->slug;
+                    $n = 2;
+
+                    while (DeletedNewsSlug::holds((int) $article->site_id, (string) $article->slug)) {
+                        $article->slug = $base . '-' . $n++;
+                    }
+                }
             }
         });
 

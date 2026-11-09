@@ -85,7 +85,9 @@ class SendMailgunReceiverBatchJob implements ShouldQueue
             return;
         }
 
-        $stats = $sender->sendChunk($credential, $mailer, $this->receiverIds);
+        $stats = $sender->sendChunk($credential, $mailer, $this->receiverIds, $this->timeout);
+        $deferred = $stats['deferred'];
+        $stats['deferred'] = count($deferred);
 
         // ONE line per batch. Without it, a failed run leaves nothing in the log
         // between "campaign dispatched" and silence, which is the state that
@@ -96,5 +98,17 @@ class SendMailgunReceiverBatchJob implements ShouldQueue
             'domain'         => $credential->domain,
             ...$stats,
         ]);
+
+        // The paced send ran out of time for this invocation: the receivers it
+        // did not reach go to a new batch of the same credential. Each kept its
+        // place — no claim and no slot was taken for them.
+        if ($deferred !== []) {
+            self::dispatch($credential->id, $deferred);
+
+            Log::info('Mailgun receiver batch: time budget reached; remaining receivers re-queued', [
+                'credential_id' => $credential->id,
+                'requeued'      => count($deferred),
+            ]);
+        }
     }
 }

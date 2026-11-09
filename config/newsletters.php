@@ -23,23 +23,8 @@ return [
     // for very large files rather than an expected duration.
     'import_timeout' => (int) env('NEWSLETTER_IMPORT_TIMEOUT', 900),
 
-    /*
-    |----------------------------------------------------------------------
-    | Receiver campaign pacing
-    |----------------------------------------------------------------------
-    |
-    | Messages per minute for a receiver-list campaign run. PACING ONLY: it
-    | changes nothing about who is selected, what is sent, or how failures are
-    | handled — the sender simply waits `60 / per_minute` seconds between
-    | messages.
-    |
-    | A hundred messages in two seconds from a young sending domain reads as a
-    | burst, and bursts are what trip rate limiting and spam folders. The run is
-    | queued, so spreading the same volume across the minute costs nothing.
-    |
-    | 0 or less disables the wait.
-    |
-    */
-    'receiver_campaign_per_minute' => (int) env('RECEIVER_CAMPAIGN_PER_MINUTE', 15),
+    // Receiver campaigns are paced by the per-account send window shared by
+    // every bulk stream — WARMUP_EMAILS_PER_MINUTE in config/warmup.php, see
+    // App\Support\Mail\PacedDelivery. RECEIVER_CAMPAIGN_PER_MINUTE is gone.
 
 ];

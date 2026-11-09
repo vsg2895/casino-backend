@@ -15,7 +15,18 @@ use Illuminate\Support\Sleep;
 use Throwable;
 
 /**
- * A ROLLING send-rate window for warmup, shared by every worker.
+ * A ROLLING send-rate window, shared by every worker — warmup's, and since the
+ * bulk streams adopted it, one per SENDING ACCOUNT.
+ *
+ * ONE WINDOW PER ACCOUNT. {@see forAccount()} returns a limiter on that
+ * account's own window: the .env SMTP mailbox, one SendGrid key, one Mailgun
+ * credential, one stored SMTP server ({@see \App\Support\Mail\SendingAccount}).
+ * Two campaigns through the same key share its quota; two keys do not slow each
+ * other — how a provider like Brevo throttles a sending account. The warmup
+ * mailer's account maps onto {@see WINDOW_KEY} itself, so a schedule sending
+ * through the same mailbox as warmup is counted in warmup's window, not beside it.
+ * The rate is the same for every account: `warmup.rate_limit.*`
+ * (WARMUP_EMAILS_PER_MINUTE), clamped to {@see MAX_EMAILS_CEILING}.
  *
  * WHY NOT A FIXED DELAY. `sleep(6)` between messages is not this. A fixed delay
  * spaces sends out evenly but enforces no ceiling: two workers each sleeping six
@@ -76,7 +87,8 @@ final class WarmupRateLimiter
     /** The ONE key every warmup sender shares. */
     public const string WINDOW_KEY = 'warmup:rate-window';
 
-    private const string LOCK_KEY = 'warmup:rate-window:lock';
+    /** Prefix of every other account's window. */
+    public const string ACCOUNT_KEY_PREFIX = 'send-rate:';
 
     /** Held only for the read-modify-write; long enough that a GC pause cannot orphan it. */
     private const int LOCK_SECONDS = 10;
@@ -111,7 +123,40 @@ final class WarmupRateLimiter
     /** Guards the "proceeded without the lock" warning so it is logged once per process. */
     private static bool $lockWarningLogged = false;
 
+    /** This instance's window; warmup's unless {@see forAccount()} chose another. */
+    private string $key = self::WINDOW_KEY;
+
     public function __construct(private readonly Repository $cache) {}
+
+    /**
+     * A limiter on one sending account's window — same rate, same rules, its own
+     * log. The warmup mailer's account IS the warmup window.
+     */
+    public function forAccount(string $account): self
+    {
+        $limiter = clone $this;
+        $limiter->key = self::keyForAccount($account);
+
+        return $limiter;
+    }
+
+    /** The cache key an account's window lives under. */
+    public static function keyForAccount(string $account): string
+    {
+        return $account === self::warmupAccount() ? self::WINDOW_KEY : self::ACCOUNT_KEY_PREFIX . $account;
+    }
+
+    /** The account warmup sends through: the mailer it is pinned to. */
+    public static function warmupAccount(): string
+    {
+        return 'mailer:' . (string) config('warmup.mailer', 'smtp');
+    }
+
+    /** The window key this instance reads and writes. */
+    public function key(): string
+    {
+        return $this->key;
+    }
 
     /** Messages permitted per window, clamped to MAX_EMAILS_CEILING. */
     public function max(): int
@@ -213,7 +258,7 @@ final class WarmupRateLimiter
             return $this->decide();
         }
 
-        $lock = $store->lock(self::LOCK_KEY, self::LOCK_SECONDS);
+        $lock = $store->lock($this->key . ':lock', self::LOCK_SECONDS);
 
         try {
             $lock->block(self::LOCK_WAIT_SECONDS);
@@ -248,7 +293,7 @@ final class WarmupRateLimiter
     public function reset(): void
     {
         try {
-            $this->cache->forget(self::WINDOW_KEY);
+            $this->cache->forget($this->key);
         } catch (Throwable $e) {
             Log::warning('[Warmup] Could not reset the rate-limit window', ['error' => $e->getMessage()]);
         }
@@ -302,7 +347,7 @@ final class WarmupRateLimiter
         $cutoff = $nowMs - ($this->windowSeconds() * 1000);
 
         try {
-            $stored = $this->cache->get(self::WINDOW_KEY, []);
+            $stored = $this->cache->get($this->key, []);
         } catch (Throwable $e) {
             // Fail OPEN deliberately. A warmup run that cannot read its window is
             // a warmup run that cannot send, and a stalled reputation build is a
@@ -346,7 +391,7 @@ final class WarmupRateLimiter
         $ttl = $this->windowSeconds() + 60;
 
         try {
-            $this->cache->put(self::WINDOW_KEY, $timestamps, $ttl);
+            $this->cache->put($this->key, $timestamps, $ttl);
         } catch (Throwable $e) {
             // The slot is not recorded, so the window under-counts by one. Same
             // fail-open trade as window(): sending continues.

@@ -11,6 +11,7 @@ use App\Http\Resources\ArticleResource;
 use App\Jobs\RevalidateNextJsSites;
 use App\Models\Article;
 use App\Models\Site;
+use App\Services\News\NewsRemovalService;
 use App\Support\SiteCache;
 use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Builder;
@@ -172,9 +173,18 @@ class ArticleController extends Controller
         return response()->json(['data' => (new ArticleResource($article))->resolve()]);
     }
 
-    public function destroy(Request $request, Site $site, Article $article): JsonResponse
+    public function destroy(Request $request, Site $site, Article $article, NewsRemovalService $removal): JsonResponse
     {
         $this->assertBelongsTo($site, $article, $this->type($request));
+
+        // A news post goes through the removal service: it also unwraps the
+        // links other articles hold to it and refreshes the site, so the
+        // deleted URL leaves every page and sitemap at once (and answers 410).
+        if ($article->isNews()) {
+            $removal->remove($site, [$article]);
+
+            return response()->json(null, Response::HTTP_NO_CONTENT);
+        }
 
         $article->delete();
         $this->refresh($site, $article);

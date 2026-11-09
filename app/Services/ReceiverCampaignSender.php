@@ -7,11 +7,12 @@ namespace App\Services;
 use App\Contracts\ReceiverCampaignCredential;
 use App\Mail\MailgunReceiverMessage;
 use App\Models\MailgunSuppression;
+use App\Support\Mail\PacedDelivery;
+use App\Support\Mail\SendingAccount;
 use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Sleep;
 use Throwable;
 
 /**
@@ -33,37 +34,25 @@ use Throwable;
  */
 final class ReceiverCampaignSender
 {
-    /**
-     * Messages per minute, across one run of this sender.
-     *
-     * Pacing ONLY — nothing about which addresses are chosen, what is sent or
-     * how a failure is handled changes with it. After each send ATTEMPT the loop
-     * waits `60 / rate` seconds before the next one, so fifteen is one message
-     * roughly every four seconds.
-     *
-     * Why a pause at all: a provider that receives a hundred messages in two
-     * seconds from a young sending domain reads it as a burst, and bursts are
-     * what trips rate limiting and spam folders. Spreading the same volume over
-     * the minute costs nothing — the run is queued — and looks like a mailing
-     * list rather than a script.
-     *
-     * A SKIPPED receiver (already claimed, duplicate history row) does not wait:
-     * nothing left the server, so there is nothing to pace.
-     *
-     * Configurable in config/newsletters.php (RECEIVER_CAMPAIGN_PER_MINUTE),
-     * because the right number depends on the provider and the domain's age.
-     * 0 or less disables the wait entirely.
-     */
-    private const int DEFAULT_PER_MINUTE = 15;
+    /** Job timeout assumed when the caller does not pass its own. */
+    private const int DEFAULT_JOB_TIMEOUT = 240;
 
     /**
+     * Mail one chunk, PACED like a campaign platform ({@see PacedDelivery}):
+     * every send takes a slot in the credential's own rolling window
+     * (WARMUP_EMAILS_PER_MINUTE a minute, evenly spaced, across every worker),
+     * a soft failure is retried once, and when `$jobTimeoutSeconds` is nearly
+     * spent the receivers not yet reached come back in `deferred` for the
+     * calling job to re-queue. A skipped receiver takes no slot.
+     *
      * @param  list<int>  $receiverIds
-     * @return array{requested:int,eligible:int,sent:int,failed:int,skipped:int,suppressed:int,duration_ms:int}
+     * @return array{requested:int,eligible:int,sent:int,failed:int,skipped:int,suppressed:int,deferred:list<int>,duration_ms:int}
      */
     public function sendChunk(
         ReceiverCampaignCredential $credential,
         Mailer $mailer,
         array $receiverIds,
+        ?int $jobTimeoutSeconds = null,
     ): array {
         // Re-read inside the job rather than trusting the dispatcher's snapshot:
         // an address may have unsubscribed or been suppressed in the seconds
@@ -94,8 +83,25 @@ final class ReceiverCampaignSender
         $historyColumn = $credential->campaignHistoryColumn();
         $credentialId = (int) $credential->getKey();
 
+        $pacer = PacedDelivery::forAccount(
+            SendingAccount::forReceiverCredential($credential),
+            $jobTimeoutSeconds ?? self::DEFAULT_JOB_TIMEOUT,
+            '[Receivers]',
+        );
+        /** @var list<int> $deferred */
+        $deferred = [];
+        $receivers = $receivers->values();
+
         try {
-            foreach ($receivers as $receiver) {
+            foreach ($receivers as $index => $receiver) {
+                // Out of time for this invocation: this receiver and the rest go
+                // back to the caller BEFORE any claim or slot is taken for them.
+                if ($pacer->budgetSpent()) {
+                    $deferred = $receivers->slice((int) $index)->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all();
+
+                    break;
+                }
+
                 $today = Carbon::now()->toDateString();
 
                 // Cross-channel claim FIRST. Winning it is what makes "one email
@@ -130,9 +136,7 @@ final class ReceiverCampaignSender
                 }
 
                 try {
-                    $mailer->to($receiver->email)->send(
-                        new MailgunReceiverMessage($credential, $receiver),
-                    );
+                    $pacer->send($mailer, (string) $receiver->email, new MailgunReceiverMessage($credential, $receiver));
 
                     // Counters advance per receiver, immediately — not once per
                     // batch. A crash mid-chunk must not leave everyone eligible
@@ -184,11 +188,6 @@ final class ReceiverCampaignSender
                         'error'         => $message,
                     ]);
                 }
-
-                // Pace the NEXT message. Reached after a success and after a
-                // failure alike — both put a request on the provider — and never
-                // after a skip, which sent nothing. See DEFAULT_PER_MINUTE.
-                $this->pause();
             }
         } finally {
             // Release the chunk before returning so a worker processing many
@@ -203,38 +202,9 @@ final class ReceiverCampaignSender
             'failed'      => $failed,
             'skipped'     => $skipped,
             'suppressed'  => $suppressed,
+            'deferred'    => $deferred,
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ];
-    }
-
-    /**
-     * Wait out this message's share of the minute.
-     *
-     * `Sleep` rather than `sleep()`: it is fakeable, so the tests assert the
-     * pacing without actually waiting, and a suite that sent twenty messages
-     * would otherwise take eighty seconds.
-     */
-    private function pause(): void
-    {
-        $seconds = $this->pauseSeconds();
-
-        if ($seconds > 0) {
-            Sleep::for($seconds)->seconds();
-        }
-    }
-
-    /**
-     * Seconds between messages, from the configured rate.
-     *
-     * `config()`, never `env()`: with `config:cache` — which every deploy runs —
-     * `env()` outside a config file returns null, and the pause would silently
-     * switch itself off in production and nowhere else.
-     */
-    private function pauseSeconds(): float
-    {
-        $perMinute = (int) config('newsletters.receiver_campaign_per_minute', self::DEFAULT_PER_MINUTE);
-
-        return $perMinute > 0 ? 60 / $perMinute : 0.0;
     }
 
     /**
