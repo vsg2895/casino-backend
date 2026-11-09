@@ -32,6 +32,25 @@ class AdminReviewModerationTest extends TestCase
         ]);
     }
 
+    public function test_the_casino_filter_lists_reviewed_casinos_and_narrows_list_and_count(): void
+    {
+        $this->actingAsAdmin();
+        [$site] = $this->siteWithKey();
+        $first = $this->review($site, CasinoReview::STATUS_PENDING);
+        $this->review($site, CasinoReview::STATUS_PENDING);
+        Casino::factory()->create(['name' => 'Never reviewed']);
+
+        $options = $this->getJson('/api/v1/admin/reviews/casinos')->assertOk()->json('data');
+        $this->assertCount(2, $options);
+        $this->assertNotContains('Never reviewed', array_column($options, 'name'));
+
+        $this->getJson("/api/v1/admin/reviews?casino_id={$first->casino_id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $first->id);
+        $this->getJson("/api/v1/admin/reviews/count?casino_id={$first->casino_id}")->assertExactJson(['total' => 1]);
+    }
+
     public function test_visibility_returns_422_when_published_is_missing(): void
     {
         $this->actingAsAdmin();

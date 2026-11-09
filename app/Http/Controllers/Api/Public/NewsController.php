@@ -278,7 +278,7 @@ class NewsController extends Controller
         $this->assertEnabled($site);
 
         $data = SiteCache::remember($site->id, ['news'], 'news:gone:site:' . $site->id, 3600, function () use ($site): array {
-            $since = now()->subDays(max(1, (int) config('news.gone_days', 365)));
+            $since = now()->subDays(DeletedNewsSlug::goneDays());
 
             $tombstones = DeletedNewsSlug::ready()
                 ? DeletedNewsSlug::query()

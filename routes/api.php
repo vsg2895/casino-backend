@@ -361,6 +361,7 @@ Route::prefix('v1')->group(function () {
         // route, or `reviews/{casinoReview}` would swallow them as ids.
         Route::get('reviews/count', [AdminCasinoReviewController::class, 'count']);
         Route::get('reviews/pending-count', [AdminCasinoReviewController::class, 'pendingCount']);
+        Route::get('reviews/casinos', [AdminCasinoReviewController::class, 'casinos']);
         Route::post('reviews/bulk', [AdminCasinoReviewController::class, 'bulk']);
         Route::get('reviews', [AdminCasinoReviewController::class, 'index']);
         Route::patch('reviews/{casinoReview}/visibility', [AdminCasinoReviewController::class, 'setVisibility']);

@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\BulkCasinoReviewsRequest;
 use App\Http\Requests\Admin\UpdateCasinoReviewVisibilityRequest;
 use App\Http\Resources\CasinoReviewResource;
 use App\Jobs\InvalidateCasinoCache;
+use App\Models\Casino;
 use App\Models\CasinoReview;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -54,6 +55,23 @@ class CasinoReviewController extends Controller
     public function count(Request $request): JsonResponse
     {
         return response()->json(['total' => $this->filtered($request)->count()]);
+    }
+
+    /**
+     * The casinos that have at least one review, as id and name — the options
+     * of the screen's casino filter. Only those: a casino nobody reviewed
+     * would filter to an empty table.
+     */
+    public function casinos(): JsonResponse
+    {
+        $rows = Casino::query()
+            ->whereIn('id', CasinoReview::query()->select('casino_id')->distinct())
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(static fn (Casino $c): array => ['id' => (int) $c->id, 'name' => (string) $c->name])
+            ->all();
+
+        return response()->json(['data' => $rows]);
     }
 
     /** How many are waiting to be looked at — drives the sidebar badge. */

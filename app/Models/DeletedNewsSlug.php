@@ -70,6 +70,21 @@ class DeletedNewsSlug extends Model
             ->exists();
     }
 
+    /**
+     * Past NEWS_GONE_DAYS: no longer answered 410 and safe to drop — see
+     * PruneDeletedNewsSlugs.
+     */
+    public function scopeExpired(Builder $query): Builder
+    {
+        return $query->where('deleted_at', '<', now()->subDays(self::goneDays()));
+    }
+
+    /** How long a deleted URL answers 410, in days (at least 1). */
+    public static function goneDays(): int
+    {
+        return max(1, (int) config('news.gone_days', 365));
+    }
+
     /** Skipped until the migration has run, like every other new column here. */
     public static function ready(): bool
     {

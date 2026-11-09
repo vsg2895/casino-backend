@@ -136,6 +136,22 @@ class NewsRemovalTest extends TestCase
         $this->assertSame(['big-story'], $this->goneList());
     }
 
+    public function test_tombstones_past_the_gone_window_are_pruned(): void
+    {
+        $removal = app(NewsRemovalService::class);
+        $removal->remove($this->site, [$this->newsPost('recent-delete', 50)]);
+        $removal->remove($this->site, [$this->newsPost('old-delete', 900)]);
+        DeletedNewsSlug::query()->where('slug', 'old-delete')->update(['deleted_at' => now()->subDays(400)]);
+
+        $this->artisan('news:prune-deleted-slugs', ['--dry-run' => true])->assertSuccessful();
+        $this->assertSame(2, DeletedNewsSlug::query()->count());
+
+        $this->artisan('news:prune-deleted-slugs')->assertSuccessful();
+
+        $this->assertSame(['recent-delete'], DeletedNewsSlug::query()->pluck('slug')->all());
+        $this->assertSame(['recent-delete'], $this->goneList());
+    }
+
     public function test_purge_trashed_hard_deletes_old_soft_deleted_news_and_keeps_the_410(): void
     {
         $soft = $this->newsPost('soft-one', 100);

@@ -91,6 +91,10 @@ Schedule::command('promotions:manage-history-partitions')
 // answer "was I signed out, or did something else happen?".
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
 
+// Tombstones of hard-deleted news, once past NEWS_GONE_DAYS: keeps
+// deleted_news_slugs to about a year of deletions. See PruneDeletedNewsSlugs.
+Schedule::command('news:prune-deleted-slugs')->dailyAt('04:25')->withoutOverlapping();
+
 // Revalidation attempts to accumulate at roughly (sites x saves) per day. Thirty
 // days is well past the point where an old attempt tells anyone anything, and
 // keeping them forever would make the history query slower every week.
