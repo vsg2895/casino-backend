@@ -454,6 +454,8 @@ Route::prefix('v1')->group(function () {
         // send dialog's dropdown from the same allow-list the validator uses.
         Route::get('warmup-emails/templates', [WarmupEmailController::class, 'templates']);
         Route::post('warmup-emails/import', [WarmupEmailController::class, 'import']);
+        // The list as .xlsx, honouring the search — re-importable via the route above.
+        Route::get('warmup-emails/export', [WarmupEmailController::class, 'export']);
         Route::post('warmup-emails/bulk-delete', [WarmupEmailController::class, 'bulkDestroy']);
         // Who a run with the current settings would reach — the same query the
         // send itself uses, so the preview can never promise a different number.

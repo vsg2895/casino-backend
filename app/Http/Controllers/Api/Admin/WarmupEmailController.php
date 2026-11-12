@@ -23,12 +23,14 @@ use App\Services\WarmupImportService;
 use App\Services\WarmupRunService;
 use App\Support\DayWindow;
 use App\Support\Spreadsheet\EmailSpreadsheetReader;
+use App\Support\XlsxExport;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 /**
@@ -75,6 +77,38 @@ class WarmupEmailController extends Controller
     public function count(Request $request): JsonResponse
     {
         return response()->json(['total' => $this->filtered($request)->count()]);
+    }
+
+    /**
+     * The warmup list as an Excel file — every address matching the current
+     * search, in the listing's own order (newest first).
+     *
+     * The first column is headed "Email", the header the warmup import looks
+     * for, so an exported file can be imported straight back (into this list
+     * or another environment's). Dates are UTC, the zone they are stored in,
+     * and say so in their headings; "Last sent" is empty for an address no
+     * run has reached yet.
+     *
+     * Streamed with `cursor()`: one row in memory at a time, however long the
+     * list grows.
+     */
+    public function export(Request $request): StreamedResponse
+    {
+        $rows = $this->filtered($request)
+            ->latest()
+            ->orderByDesc('id')
+            ->cursor()
+            ->map(fn (WarmupEmail $row): array => [
+                $row->email,
+                $row->last_sent_at?->utc()->format('Y-m-d H:i') ?? '',
+                $row->created_at?->utc()->format('Y-m-d H:i') ?? '',
+            ]);
+
+        return XlsxExport::download(
+            'warmup-emails-' . now()->format('Y-m-d') . '.xlsx',
+            ['Email', 'Last sent (UTC)', 'Added (UTC)'],
+            $rows,
+        );
     }
 
     public function store(StoreWarmupEmailRequest $request): JsonResponse

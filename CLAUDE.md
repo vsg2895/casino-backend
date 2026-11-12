@@ -147,7 +147,7 @@ app/
 ├── Jobs/              Import*, Send*, InvalidateCasinoCache, RevalidateNextJsSites
 ├── Observers/         CasinoObserver
 ├── Policies/          CmsPagePolicy
-├── Support/           SiteCache, CsvExport, EmailGreeting, LegalPageContent,
+├── Support/           SiteCache, CsvExport, XlsxExport, EmailGreeting, LegalPageContent,
 │                      Mail/, Phone/, Spreadsheet/
 ├── Mail/              Mailables + Concerns/HasSenderOverride, Contracts/SenderOverridable
 └── Console/Commands/  promotions:dispatch-due, promotions:dispatch-verification,
