@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\Schema;
  * by field; NULL in any column means "use the default".
  *
  * Additive. No row is created for any site by this migration — overrides are
- * written by a person in the admin, never generated.
+ * written by a person in the admin or by CasinoSeoContentSeeder — never copied
+ * from the default.
  */
 return new class extends Migration
 {
