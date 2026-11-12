@@ -170,6 +170,54 @@ class AdminNewsListingTest extends TestCase
         $this->assertArrayNotHasKey('body', $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")->json('data.0'));
     }
 
+    public function test_the_rewrite_filter_and_each_rows_rewrite_status(): void
+    {
+        /*
+         * Rewritten / not rewritten — and, when not, whether news:rewrite ever
+         * tried and why it gave up. The filter and the paginator's count must
+         * agree, and posts written in the admin match no rewrite filter.
+         */
+        [$site] = $this->siteWithKey(['news_enabled' => true]);
+        $this->actingAsAdmin();
+
+        $this->newsFor($site->id, 'Never tried', '2026-09-20 10:00:00')
+            ->forceFill(['source_ref' => 'feed:1', 'body' => null])->save();
+        $this->newsFor($site->id, 'Tried and rejected', '2026-09-19 10:00:00')
+            ->forceFill([
+                'source_ref' => 'feed:2', 'body' => null,
+                'rewrite_attempts' => 2, 'rewrite_attempted_at' => Carbon::parse('2026-09-19 12:00:00'),
+                'rewrite_result' => 'rejected', 'rewrite_error' => 'body under 100 words',
+            ])->save();
+        $this->newsFor($site->id, 'Rewritten', '2026-09-18 10:00:00')
+            ->forceFill(['source_ref' => 'feed:3', 'rewrite_attempts' => 1, 'rewrite_result' => 'rewritten'])->save();
+        $this->newsFor($site->id, 'Written here', '2026-09-17 10:00:00');
+
+        $titles = function (string $filter) use ($site): array {
+            $url = "/api/v1/admin/sites/{$site->id}/articles?type=news&rewrite={$filter}";
+            $rows = array_column($this->getJson($url)->assertOk()->json('data'), 'title');
+            $this->assertSame(count($rows), $this->getJson(str_replace('/articles?', '/articles/count?', $url))->assertOk()->json('total'));
+
+            return $rows;
+        };
+
+        $this->assertSame(['Rewritten'], $titles('rewritten'));
+        $this->assertSame(['Never tried', 'Tried and rejected'], $titles('not_rewritten'));
+        $this->assertSame(['Never tried'], $titles('not_attempted'));
+        $this->assertSame(['Tried and rejected'], $titles('attempt_failed'));
+
+        $rows = collect($this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news")->assertOk()->json('data'))
+            ->keyBy('title');
+        $this->assertSame('not_attempted', $rows['Never tried']['rewrite']['state']);
+        $this->assertSame('attempt_failed', $rows['Tried and rejected']['rewrite']['state']);
+        $this->assertSame(2, $rows['Tried and rejected']['rewrite']['attempts']);
+        $this->assertSame('rejected', $rows['Tried and rejected']['rewrite']['last_result']);
+        $this->assertSame('body under 100 words', $rows['Tried and rejected']['rewrite']['last_error']);
+        $this->assertSame('rewritten', $rows['Rewritten']['rewrite']['state']);
+        $this->assertSame('written_here', $rows['Written here']['rewrite']['state']);
+
+        $this->getJson("/api/v1/admin/sites/{$site->id}/articles?type=news&rewrite=bogus")->assertUnprocessable();
+    }
+
     public function test_the_listing_is_newest_first(): void
     {
         // The admin list has to render in the order the public feed does, or

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Public;
 
+use App\Services\SiteContentResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SpecialOfferResource;
 use App\Models\BonusCategory;
@@ -123,6 +124,10 @@ class BonusController extends Controller
                     }])
                     ->get();
 
+                // Per-site content overrides for every offer in every section,
+                // one query — see SiteContentResolver.
+                app(SiteContentResolver::class)->prime($site, $categories->flatMap->specialOffers);
+
                 return $categories
                     // Empty sections are not rendered, so they are not returned.
                     ->filter(fn (BonusCategory $category) => $category->specialOffers->isNotEmpty())
@@ -187,6 +192,8 @@ class BonusController extends Controller
                     ->with(['casino', 'bonusCategory'])
                     ->orderBy('special_offers.sort_order')
                     ->paginate(self::OFFERS_PER_PAGE, ['*'], 'page', $page);
+
+                app(SiteContentResolver::class)->prime($site, $paginator->getCollection());
 
                 return [
                     'category' => [

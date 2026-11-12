@@ -12,6 +12,7 @@ use App\Models\FacetConfig;
 use App\Models\Site;
 use App\Support\SchemaGuard;
 use App\Services\CasinoFacetService;
+use App\Services\SiteContentResolver;
 use App\Support\SiteCache;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -91,6 +92,10 @@ class CasinoController extends Controller
 
             $casinos = $query->orderBy('pivot.position')->get()->load(self::relations());
 
+            // This site's content overrides for every casino and nested offer,
+            // in one query each rather than one per card.
+            app(SiteContentResolver::class)->prime($site, $casinos);
+
             return CasinoWithAttachmentResource::collection($casinos)->resolve();
         });
 
@@ -131,9 +136,6 @@ class CasinoController extends Controller
 
             $casino = $this->baseQuery($site)
                 ->when($hasBylines, fn ($q) => $q->addSelect(['pivot.author_id', 'pivot.reviewed_by_id', 'pivot.last_reviewed_at']))
-                // This site's own review text (SEO audit H6), detail page only:
-                // the listings do not render a description.
-                ->when(SchemaGuard::hasColumn('casino_site', 'description'), fn ($q) => $q->addSelect(['pivot.description as site_description']))
                 ->where('casinos.slug', $slug)
                 ->firstOrFail()
                 ->load(self::relations());
@@ -143,6 +145,10 @@ class CasinoController extends Controller
             if ($hasBylines) {
                 $this->attachByline($casino, $site);
             }
+
+            // This site's own description / meta (SEO audit H6) and those of
+            // the offers shown on the page — see SiteContentResolver.
+            app(SiteContentResolver::class)->prime($site, [$casino]);
 
             return (new CasinoWithAttachmentResource($casino))->resolve();
         });

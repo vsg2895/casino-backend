@@ -13,6 +13,7 @@ use App\Models\Site;
 use App\Models\SpecialOffer;
 use App\Support\SchemaGuard;
 use App\Support\SiteCache;
+use App\Services\SiteContentResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -58,9 +59,9 @@ class SitemapController extends Controller
             'sitemap:site:' . $site->id,
             3600,
             fn (): array => [
-                'casinos'    => $this->entries($this->casinos($site), 'casinos'),
+                'casinos'    => $this->contentEntries($site, $this->casinos($site), 'casinos'),
                 'categories' => $this->entries($this->categories($site), 'categories'),
-                'offers'     => $this->entries($this->offers($site), 'special_offers'),
+                'offers'     => $this->contentEntries($site, $this->offers($site), 'special_offers'),
                 'articles'   => $this->articles($site),
                 'authors'    => SchemaGuard::hasTable('authors')
                     ? $this->entries(Author::query()->forSite($site->id)->visible(), 'authors')
@@ -146,6 +147,46 @@ class SitemapController extends Controller
                 'slug'       => (string) $article->slug,
                 'updated_at' => $article->contentModifiedAt()?->toISOString(),
             ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Casinos or offers as THIS site resolves them (SiteContentResolver).
+     *
+     * The query has already dropped globally noindexed rows; this drops the
+     * ones the site itself keeps out of search (its explicit Noindex, or no
+     * own text while `noindex_without_override` is on), and dates each entry
+     * by the later of the record's change and the site's override.
+     *
+     * @param  Builder<Casino>|Builder<SpecialOffer>  $query
+     * @return list<array{slug: string, updated_at: string|null}>
+     */
+    private function contentEntries(Site $site, Builder $query, string $table): array
+    {
+        $rows = $query
+            // Offers: the casino name feeds the resolver's title fallback,
+            // loaded once here rather than once per offer.
+            ->when($table === 'special_offers', static fn (Builder $q) => $q->with('casino:id,name'))
+            ->orderBy($table . '.slug')
+            ->get([
+                $table . '.id', $table . '.slug', $table . '.updated_at', $table . '.noindex',
+                ...($table === 'special_offers' ? ['special_offers.casino_id', 'special_offers.title'] : []),
+            ]);
+
+        $resolver = app(SiteContentResolver::class);
+        $resolver->prime($site, $rows);
+
+        return $rows
+            ->map(static function (Model $row) use ($resolver, $site): ?array {
+                $content = $row instanceof Casino ? $resolver->casino($site, $row) : $resolver->offer($site, $row);
+
+                return $content->noindex ? null : [
+                    'slug'       => (string) $row->getAttribute('slug'),
+                    'updated_at' => $content->updatedAt?->toISOString(),
+                ];
+            })
+            ->filter()
             ->values()
             ->all();
     }

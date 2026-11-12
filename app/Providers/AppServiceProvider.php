@@ -22,6 +22,10 @@ use App\Repositories\CmsPageRepository;
 use App\Repositories\Contracts\CmsPageRepositoryInterface;
 use App\Services\Mail\Transport\{MailgunApiTransport, SendgridClickTrackingClient};
 use App\Support\Seo\SeoResolver;
+use App\Services\SiteContentResolver;
+use App\Models\CasinoSiteContent;
+use App\Models\SpecialOfferSiteContent;
+use App\Observers\SiteContentObserver;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Connection;
@@ -55,6 +59,9 @@ class AppServiceProvider extends ServiceProvider
          * worker never keeps a template the admin has since changed.
          */
         $this->app->scoped(SeoResolver::class);
+
+        // Per-request memo of per-site content rows — see SiteContentResolver.
+        $this->app->scoped(SiteContentResolver::class);
     }
 
     public function boot(): void
@@ -220,6 +227,9 @@ class AppServiceProvider extends ServiceProvider
         Site::observe(SiteForumFlagObserver::class);
 
         Casino::observe(CasinoObserver::class);
+        // Per-site content overrides flush only their own site's caches.
+        CasinoSiteContent::observe(SiteContentObserver::class);
+        SpecialOfferSiteContent::observe(SiteContentObserver::class);
 
         // Search index sync. Separate observers from CasinoObserver on purpose:
         // that one owns cache invalidation and Next.js revalidation, this one

@@ -49,6 +49,36 @@ class Article extends Model
      */
     public const array CONTENT_FIELDS = ['title', 'excerpt', 'body', 'editor_note', 'hero_image_path'];
 
+    /*
+     * Where a scraped news post stands with `news:rewrite` — the admin's filter
+     * and the line under each title. Derived, never stored: "rewritten" is
+     * still `body IS NOT NULL`, the rule the rewrite queue itself runs on, and
+     * the attempt columns only say what happened on the way there.
+     */
+
+    /** Original copy has been written. */
+    public const string REWRITE_REWRITTEN = 'rewritten';
+
+    /** No copy yet, and news:rewrite has not tried this post. */
+    public const string REWRITE_NOT_ATTEMPTED = 'not_attempted';
+
+    /** No copy yet, although news:rewrite tried — see rewrite_result / rewrite_error. */
+    public const string REWRITE_ATTEMPT_FAILED = 'attempt_failed';
+
+    /** Written in the admin, not scraped: nothing to rewrite. */
+    public const string REWRITE_NOT_APPLICABLE = 'written_here';
+
+    /** Filter value for "not rewritten, whether or not it was tried". */
+    public const string REWRITE_FILTER_NOT_REWRITTEN = 'not_rewritten';
+
+    /** @var list<string> The values the admin listing's `rewrite` filter accepts. */
+    public const array REWRITE_FILTERS = [
+        self::REWRITE_REWRITTEN,
+        self::REWRITE_FILTER_NOT_REWRITTEN,
+        self::REWRITE_NOT_ATTEMPTED,
+        self::REWRITE_ATTEMPT_FAILED,
+    ];
+
     protected $fillable = [
         'site_id',
         'type',
@@ -91,6 +121,8 @@ class Article extends Model
             'read_minutes' => 'integer',
             'last_reviewed_at' => 'datetime',
             'content_updated_at' => 'datetime',
+            'rewrite_attempts'     => 'integer',
+            'rewrite_attempted_at' => 'datetime',
         ];
     }
 
@@ -368,6 +400,29 @@ class Article extends Model
     public function scopeFromASource(Builder $query): Builder
     {
         return $query->whereNotNull('source_ref');
+    }
+
+    /**
+     * Scraped posts in one rewrite state — the admin listing's `rewrite` filter.
+     * Every value narrows to ingested posts: a post written in the admin was
+     * never anything to rewrite. Before the 2026_12_04 migration there are no
+     * attempt columns, so "never tried" is every waiting draft and "tried" none.
+     */
+    public function scopeRewriteState(Builder $query, string $state): Builder
+    {
+        $tracked = SchemaGuard::hasColumn('articles', 'rewrite_attempts');
+
+        $query->whereNotNull('source_ref');
+
+        return match ($state) {
+            self::REWRITE_REWRITTEN            => $query->whereNotNull('body'),
+            self::REWRITE_FILTER_NOT_REWRITTEN => $query->whereNull('body'),
+            self::REWRITE_NOT_ATTEMPTED        => $query->whereNull('body')->when($tracked, fn (Builder $q) => $q->where('rewrite_attempts', 0)),
+            self::REWRITE_ATTEMPT_FAILED       => $tracked
+                ? $query->whereNull('body')->where('rewrite_attempts', '>', 0)
+                : $query->whereRaw('1 = 0'),
+            default                            => $query,
+        };
     }
 
     /** True when this item came from a feed. */

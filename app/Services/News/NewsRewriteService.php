@@ -262,7 +262,7 @@ class NewsRewriteService
                 'error'      => $e->getMessage(),
             ]);
 
-            return $this->outcome('failed', $e->getMessage());
+            return $this->recorded($article, $dryRun, $this->outcome('failed', $e->getMessage()));
         }
 
         if (is_string($written)) {
@@ -271,7 +271,7 @@ class NewsRewriteService
                 'error'      => $written,
             ]);
 
-            return $this->outcome('failed', $written);
+            return $this->recorded($article, $dryRun, $this->outcome('failed', $written));
         }
 
         $reason = $this->rejection($sourceTitle, $sourceTeaser, $written, checkEcho: ! $again);
@@ -283,7 +283,7 @@ class NewsRewriteService
                 'reason'     => $reason,
             ]);
 
-            return $this->outcome('rejected', $reason);
+            return $this->recorded($article, $dryRun, $this->outcome('rejected', $reason));
         }
 
         // The editor's note is never rewritten, but it is part of the page.
@@ -311,10 +311,49 @@ class NewsRewriteService
                 'error'      => $e->getMessage(),
             ]);
 
-            return $this->outcome('failed', 'save failed: ' . $e->getMessage());
+            return $this->recorded($article, $dryRun, $this->outcome('failed', 'save failed: ' . $e->getMessage()));
         }
 
-        return $this->outcome('rewritten', $indexReason, $slug, $problems === []);
+        return $this->recorded($article, $dryRun, $this->outcome('rewritten', $indexReason, $slug, $problems === []));
+    }
+
+    /**
+     * Note the attempt on the article, so the admin can say whether a draft
+     * was tried and why it was not rewritten — the outcome otherwise only ever
+     * reached the console and the log. A dry run records nothing.
+     *
+     * A query-builder write on purpose: no model events (an attempt is not an
+     * edit — nothing to flush or revalidate) and no `updated_at` bump. Skipped
+     * before the 2026_12_04 migration has run, and never allowed to turn an
+     * outcome into an exception: losing the note must not lose the rewrite.
+     *
+     * @param  array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string, indexed: ?bool}  $outcome
+     * @return array{status: 'rewritten'|'rejected'|'failed', reason: ?string, slug: ?string, indexed: ?bool}
+     */
+    private function recorded(Article $article, bool $dryRun, array $outcome): array
+    {
+        if ($dryRun || ! SchemaGuard::hasColumn('articles', 'rewrite_attempts')) {
+            return $outcome;
+        }
+
+        $rewritten = $outcome['status'] === 'rewritten';
+
+        try {
+            Article::query()->whereKey($article->id)->toBase()->update([
+                'rewrite_attempts'     => DB::raw('rewrite_attempts + 1'),
+                'rewrite_attempted_at' => now(),
+                'rewrite_result'       => $outcome['status'],
+                // On success the note is the index decision, not an error.
+                'rewrite_error'        => $rewritten ? null : Str::limit((string) $outcome['reason'], 497),
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('news:rewrite could not record the attempt', [
+                'article_id' => $article->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return $outcome;
     }
 
     /**

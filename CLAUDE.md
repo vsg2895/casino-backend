@@ -151,7 +151,7 @@ app/
 │                      Mail/, Phone/, Spreadsheet/
 ├── Mail/              Mailables + Concerns/HasSenderOverride, Contracts/SenderOverridable
 └── Console/Commands/  promotions:dispatch-due, promotions:dispatch-verification,
-                       promotions:manage-history-partitions, casinos:sync-seo-meta,
+                       promotions:manage-history-partitions, casinos:seo-meta,
                        countries:fetch-flags, …
 ```
 

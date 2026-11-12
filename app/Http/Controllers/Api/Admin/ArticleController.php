@@ -19,6 +19,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Guides for one site.
@@ -59,11 +60,15 @@ class ArticleController extends Controller
     {
         $filters = $request->validate([
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            ...$this->rewriteFilterRules(),
         ]);
 
         $type = $this->type($request);
 
+        // The section's counters stay over the WHOLE section; only the rows
+        // (and their paginator, via count()) are narrowed by the filter.
         $base = fn () => $this->listed($site, $type);
+        $rows = fn () => $this->listed($site, $type, $filters['rewrite'] ?? null);
 
         // The order the public section renders in, so the list an editor reads
         // is the page a visitor reads. Both sections are chronological now —
@@ -71,7 +76,7 @@ class ArticleController extends Controller
         //
         // simplePaginate: no COUNT of the whole section here — the screen's
         // total comes from count() below.
-        $articles = $base()
+        $articles = $rows()
             ->inListingOrder()
             ->simplePaginate($filters['per_page'] ?? self::PER_PAGE, [
                 ...self::LIST_COLUMNS,
@@ -79,6 +84,7 @@ class ArticleController extends Controller
                 // SOURCE's words. Computed in SQL so the listing still never
                 // ships the body just to answer a yes/no question.
                 DB::raw('(source_ref IS NOT NULL AND body IS NULL) AS awaiting_rewrite'),
+                ...$this->rewriteColumns(),
             ]);
 
         return response()->json([
@@ -112,10 +118,56 @@ class ArticleController extends Controller
         ]);
     }
 
-    /** Every entry of this site's section, as a dedicated COUNT. Sizes the paginator. */
+    /**
+     * Every entry of this site's section, as a dedicated COUNT. Sizes the
+     * paginator, so it takes the same `rewrite` filter as the listing.
+     */
     public function count(Request $request, Site $site): JsonResponse
     {
-        return response()->json(['total' => $this->listed($site, $this->type($request))->count()]);
+        $filters = $request->validate($this->rewriteFilterRules());
+
+        return response()->json([
+            'total' => $this->listed($site, $this->type($request), $filters['rewrite'] ?? null)->count(),
+        ]);
+    }
+
+    /** @return array<string, list<mixed>> */
+    private function rewriteFilterRules(): array
+    {
+        return ['rewrite' => ['nullable', 'string', Rule::in(Article::REWRITE_FILTERS)]];
+    }
+
+    /**
+     * Where each row stands with `news:rewrite`, for the line under its title.
+     *
+     * `rewrite_state` is computed in SQL from the same predicates as
+     * Article::scopeRewriteState(), so a row's label and the filter it appears
+     * under cannot disagree. Before the 2026_12_04 migration there is no
+     * attempt history: a waiting draft reads as never tried.
+     *
+     * @return list<\Illuminate\Contracts\Database\Query\Expression|string>
+     */
+    private function rewriteColumns(): array
+    {
+        if (! SchemaGuard::hasColumn('articles', 'rewrite_attempts')) {
+            return [DB::raw(sprintf(
+                "(CASE WHEN source_ref IS NULL THEN '%s' WHEN body IS NOT NULL THEN '%s' ELSE '%s' END) AS rewrite_state",
+                Article::REWRITE_NOT_APPLICABLE,
+                Article::REWRITE_REWRITTEN,
+                Article::REWRITE_NOT_ATTEMPTED,
+            ))];
+        }
+
+        return [
+            'rewrite_attempts', 'rewrite_attempted_at', 'rewrite_result', 'rewrite_error',
+            DB::raw(sprintf(
+                "(CASE WHEN source_ref IS NULL THEN '%s' WHEN body IS NOT NULL THEN '%s' WHEN rewrite_attempts > 0 THEN '%s' ELSE '%s' END) AS rewrite_state",
+                Article::REWRITE_NOT_APPLICABLE,
+                Article::REWRITE_REWRITTEN,
+                Article::REWRITE_ATTEMPT_FAILED,
+                Article::REWRITE_NOT_ATTEMPTED,
+            )),
+        ];
     }
 
     /**
@@ -124,9 +176,12 @@ class ArticleController extends Controller
      *
      * @return Builder<Article>
      */
-    private function listed(Site $site, string $type): Builder
+    private function listed(Site $site, string $type, ?string $rewrite = null): Builder
     {
-        return Article::query()->where('site_id', $site->id)->ofType($type);
+        return Article::query()
+            ->where('site_id', $site->id)
+            ->ofType($type)
+            ->when($rewrite !== null, fn (Builder $q) => $q->rewriteState($rewrite));
     }
 
     public function show(Request $request, Site $site, Article $article): JsonResponse

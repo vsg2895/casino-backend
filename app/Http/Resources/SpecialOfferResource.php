@@ -6,6 +6,8 @@ namespace App\Http\Resources;
 
 use App\Models\Site;
 use App\Support\Seo\SeoResolver;
+use App\Services\SiteContentResolver;
+use App\Support\ResolvedSiteContent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,6 +16,8 @@ class SpecialOfferResource extends JsonResource
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
+        $content = $this->siteContent();
+
         return [
             'id'                 => $this->id,
             'casino_id'          => $this->casino_id,
@@ -53,7 +57,18 @@ class SpecialOfferResource extends JsonResource
             'banner_image'       => $this->banner_image,
             'bonuses'            => $this->bonuses,
             'affiliate_url'      => $this->affiliate_url,
-            'description'        => $this->description,
+            // As THIS site publishes it: its own override where it has one,
+            // else the default content — see SiteContentResolver.
+            'description'        => $content?->description ?? $this->description,
+            /*
+             * Finished meta for the offer page. ADDITIVE keys. On a public
+             * request they are resolved per site and never empty: this site's
+             * value, else the default, else "{title} – {casino}" and a plain-
+             * text snippet of the description. In the admin they are the raw
+             * default values the edit form saves.
+             */
+            'meta_title'         => $content !== null ? $content->metaTitle : $this->meta_title,
+            'meta_description'   => $content !== null ? $content->metaDescription : $this->meta_description,
             'rating'             => (int) $this->rating,
             'sort_order'         => (int) $this->sort_order,
             'active'             => (bool) $this->active,
@@ -78,13 +93,14 @@ class SpecialOfferResource extends JsonResource
                 // means rather than each one comparing dates in its own timezone.
                 'expired'              => $this->hasExpired(),
             ],
-            'seo'        => $this->seoBlock(),
+            'seo'        => $this->seoBlock($content),
             /*
              * Whether this offer's page may be indexed — true unless an admin
              * set noindex (SpecialOffer::isIndexable). Computed server-side so
              * the robots tag and the sitemap cannot disagree about it.
              */
-            'is_indexable' => $this->resource->isIndexable(),
+            // Resolved per site on a public request (SiteContentResolver).
+            'is_indexable' => $content !== null ? ! $content->noindex : $this->resource->isIndexable(),
         ];
     }
 
@@ -96,7 +112,7 @@ class SpecialOfferResource extends JsonResource
      *
      * @return array<string, mixed>
      */
-    private function seoBlock(): array
+    private function seoBlock(?ResolvedSiteContent $content): array
     {
         // This resource is reachable from the ADMIN as well as the public API,
         // and `current_site` is bound only by the public site-key middleware.
@@ -119,14 +135,16 @@ class SpecialOfferResource extends JsonResource
             $site,
             'special_offer',
             ['name' => (string) $this->title],
-            $this->meta_title ?? null,
-            $this->meta_description ?? null,
+            // What a person typed (this site's, else the default) — never the
+            // generated fallback, which must not outrank the site's pattern.
+            $content?->storedMetaTitle,
+            $content?->storedMetaDescription,
         );
 
         return [
             ...$resolved,
             'canonical_url' => $this->canonical_url,
-            'noindex'       => (bool) $this->noindex,
+            'noindex'       => $content?->noindex ?? (bool) $this->noindex,
             /*
              * WHERE the resolved description came from.
              *
@@ -140,7 +158,20 @@ class SpecialOfferResource extends JsonResource
              * the casino resource — which spreads the same array and has no use
              * for it — is untouched.
              */
-            'description_from_record' => trim((string) $this->meta_description) !== '',
+            'description_from_record' => trim((string) $content?->storedMetaDescription) !== '',
         ];
+    }
+
+    /**
+     * This offer's content for the site being served, or null outside a
+     * public request (the admin edits the default content and must see it).
+     */
+    private function siteContent(): ?ResolvedSiteContent
+    {
+        if (! app()->bound('current_site')) {
+            return null;
+        }
+
+        return app(SiteContentResolver::class)->offer(app('current_site'), $this->resource);
     }
 }

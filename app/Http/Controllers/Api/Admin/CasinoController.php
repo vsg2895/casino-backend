@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use Illuminate\Database\Eloquent\Builder;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreCasinoRequest;
 use App\Http\Requests\Admin\UpdateCasinoRequest;
@@ -37,8 +38,25 @@ class CasinoController extends Controller
         // simplePaginate, not paginate: the screen sizes its paginator from
         // count() below, so a COUNT here would be the same one run twice.
         return new CasinoCollection(
-            Casino::with('categories')->latest()->simplePaginate($perPage)
+            $this->filtered($request)->with('categories')->latest()->simplePaginate($perPage)
         );
+    }
+
+    /**
+     * The listing's filters, shared with count() so the total always matches.
+     *
+     * `missing_for_site={site id}`: casinos that site publishes but has written
+     * no content of its own for yet.
+     *
+     * @return Builder<Casino>
+     */
+    private function filtered(Request $request): Builder
+    {
+        $siteId = $request->integer('missing_for_site');
+
+        return Casino::query()->when($siteId > 0, static fn (Builder $q) => $q
+            ->attachedToSite($siteId)
+            ->whereDoesntHave('siteContents', static fn (Builder $c) => $c->where('site_id', $siteId)));
     }
 
     /**
@@ -50,9 +68,9 @@ class CasinoController extends Controller
      * excluded by the model's global scope), so it stays cheap as the catalogue
      * grows.
      */
-    public function count(): JsonResponse
+    public function count(Request $request): JsonResponse
     {
-        return response()->json(['total' => Casino::query()->count()]);
+        return response()->json(['total' => $this->filtered($request)->count()]);
     }
 
     public function store(StoreCasinoRequest $request): CasinoResource

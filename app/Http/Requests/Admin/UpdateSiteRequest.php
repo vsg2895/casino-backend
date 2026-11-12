@@ -47,6 +47,7 @@ class UpdateSiteRequest extends FormRequest
             'guides_enabled'    => ['sometimes', 'boolean'],
             'news_enabled'      => ['sometimes', 'boolean'],
             'bonus_enabled'     => ['sometimes', 'boolean'],
+            'noindex_without_override' => ['sometimes', 'boolean'],
             'forum_enabled'     => ['sometimes', 'boolean'],
             'accounts_enabled'  => ['sometimes', 'boolean'],
             'author_name'       => ['nullable', 'string', 'max:120'],

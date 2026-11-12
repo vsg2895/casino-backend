@@ -314,6 +314,48 @@ class NewsRewriteTest extends TestCase
         $this->assertUntouched($draft);
     }
 
+    // ── the attempt record the admin reads ───────────────────────────────────
+
+    public function test_a_rejected_rewrite_records_the_attempt_and_why(): void
+    {
+        $draft = $this->draft();
+        $this->fakeGemini(['title' => 'Regulator renews eight operator licences again']);
+
+        $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertSame(1, $draft->rewrite_attempts);
+        $this->assertNotNull($draft->rewrite_attempted_at);
+        $this->assertSame('rejected', $draft->rewrite_result);
+        $this->assertStringContainsString('similar to the source headline', (string) $draft->rewrite_error);
+    }
+
+    public function test_a_successful_rewrite_is_recorded_and_clears_the_last_error(): void
+    {
+        $draft = $this->draft();
+        $draft->forceFill(['rewrite_attempts' => 2, 'rewrite_result' => 'failed', 'rewrite_error' => 'HTTP 500'])->save();
+        $this->fakeGemini();
+
+        $this->rewrite($draft);
+
+        $draft->refresh();
+        $this->assertSame(3, $draft->rewrite_attempts);
+        $this->assertSame('rewritten', $draft->rewrite_result);
+        $this->assertNull($draft->rewrite_error);
+    }
+
+    public function test_a_dry_run_records_no_attempt(): void
+    {
+        $draft = $this->draft();
+        $this->fakeGemini(['title' => 'Regulator renews eight operator licences again']);
+
+        $this->rewrite($draft, dryRun: true);
+
+        $draft->refresh();
+        $this->assertSame(0, $draft->rewrite_attempts);
+        $this->assertNull($draft->rewrite_result);
+    }
+
     public function test_a_reply_that_is_not_json_changes_nothing(): void
     {
         $draft = $this->draft();

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Admin;
 
+use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\Builder;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreSpecialOfferRequest;
 use App\Http\Requests\Admin\UpdateSpecialOfferRequest;
@@ -37,7 +39,7 @@ class SpecialOfferController extends Controller
     private const string SITE_COLUMNS =
         'casino.sites:sites.id,sites.name,sites.slug,sites.domain,sites.revalidation_url';
 
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
         /*
          * Both relations are eager-loaded because the resource renders both for
@@ -51,7 +53,7 @@ class SpecialOfferController extends Controller
          *    whole screen's cost once the catalogue is a few hundred offers.
          */
         return SpecialOfferResource::collection(
-            SpecialOffer::with([self::SITE_COLUMNS, 'bonusCategory'])->latest()->get()
+            $this->filtered($request)->with([self::SITE_COLUMNS, 'bonusCategory'])->latest()->get()
         );
     }
 
@@ -63,9 +65,26 @@ class SpecialOfferController extends Controller
      * total. This is a bare COUNT against the primary table (soft-deleted rows
      * excluded by the model's global scope).
      */
-    public function count(): JsonResponse
+    public function count(Request $request): JsonResponse
     {
-        return response()->json(['total' => SpecialOffer::query()->count()]);
+        return response()->json(['total' => $this->filtered($request)->count()]);
+    }
+
+    /**
+     * The listing's filters, shared with count() so the total always matches.
+     *
+     * `missing_for_site={site id}`: offers that site publishes (through their
+     * casino) but has written no content of its own for yet.
+     *
+     * @return Builder<SpecialOffer>
+     */
+    private function filtered(Request $request): Builder
+    {
+        $siteId = $request->integer('missing_for_site');
+
+        return SpecialOffer::query()->when($siteId > 0, static fn (Builder $q) => $q
+            ->casinoAttachedToSite($siteId)
+            ->whereDoesntHave('siteContents', static fn (Builder $c) => $c->where('site_id', $siteId)));
     }
 
     public function store(StoreSpecialOfferRequest $request): SpecialOfferResource

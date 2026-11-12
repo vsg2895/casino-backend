@@ -71,9 +71,10 @@ class UpdateSpecialOfferRequest extends FormRequest
             'rating'             => ['nullable', 'integer', 'min:0', 'max:5'],
             'sort_order'         => ['nullable', 'integer', 'min:0'],
             'active'             => ['boolean'],
-            // Per-record SEO overrides. Offers carry no meta_title/meta_description
-            // columns, so a title here comes from the site's pattern; these two
-            // are the only per-record SEO controls an offer has.
+            // Default-site (winpalack) SEO, also every other site's fallback.
+            // Empty keeps the page's title coming from the site's pattern.
+            'meta_title'         => ['nullable', 'string', 'max:255'],
+            'meta_description'   => ['nullable', 'string', 'max:500'],
             // Structured bonus terms. All optional — an offer with none renders
             // exactly as it does today.
             'wagering_requirement' => ['nullable', 'string', 'max:120'],

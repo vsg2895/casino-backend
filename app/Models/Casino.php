@@ -110,6 +110,25 @@ class Casino extends Model
         });
     }
 
+    /**
+     * Per-site content overrides — see {@see CasinoSiteContent}. The model's own
+     * columns stay the default content; a row here replaces them on one site.
+     */
+    public function siteContents(): HasMany
+    {
+        return $this->hasMany(CasinoSiteContent::class);
+    }
+
+    /** This site's override row, or null when the site uses the default. */
+    public function contentForSite(Site $site): ?CasinoSiteContent
+    {
+        if ($this->relationLoaded('siteContents')) {
+            return $this->siteContents->firstWhere('site_id', $site->id);
+        }
+
+        return $this->siteContents()->where('site_id', $site->id)->first();
+    }
+
     public function categories(): BelongsToMany
     {
         return $this->belongsToMany(Category::class);

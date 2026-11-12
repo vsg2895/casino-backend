@@ -102,6 +102,7 @@ class SiteController extends Controller
     {
         $wasCountries = (bool) $site->countries_enabled;
         $wasReviews = (bool) $site->reviews_enabled;
+        $wasBonus = (bool) $site->bonus_enabled;
 
         // Fields whose migration has not run yet are dropped rather than
         // failing the whole save (SchemaGuard).
@@ -130,6 +131,18 @@ class SiteController extends Controller
 
         if ($wasReviews !== (bool) $fresh->reviews_enabled) {
             InvalidateCasinoCache::dispatch([$site->id], ['reviews', 'casinos']);
+        }
+
+        // The Bonus area switch decides whether the bonus endpoint answers at
+        // all, and its payload feeds the header and footer menus, the home
+        // page's Bonuses section, every /bonuses/<slug> page and the sitemap.
+        // Without this a flip in either direction stayed invisible for up to an
+        // hour: the cached `bonus:index` answer and the Next.js pages built on
+        // it outlived the change. `special-offers` too, because the bonus fetch
+        // carries both tags and the home page falls back to the offers grid
+        // when the area is off.
+        if ($wasBonus !== (bool) $fresh->bonus_enabled) {
+            InvalidateCasinoCache::dispatch([$site->id], ['bonus', 'special-offers']);
         }
 
         // Identity and byline settings are rendered into every legal page, the

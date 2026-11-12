@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Public;
 
+use App\Services\SiteContentResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CasinoWithAttachmentResource;
 use App\Http\Resources\ContinentResource;
@@ -192,6 +193,9 @@ class CountryController extends Controller
                     // The listing card shows where each casino accepts players.
                     ...Casino::publicCountriesEagerLoad(),
                 ]);
+
+                // Per-site content overrides for the page, one query — see SiteContentResolver.
+                app(SiteContentResolver::class)->prime($site, $paginator->getCollection());
 
                 if (SchemaGuard::hasTable('country_site_noindex')) {
                     $country->setAttribute('noindex', $site->noindexCountries()->whereKey($country->id)->exists());

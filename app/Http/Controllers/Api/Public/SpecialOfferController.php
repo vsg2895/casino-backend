@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Public;
 
+use App\Services\SiteContentResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SpecialOfferResource;
 use App\Models\Site;
@@ -58,7 +59,13 @@ class SpecialOfferController extends Controller
                 $query->limit($limit);
             }
 
-            return SpecialOfferResource::collection($query->get())->resolve();
+            $offers = $query->get();
+
+            // Per-site content overrides for every offer and its casino, one
+            // query each — see SiteContentResolver.
+            app(SiteContentResolver::class)->prime($site, $offers);
+
+            return SpecialOfferResource::collection($offers)->resolve();
         });
 
         return response()->json(['data' => $data]);
@@ -86,6 +93,7 @@ class SpecialOfferController extends Controller
 
         $data = SiteCache::remember($site->id, ['special-offers'], 'special-offers:show:site:'.$site->id.':slug:'.$slug, 3600, function () use ($site, $slug) {
             $offer = $this->baseQuery($site)->where('special_offers.slug', $slug)->firstOrFail();
+            app(SiteContentResolver::class)->prime($site, [$offer]);
 
             return (new SpecialOfferResource($offer))->resolve();
         });

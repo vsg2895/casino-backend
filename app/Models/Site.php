@@ -41,6 +41,7 @@ class Site extends Model
         'guides_enabled',
         'news_enabled',
         'bonus_enabled',
+        'noindex_without_override',
         // The discussion board at /forum. Distinct from `reviews_enabled`,
         // which is the /reviews feed that used to live at that path.
         'forum_enabled',
@@ -82,6 +83,7 @@ class Site extends Model
             'guides_enabled' => 'boolean',
             'news_enabled'   => 'boolean',
             'bonus_enabled'  => 'boolean',
+            'noindex_without_override' => 'boolean',
             'forum_enabled'    => 'boolean',
             'accounts_enabled' => 'boolean',
             'last_revalidated_at' => 'datetime',

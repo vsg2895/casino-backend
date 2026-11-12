@@ -63,6 +63,28 @@ class ArticleResource extends JsonResource
                 array_key_exists('awaiting_rewrite', $this->resource->getAttributes()),
                 fn () => (bool) $this->resource->getAttributes()['awaiting_rewrite'],
             ),
+            /*
+             * Admin listing only (see ArticleController::rewriteColumns()): where
+             * a scraped post stands with `news:rewrite`. `state` is one of
+             * rewritten | not_attempted | attempt_failed | written_here; the rest
+             * is the last attempt — absent before the 2026_12_04 migration.
+             * `last_error` is why the last attempt produced no copy (the
+             * rejection or the failure); null once one succeeds.
+             */
+            'rewrite' => $this->when(
+                array_key_exists('rewrite_state', $this->resource->getAttributes()),
+                fn (): array => [
+                    'state'           => (string) $this->resource->getAttributes()['rewrite_state'],
+                    'attempts'        => (int) ($this->resource->getAttributes()['rewrite_attempts'] ?? 0),
+                    // Guarded: the column is absent before the migration, and the
+                    // listing only selects what exists.
+                    'last_attempt_at' => array_key_exists('rewrite_attempted_at', $this->resource->getAttributes())
+                        ? $this->rewrite_attempted_at?->toISOString()
+                        : null,
+                    'last_result'     => $this->resource->getAttributes()['rewrite_result'] ?? null,
+                    'last_error'      => $this->resource->getAttributes()['rewrite_error'] ?? null,
+                ],
+            ),
             // Byline ids for the admin form; the resolved byline only when the
             // detail query loaded the (visible) authors.
             'author_id'        => $this->author_id,

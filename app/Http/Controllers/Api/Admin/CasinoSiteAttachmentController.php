@@ -11,6 +11,7 @@ use App\Http\Requests\Admin\UpdateCasinoBylineRequest;
 use App\Http\Requests\Admin\UpdateCasinoSiteDescriptionRequest;
 use App\Jobs\InvalidateCasinoCache;
 use App\Services\Search\SearchIndexer;
+use App\Services\SiteContentEditor;
 use App\Support\SchemaGuard;
 use App\Models\Casino;
 use App\Models\Site;
@@ -20,10 +21,16 @@ use Illuminate\Support\Facades\DB;
 
 class CasinoSiteAttachmentController extends Controller
 {
-    public function __construct(private readonly SearchIndexer $indexer) {}
+    public function __construct(
+        private readonly SearchIndexer $indexer,
+        private readonly SiteContentEditor $contents,
+    ) {}
 
     public function index(Casino $casino): JsonResponse
     {
+        // Every site's own text in one query, not one per attachment row.
+        $casino->load('siteContents');
+
         $attachments = $casino->sites()
             ->get()
             ->map(fn (Site $site) => [
@@ -35,7 +42,7 @@ class CasinoSiteAttachmentController extends Controller
                 'featured'      => (bool) $site->pivot->featured,
                 'active'        => (bool) $site->pivot->active,
                 ...$this->bylineFields($site),
-                'description'   => $this->siteDescription($site),
+                'description'   => $this->siteDescription($casino, $site),
             ]);
 
         return response()->json(['data' => $attachments]);
@@ -149,7 +156,7 @@ class CasinoSiteAttachmentController extends Controller
             'featured'      => (bool) $site->pivot->featured,
             'active'        => (bool) $site->pivot->active,
             ...$this->bylineFields($site),
-            'description'   => $this->siteDescription($site),
+            'description'   => $this->siteDescription($casino, $site),
         ];
     }
 
@@ -184,41 +191,35 @@ class CasinoSiteAttachmentController extends Controller
     /**
      * Set this site's own review text for the casino (SEO audit H6).
      *
-     * Its own endpoint for the same reason as the byline: sync() posts the
-     * whole attachment table, and a text carried along there would be wiped by
-     * any screen that did not send it back.
-     *
-     * Stored as null, so the site falls back to the shared description, when
-     * the text is empty or is the shared text unchanged: a copy is not a
-     * site's own text, and storing it would hide later edits of the shared one.
+     * Kept for the existing screens. The text now lives in
+     * `casino_site_contents` (it moved there from `casino_site.description`),
+     * written through SiteContentEditor so the same rules apply: an empty text
+     * or the shared text unchanged is stored as nothing, and the site falls
+     * back to the shared description. The site's other overrides (meta,
+     * noindex) are carried over untouched.
      */
     public function updateDescription(UpdateCasinoSiteDescriptionRequest $request, Casino $casino, Site $site): JsonResponse
     {
         abort_unless($casino->sites()->whereKey($site->id)->exists(), 404);
 
-        if (! SchemaGuard::hasColumn('casino_site', 'description')) {
-            return response()->json(['message' => 'Per-site descriptions are not available until the database migrations have been run.'], 503);
-        }
+        $existing = $casino->contentForSite($site);
 
-        $text = trim((string) $request->validated('description'));
+        $this->contents->save($casino, $site, [
+            'description'      => $request->validated('description'),
+            'meta_title'       => $existing?->meta_title,
+            'meta_description' => $existing?->meta_description,
+            'noindex'          => $existing?->noindex,
+        ]);
 
-        if (trim(html_entity_decode(strip_tags($text))) === '' || $text === trim((string) $casino->description)) {
-            $text = null;
-        }
-
-        $casino->sites()->updateExistingPivot($site->id, ['description' => $text]);
-
-        InvalidateCasinoCache::dispatch([$site->id]);
+        $casino->unsetRelation('siteContents');
 
         return response()->json(['data' => $this->pivotRow($casino, $site->id)]);
     }
 
     /** This site's own text, or null when it uses the shared description. */
-    private function siteDescription(Site $site): ?string
+    private function siteDescription(Casino $casino, Site $site): ?string
     {
-        $text = $site->pivot->description ?? null;
-
-        return $text === null || $text === '' ? null : (string) $text;
+        return $casino->contentForSite($site)?->description;
     }
 
     /** @return array{author_id: ?int, reviewed_by_id: ?int, last_reviewed_at: ?string} */

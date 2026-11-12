@@ -8,6 +8,8 @@ use App\Http\Controllers\Api\Admin\CasinoReviewController as AdminCasinoReviewCo
 use App\Http\Controllers\Api\Admin\ArticleController as AdminArticleController;
 use App\Http\Controllers\Api\Admin\CasinoDetailController;
 use App\Http\Controllers\Api\Admin\CasinoSiteAttachmentController;
+use App\Http\Controllers\Api\Admin\ContentCoverageController;
+use App\Http\Controllers\Api\Admin\SiteContentController;
 use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController;
 use App\Http\Controllers\Api\Admin\CasinoCountryController;
 use App\Http\Controllers\Api\Admin\CountryController as AdminCountryController;
@@ -260,6 +262,14 @@ Route::prefix('v1')->group(function () {
             Route::delete('{site}', [CasinoSiteAttachmentController::class, 'destroy']);
         });
 
+        // Per-site content overrides (description / meta / noindex). The
+        // casino's own fields stay the default every site falls back to.
+        Route::get('casinos/{casino}/site-contents', [SiteContentController::class, 'casinoIndex']);
+        Route::put('casinos/{casino}/site-contents/{site}', [SiteContentController::class, 'casinoUpdate']);
+        Route::delete('casinos/{casino}/site-contents/{site}', [SiteContentController::class, 'casinoDestroy']);
+        // Casino / offer × site matrix of who has their own content.
+        Route::get('content-coverage', [ContentCoverageController::class, 'index']);
+
         // Category logos. A literal path under `uploads`, declared with the
         // other media routes rather than under `categories`, because it uploads
         // a file and returns a path — it touches no category row.
@@ -373,6 +383,9 @@ Route::prefix('v1')->group(function () {
         Route::get('special-offers/count', [AdminSpecialOfferController::class, 'count']);
         Route::apiResource('special-offers', AdminSpecialOfferController::class);
         Route::post('special-offers/{specialOffer}/duplicate', [AdminSpecialOfferController::class, 'duplicate']);
+        Route::get('special-offers/{specialOffer}/site-contents', [SiteContentController::class, 'offerIndex']);
+        Route::put('special-offers/{specialOffer}/site-contents/{site}', [SiteContentController::class, 'offerUpdate']);
+        Route::delete('special-offers/{specialOffer}/site-contents/{site}', [SiteContentController::class, 'offerDestroy']);
 
         // Newsletter
         Route::get('newsletters', [AdminNewsletterController::class, 'index']);

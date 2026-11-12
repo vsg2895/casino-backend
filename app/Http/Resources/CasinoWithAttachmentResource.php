@@ -8,6 +8,8 @@ use App\Models\Site;
 use App\Support\Byline;
 use Carbon\CarbonImmutable;
 use App\Support\Seo\SeoResolver;
+use App\Services\SiteContentResolver;
+use App\Support\ResolvedSiteContent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -21,6 +23,8 @@ class CasinoWithAttachmentResource extends JsonResource
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
+        $content = $this->siteContent();
+
         return [
             'id'                    => $this->id,
             'name'                  => $this->name,
@@ -28,13 +32,14 @@ class CasinoWithAttachmentResource extends JsonResource
             'image_path'            => $this->image_path,
             'banner_image'          => $this->banner_image,
             'bonuses'               => $this->bonuses,
-            // This site's own review text when it has one (casino_site.description,
-            // selected by the detail endpoint only), else the shared one. A
-            // shared text is the same paragraph on every site (SEO audit H6).
-            'description'           => filled($this->getAttribute('site_description')) ? $this->getAttribute('site_description') : $this->description,
+            // Description and meta as THIS site publishes them: its own override
+            // (casino_site_contents) where it has one, else the default content
+            // — see SiteContentResolver. A shared text is the same paragraph on
+            // every site (SEO audit H6).
+            'description'           => $content?->description ?? $this->description,
             'rating'                => (int) $this->rating,
-            'meta_title'            => $this->meta_title,
-            'meta_description'      => $this->meta_description,
+            'meta_title'            => $content !== null ? $content->metaTitle : $this->meta_title,
+            'meta_description'      => $content !== null ? $content->metaDescription : $this->meta_description,
             'categories'            => CategoryResource::collection($this->whenLoaded('categories')),
             // Which countries this casino serves. Additive: the relation was
             // already modelled and admin-editable, and was reaching the admin
@@ -77,8 +82,10 @@ class CasinoWithAttachmentResource extends JsonResource
                     $this->bylineDate(),
                 ),
             ),
-            'seo'                   => $this->seoBlock(),
-            'updated_at'            => $this->updated_at?->toISOString(),
+            'seo'                   => $this->seoBlock($content),
+            // The later of the casino's own change and this site's override,
+            // so a sitemap lastmod moves when only the site's text changed.
+            'updated_at'            => ($content !== null ? $content->updatedAt : $this->updated_at)?->toISOString(),
             'attachment'            => [
                 'affiliate_url' => $this->affiliate_url,
                 'position'      => (int) $this->position,
@@ -115,7 +122,7 @@ class CasinoWithAttachmentResource extends JsonResource
      *
      * @return array<string, mixed>
      */
-    private function seoBlock(): array
+    private function seoBlock(?ResolvedSiteContent $content): array
     {
         // This resource is reachable from the ADMIN as well as the public API,
         // and `current_site` is bound only by the public site-key middleware.
@@ -136,14 +143,30 @@ class CasinoWithAttachmentResource extends JsonResource
             $site,
             'casino',
             ['name' => (string) $this->name],
-            $this->meta_title,
-            $this->meta_description,
+            $content?->storedMetaTitle,
+            $content?->storedMetaDescription,
         );
 
         return [
             ...$resolved,
             'canonical_url' => $this->canonical_url,
-            'noindex'       => (bool) $this->noindex,
+            // Resolved per site: the global flag, this site's own choice, or
+            // the site's "no own text, no index" rule.
+            'noindex'       => $content?->noindex ?? (bool) $this->noindex,
         ];
+    }
+
+    /**
+     * This casino's content for the site being served, or null outside a
+     * public request (the admin reaches this resource too, and must keep
+     * seeing the default content it edits).
+     */
+    private function siteContent(): ?ResolvedSiteContent
+    {
+        if (! app()->bound('current_site')) {
+            return null;
+        }
+
+        return app(SiteContentResolver::class)->casino(app('current_site'), $this->resource);
     }
 }

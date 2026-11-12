@@ -36,6 +36,12 @@ class SiteResource extends JsonResource
             'guides_enabled'    => (bool) $this->guides_enabled,
             'news_enabled'      => (bool) $this->news_enabled,
             'bonus_enabled'     => (bool) $this->bonus_enabled,
+            // Casino/offer pages without this site's own description are noindexed
+            // and left out of its sitemap (SiteContentResolver).
+            'noindex_without_override' => (bool) $this->noindex_without_override,
+            // The site whose casino/offer text is the shared default; it never
+            // carries per-site overrides (config/site_content.php).
+            'is_default_content_site' => $this->slug === config('site_content.default_site_slug'),
             // The discussion board at /forum, and the member area that /login
             // and /register belong to. Both were previously absent from this
             // resource, which left `forum_enabled` unreachable from the admin

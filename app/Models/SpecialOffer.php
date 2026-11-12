@@ -9,6 +9,7 @@ use Database\Factories\SpecialOfferFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
@@ -28,6 +29,9 @@ class SpecialOffer extends Model
         'bonuses',
         'affiliate_url',
         'description',
+        // Default-site (winpalack) meta; other sites override per site.
+        'meta_title',
+        'meta_description',
         'rating',
         'sort_order',
         'active',
@@ -262,6 +266,25 @@ class SpecialOffer extends Model
         }
 
         return $prefix.'-'.$slug;
+    }
+
+    /**
+     * Per-site content overrides — see {@see SpecialOfferSiteContent}. The model's own
+     * columns stay the default content; a row here replaces them on one site.
+     */
+    public function siteContents(): HasMany
+    {
+        return $this->hasMany(SpecialOfferSiteContent::class);
+    }
+
+    /** This site's override row, or null when the site uses the default. */
+    public function contentForSite(Site $site): ?SpecialOfferSiteContent
+    {
+        if ($this->relationLoaded('siteContents')) {
+            return $this->siteContents->firstWhere('site_id', $site->id);
+        }
+
+        return $this->siteContents()->where('site_id', $site->id)->first();
     }
 
     public function bonusCategory(): BelongsTo

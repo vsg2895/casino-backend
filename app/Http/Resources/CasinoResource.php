@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources;
 
 use App\Models\Site;
+use App\Services\SiteContentResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -16,6 +17,12 @@ class CasinoResource extends JsonResource
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
+        // Set only when this resource is nested in a PUBLIC offer payload; the
+        // admin keeps the raw default content it edits.
+        $content = app()->bound('current_site')
+            ? app(SiteContentResolver::class)->casino(app('current_site'), $this->resource)
+            : null;
+
         return [
             'id'                        => $this->id,
             'name'                      => $this->name,
@@ -24,17 +31,17 @@ class CasinoResource extends JsonResource
             'banner_image'              => $this->banner_image,
             'bonuses'                   => $this->bonuses,
             'affiliate_url'             => $this->affiliate_url,
-            'description'               => $this->description,
+            'description'               => $content?->description ?? $this->description,
             'rating'                    => (int) $this->rating,
             'sort_order'                => (int) $this->sort_order,
             'featured_special_offer_id' => $this->featured_special_offer_id,
             'bonuses_intro'             => $this->bonuses_intro,
             'reviewed_at'               => $this->reviewed_at?->toDateString(),
-            'meta_title'                => $this->meta_title,
-            'meta_description'          => $this->meta_description,
+            'meta_title'                => $content !== null ? $content->metaTitle : $this->meta_title,
+            'meta_description'          => $content !== null ? $content->metaDescription : $this->meta_description,
             // The admin form's "keep out of search results" switch. The public
             // casino page reads the same flag through `seo.noindex`.
-            'noindex'                   => (bool) $this->noindex,
+            'noindex'                   => $content?->noindex ?? (bool) $this->noindex,
             'active'                    => (bool) $this->active,
             'category_ids'              => $this->whenLoaded('categories', fn () => $this->categories->pluck('id')),
             'categories'                => CategoryResource::collection($this->whenLoaded('categories')),
