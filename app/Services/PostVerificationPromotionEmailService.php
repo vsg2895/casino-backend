@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Mail\PostVerificationPromotionEmail;
 use App\Models\Newsletter;
 use App\Models\Site;
+use App\Models\SocialLink;
 use App\Models\Unsubscribe;
 use App\Models\VerificationPromotionEmail;
 use App\Models\VerificationPromotionOverride;
@@ -32,6 +33,25 @@ use Illuminate\Support\Carbon;
  */
 class PostVerificationPromotionEmailService
 {
+    /** Display names where ucfirst() of the platform key would read wrong. */
+    private const array PLATFORM_NAMES = [
+        'twitter'  => 'X',
+        'youtube'  => 'YouTube',
+        'tiktok'   => 'TikTok',
+        'linkedin' => 'LinkedIn',
+    ];
+
+    /** Where the Follow row's platform icons live, under public/. */
+    private const string ICON_DIR = 'images/email/social';
+
+    /**
+     * Memo for socialLinks(): a batch send builds one Mailable per recipient,
+     * and the brand's links are the same for every one of them.
+     *
+     * @var list<array{platform: string, label: string, url: string, icon_url: string|null}>|null
+     */
+    private ?array $socialLinks = null;
+
     /**
      * Placeholder values available to every template string.
      *
@@ -68,14 +88,70 @@ class PostVerificationPromotionEmailService
     /**
      * The fixed branding this template always carries.
      *
-     * @return array{site_name: string, site_url: string, site_domain: string, contact_email: string}
+     * @return array{site_name: string, site_url: string, site_domain: string, contact_email: string, social_site_slug: string}
      */
     public static function brand(): array
     {
-        /** @var array{site_name: string, site_url: string, site_domain: string, contact_email: string} $brand */
+        /** @var array{site_name: string, site_url: string, site_domain: string, contact_email: string, social_site_slug: string} $brand */
         $brand = config('promotions.after_verification');
 
         return $brand;
+    }
+
+    /**
+     * The brand's social accounts for the footer's Follow row — the ACTIVE
+     * links of the site named by config('promotions.after_verification.
+     * social_site_slug'), in the order the admin's Social Links page sets.
+     *
+     * Read from that one site, never the subscriber's: like every other brand
+     * string in this email, the accounts are Winpalack's whichever site the
+     * subscriber confirmed on. Managed in the admin under Social Links, so
+     * adding, reordering or switching off an account changes the next email
+     * with no template edit.
+     *
+     * Only http(s) URLs are kept — a row holding anything else would put an
+     * unclickable or unsafe href in a mail client. A missing site or no active
+     * links gives [], and the Follow row is then left out entirely.
+     *
+     * Each link carries its icon: a PNG in public/images/email/social/, one per
+     * SocialLink::PLATFORMS entry (the sites' footer glyphs on a white disc,
+     * 96px for a 32px slot). PNG because Gmail and Outlook strip SVG; an
+     * absolute URL off APP_URL because a mail client fetches it from outside.
+     * A platform with no file gets null and the email falls back to its name.
+     *
+     * @return list<array{platform: string, label: string, url: string, icon_url: string|null}>
+     */
+    public function socialLinks(): array
+    {
+        if ($this->socialLinks !== null) {
+            return $this->socialLinks;
+        }
+
+        $site = Site::query()->where('slug', self::brand()['social_site_slug'])->first();
+
+        if ($site === null) {
+            return $this->socialLinks = [];
+        }
+
+        return $this->socialLinks = SocialLink::query()
+            ->where('site_id', $site->id)
+            ->active()
+            ->ordered()
+            ->get()
+            ->filter(static fn (SocialLink $link): bool => preg_match('#^https?://#i', (string) $link->url) === 1)
+            ->map(static fn (SocialLink $link): array => [
+                'platform' => $link->platform,
+                // The PLATFORM's name, not the row's label: the label is an
+                // optional handle ("@winpalack"), the same on every account, so
+                // three buttons reading "@winpalack" would not say which is which.
+                'label'    => self::PLATFORM_NAMES[$link->platform] ?? ucfirst($link->platform),
+                'url'      => $link->url,
+                'icon_url' => is_file(public_path(self::ICON_DIR . "/{$link->platform}.png"))
+                    ? asset(self::ICON_DIR . "/{$link->platform}.png")
+                    : null,
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -210,6 +286,7 @@ class PostVerificationPromotionEmailService
             // Which optional blocks this template currently shows. Hiding one is a
             // setting: the block's text stays in the row untouched.
             visibleBlocks: $template->visibleBlocks(),
+            socialLinks: $this->socialLinks(),
         );
     }
 }

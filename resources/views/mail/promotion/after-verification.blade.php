@@ -321,6 +321,30 @@
                             </p>
                         @endif
 
+                        {{-- Follow row — the brand's own accounts from the admin's Social
+                             Links (PostVerificationPromotionEmailService::socialLinks()),
+                             not a template field, so $show() cannot guard it. Icons are
+                             hosted PNGs (Gmail and Outlook strip SVG) at 32px, with the
+                             platform's name as alt text so a client blocking images still
+                             shows which link is which; a platform with no icon file falls
+                             back to its name as a text pill. --}}
+                        @if (($visible['social_links'] ?? true) && ! empty($socialLinks))
+                            <p style="margin:0 0 8px 0; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:{{ $footerColor }};">Follow {{ $siteName }}</p>
+                            <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="{{ $block }} margin:0 auto 14px auto;">
+                                <tr>
+                                    @foreach ($socialLinks as $social)
+                                        <td style="padding:0 6px;">
+                                            @if ($social['icon_url'])
+                                                <a href="{{ $social['url'] }}" target="_blank" rel="noopener" title="{{ $social['label'] }}" style="display:inline-block; text-decoration:none;"><img src="{{ $social['icon_url'] }}" width="32" height="32" alt="{{ $social['label'] }}" style="display:block; width:32px; height:32px; border:0; font-size:11px; color:{{ $footerLink }};"></a>
+                                            @else
+                                                <a href="{{ $social['url'] }}" target="_blank" rel="noopener" style="display:inline-block; padding:6px 14px; border:1px solid {{ $footerLink }}; border-radius:999px; font-size:12px; font-weight:bold; line-height:1.2; color:{{ $footerLink }}; text-decoration:none;">{{ $social['label'] }}</a>
+                                            @endif
+                                        </td>
+                                    @endforeach
+                                </tr>
+                            </table>
+                        @endif
+
                         @if ($show('affiliate_disclosure_text'))
                             <p style="margin:0 0 8px 0; font-size:11px; line-height:1.5; color:{{ $footerColor }};">{!! $t['affiliate_disclosure_text'] !!}</p>
                         @endif

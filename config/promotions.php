@@ -102,6 +102,10 @@ return [
         // where "https://" would look wrong.
         'site_domain'   => 'winpalack.com',
         'contact_email' => 'info@winpalack.com',
+        // The registered site whose admin "Social Links" fill the footer's
+        // Follow row — the brand's own accounts, whichever site the subscriber
+        // confirmed on. Inactive links are left out.
+        'social_site_slug' => 'winpalack',
     ],
 
 ];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources;
 
 use App\Models\VerificationPromotionEmail;
+use App\Services\PostVerificationPromotionEmailService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -77,6 +78,9 @@ class VerificationPromotionEmailResource extends JsonResource
             'footer_tagline'            => $this->footer_tagline,
             // Always an array so the admin editor can bind to it directly.
             'footer_links'              => $this->footer_links ?? [],
+            // Read-only: the brand site's active Social Links the Follow row
+            // shows. Managed on the admin's Social Links page, not here.
+            'social_links'              => app(PostVerificationPromotionEmailService::class)->socialLinks(),
             'affiliate_disclosure_text' => $this->affiliate_disclosure_text,
             // Footer legal / contact lines
             'reason_text'               => $this->reason_text,

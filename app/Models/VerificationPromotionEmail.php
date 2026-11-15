@@ -348,6 +348,9 @@ class VerificationPromotionEmail extends SitePromotionEmail
         'disclaimer_text',
         'responsible_notice_text',
         'footer_tagline',
+        // Not a column: the Follow row, filled from the brand site's Social
+        // Links (PostVerificationPromotionEmailService::socialLinks()).
+        'social_links',
         'affiliate_disclosure_text',
         'reason_text',
         'age_disclaimer_text',

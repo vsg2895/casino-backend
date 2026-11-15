@@ -61,6 +61,14 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
          * @var array<string, bool>
          */
         public readonly array $visibleBlocks = [],
+        /**
+         * The brand's social accounts for the footer's Follow row, from
+         * {@see \App\Services\PostVerificationPromotionEmailService::socialLinks()}.
+         * Empty leaves the row out.
+         *
+         * @var list<array{platform: string, label: string, url: string, icon_url: string|null}>
+         */
+        public readonly array $socialLinks = [],
     ) {}
 
     public function envelope(): Envelope
@@ -97,6 +105,7 @@ class PostVerificationPromotionEmail extends Mailable implements SenderOverridab
                 'unsubscribeUrl' => $this->unsubscribeUrl,
                 'greeting'       => $this->greeting,
                 'visible'        => $this->visibleBlocks,
+                'socialLinks'    => $this->socialLinks,
                 // Palette — already defaulted in VerificationPromotionEmail::render().
                 'canvas'         => $this->template['background_color'],
                 'bodyBg'         => $this->template['body_background_color'],
