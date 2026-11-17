@@ -40,8 +40,26 @@ class PerfumeServiceProvider extends ServiceProvider
 
         Route::aliasMiddleware('verify.perfume', VerifyPerfumeKey::class);
 
+        /*
+         * `name('perfume.')` is not cosmetic — it is what lets the app cache
+         * its routes at all.
+         *
+         * `apiResource('categories', …)` names its routes `categories.index`,
+         * `categories.store` and so on, and the casino admin already owns those
+         * names under /api/v1/admin. Two routes with one name are tolerated in
+         * dev, where nothing caches and the last registration simply wins; they
+         * are FATAL to `route:cache`, which refuses to serialize the second one
+         * ("Another route has already been assigned name [categories.index]").
+         * A container that caches routes on boot therefore failed to start,
+         * while local development never noticed.
+         *
+         * Prefixing the names here rather than in routes/perfume.php covers
+         * every resource in that file and every one added later. Only the NAMES
+         * change — the URLs, the middleware and the controllers are untouched.
+         */
         Route::middleware('api')
             ->prefix('api/perfume')
+            ->name('perfume.')
             ->group(base_path('routes/perfume.php'));
 
         // Any saved/deleted row invalidates the public cache and asks the
