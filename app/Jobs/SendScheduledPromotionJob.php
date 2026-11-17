@@ -107,8 +107,19 @@ class SendScheduledPromotionJob implements ShouldQueue
             return;
         }
 
-        // Respect the per-site promotion toggle up front — nothing to fan out.
-        if (! $schedule->site->promotionEmailOrDefault()->active) {
+        // Respect the per-site toggle of whichever template this schedule
+        // sends — nothing to fan out when it is switched off. Custom HTML has
+        // no stored row to switch off, so its only gate is its own body being
+        // present, which the same check covers.
+        $templateBlocker = $schedule->templateBlocker($schedule->site);
+
+        if ($templateBlocker !== null) {
+            Log::info('Promotion schedule skipped', [
+                'schedule_id' => $this->scheduleId,
+                'template'    => $schedule->templateKey(),
+                'reason'      => $templateBlocker,
+            ]);
+
             return;
         }
 
@@ -144,6 +155,7 @@ class SendScheduledPromotionJob implements ShouldQueue
 
         $queued = 0;
         $scheduleId = $this->scheduleId;
+        $template = $schedule->templateKey();
         $audience = $schedule->audienceKey();
         $isList = $schedule->audienceModel() !== null;
 
@@ -180,6 +192,7 @@ class SendScheduledPromotionJob implements ShouldQueue
         Log::info('Promotion campaign fanned out', [
             'schedule_id' => $this->scheduleId,
             'site_id'     => $siteId,
+            'template'    => $template,
             'audience'    => $audience,
             'recipients'  => $queued,
             'batch_size'  => $batchSize,

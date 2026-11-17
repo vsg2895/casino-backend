@@ -9,6 +9,7 @@ use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\PromotionEmailHistory;
 use App\Models\ScheduleSendHistory;
+use App\Models\Unsubscribe;
 use Carbon\CarbonInterface;
 use Generator;
 use Illuminate\Database\Eloquent\Builder;
@@ -26,17 +27,24 @@ use Illuminate\Support\Collection;
  * The audience is "the newest `limit` addresses of the schedule's list, minus
  * anyone who cannot or should not be mailed now". The list is one of:
  *
- *   newsletters         the site's subscribers, minus promotion opt-outs and
- *                       anyone this site's promotion reached in the last 24h
- *                       (the dedup shared with the after-verification email)
- *   mailgun_receivers   Custom Receivers → Mailgun, minus unsubscribes,
- *   sendgrid_receivers  Custom Receivers → SendGrid, suppressions and anyone the
- *                       list already mailed today (its one-per-day claim)
+ *   newsletters         the site's subscribers, minus anyone this site's
+ *                       promotion reached in the last 24h (the dedup shared
+ *                       with the after-verification email)
+ *   mailgun_receivers   Custom Receivers → Mailgun, minus the list's own
+ *   sendgrid_receivers  Custom Receivers → SendGrid, unsubscribes, suppressions
+ *                       and anyone it already mailed today (its one-per-day claim)
  *   warmup              the warmup list
  *
- * and, for every list, minus anyone RESTING: who received this site's promotion
- * template within the schedule's `cooldown_days`
- * ({@see ScheduleSendHistory::scopeResting()}).
+ * and, for EVERY audience, minus:
+ *
+ *  - anyone who OPTED OUT OF THIS SITE, through any template and on any list.
+ *    Until 2026-11-17 this was checked for `newsletters` only, so a person who
+ *    unsubscribed from a site could still be mailed by that same site through a
+ *    Custom Receivers list their address also happened to be on. The opt-out is
+ *    the site's, not the list's, so it is applied to all four. A schedule with
+ *    `include_unsubscribed` deliberately turned on is the one exception;
+ *  - anyone RESTING: who received THIS SCHEDULE'S TEMPLATE within its
+ *    `cooldown_days` ({@see ScheduleSendHistory::scopeResting()}).
  *
  * Filtering happens BEFORE the cap, as warmup's cooldown does: the newest N
  * that may be mailed, not the newest N minus those that may not. So each run
@@ -70,10 +78,17 @@ class ScheduleRecipientService
         $table = $query->getModel()->getTable();
         $siteId = (int) $schedule->site_id;
         $days = $schedule->cooldownDays();
+        // The cooldown rests an address against the template it received, not
+        // against the promotion template every schedule used to send.
+        $template = $schedule->templateKey();
+
+        if ($schedule->honoursOptOut()) {
+            self::excludeOptedOut($query, $siteId, $table);
+        }
 
         return $query
-            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $days, $table, $now): void {
-                ScheduleSendHistory::scopeResting($sub, $siteId, EmailSchedule::TEMPLATE_PROMOTION, $days, $table . '.email', $now);
+            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $days, $table, $now, $template): void {
+                ScheduleSendHistory::scopeResting($sub, $siteId, $template, $days, $table . '.email', $now);
             })
             ->orderByDesc($table . '.created_at')
             ->orderByDesc($table . '.id');
@@ -147,12 +162,13 @@ class ScheduleRecipientService
     }
 
     /**
-     * The site's subscribers who may receive its promotion now.
+     * The site's subscribers who may receive mail now.
      *
-     * Opt-outs are global per site (Unsubscribe::hasAny), so the check is not
-     * scoped to a type. The 24h promotion dedup is kept on top of the cooldown:
-     * it is shared with the after-verification email, which a schedule's own
-     * history knows nothing about.
+     * The opt-out check is NOT here any more — it is applied to every audience
+     * in {@see query()}, because it is the site's opt-out and not this list's.
+     *
+     * The 24h promotion dedup stays: it is shared with the after-verification
+     * email, which a schedule's own history knows nothing about.
      */
     private function newsletters(EmailSchedule $schedule, CarbonInterface $now): Builder
     {
@@ -160,14 +176,52 @@ class ScheduleRecipientService
 
         return Newsletter::query()
             ->where('site_id', $siteId)
-            ->whereNotExists(static function (QueryBuilder $sub) use ($siteId): void {
-                $sub->from('unsubscribes')
-                    ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $siteId);
-            })
             ->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $now): void {
                 PromotionEmailHistory::scopeDeliveredWithinDay($sub, $siteId, 'newsletters.email', $now);
             });
+    }
+
+    /**
+     * THE opt-out predicate, for any table with an `email` column.
+     *
+     * One definition, used by the audience query here and by the send-time
+     * re-check in both batch jobs, so an address that opts out between the
+     * fan-out and its batch is still dropped.
+     *
+     * Not scoped to a `type`: an unsubscribe recorded through the verify mail
+     * stops the promotion too. That is what {@see Unsubscribe::hasAny()} means
+     * and what the unsubscribe pages have always promised.
+     *
+     * @param  Builder<Model>  $query
+     */
+    public static function excludeOptedOut(Builder $query, int $siteId, string $table): void
+    {
+        $query->whereNotExists(static function (QueryBuilder $sub) use ($siteId, $table): void {
+            $sub->from('unsubscribes')
+                ->whereColumn('unsubscribes.email', $table . '.email')
+                ->where('unsubscribes.site_id', $siteId);
+        });
+    }
+
+    /**
+     * Which of $emails have opted out of this site — the send-time twin of
+     * {@see excludeOptedOut()}, one query for a whole batch.
+     *
+     * @param  list<string>  $emails
+     * @return list<string>
+     */
+    public static function optedOutAmong(int $siteId, array $emails): array
+    {
+        if ($emails === []) {
+            return [];
+        }
+
+        return Unsubscribe::query()
+            ->where('site_id', $siteId)
+            ->whereIn('email', $emails)
+            ->distinct()
+            ->pluck('email')
+            ->all();
     }
 
     /**

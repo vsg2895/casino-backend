@@ -21,6 +21,26 @@ declare(strict_types=1);
 
 return [
 
+    /*
+    |--------------------------------------------------------------------------
+    | Custom HTML campaigns
+    |--------------------------------------------------------------------------
+    |
+    | A schedule may carry its own subject and HTML instead of sending one of
+    | the site's stored templates. `max_html_bytes` bounds what the API
+    | accepts: Gmail clips a body past ~102 KB behind a "View entire message"
+    | link, and anything far beyond that is a paste mistake rather than an
+    | email. The same ceilings warmup's custom sends use.
+    |
+    */
+    'custom' => [
+
+        'max_subject_length' => 255,
+
+        'max_html_bytes' => 500_000,
+
+    ],
+
     // Addresses per SendPromotionBatchJob. Each batch is one queue job and one
     // history INSERT, and is retried as a unit, so this is the granularity of
     // failure. Rough guide: batch_size × seconds-per-send must stay well below

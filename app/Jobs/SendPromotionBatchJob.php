@@ -11,7 +11,9 @@ use App\Models\PromotionEmailHistory;
 use App\Models\ScheduleSendHistory;
 use App\Models\Site;
 use App\Models\SitePromotionEmail;
+use App\Models\Unsubscribe;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Services\Mail\ScheduleMailResolver;
 use App\Services\PromotionEmailService;
 use App\Support\Mail\PacedDelivery;
 use App\Support\Mail\ScheduleSendContext;
@@ -148,25 +150,68 @@ class SendPromotionBatchJob implements ShouldQueue
             return;
         }
 
-        $template = $this->template($site);
+        // WHICH email this batch sends. Read first, because it decides whether
+        // the promotion template below is even involved: a schedule may now
+        // send the subscribe or verify template, or its own HTML. A batch with
+        // no schedule behind it (the admin's send-to-all) is always the
+        // promotion one, exactly as before.
+        $schedule = $this->scheduleId === null ? null : EmailSchedule::find($this->scheduleId);
+        $templateKey = $schedule?->templateKey() ?? EmailSchedule::TEMPLATE_PROMOTION;
+        $sendsPromotion = $templateKey === EmailSchedule::TEMPLATE_PROMOTION;
 
-        if ($template === null || ! $template->active) {
+        // Only resolved — and only gated on being active — when it is the one
+        // going out.
+        $template = $sendsPromotion ? $this->template($site) : null;
+
+        /*
+         * The renderer for the three NON-promotion templates, resolved from the
+         * container here rather than injected into handle().
+         *
+         * Not a style preference: eighteen tests call this job's handle()
+         * directly with exactly two arguments, and a third parameter would
+         * break every one of them for a dependency the promotion path — which
+         * is all those tests exercise — never touches. Resolved lazily, so a
+         * promotion batch does not build it at all.
+         */
+        $resolver = $sendsPromotion ? null : app(ScheduleMailResolver::class);
+
+        if ($sendsPromotion) {
+            if ($template === null || ! $template->active) {
+                return;
+            }
+        } elseif ($schedule !== null && $schedule->templateBlocker($site) !== null) {
+            Log::warning('Promotion batch skipped: the schedule\'s template cannot send', [
+                'schedule_id' => $this->scheduleId,
+                'template'    => $templateKey,
+                'reason'      => $schedule->templateBlocker($site),
+            ]);
+
             return;
         }
 
         // One query for the whole batch: fetch each address's promotion token and
-        // drop anyone who has since opted out — of ANY template. Opt-out is global
-        // (see Unsubscribe::hasAny), so the existence check is not scoped to a
-        // type. toBase() keeps the soft-delete scope but skips model hydration for
-        // rows we only read three scalars from.
+        // drop anyone who has since opted out — of ANY template, because an
+        // opt-out is the SITE's and not a stream's (see Unsubscribe::hasAny).
+        // Re-checked here and not only at fan-out, so someone who unsubscribes
+        // while the campaign is in flight is still dropped.
+        //
+        // The one schedule that skips it is one whose `include_unsubscribed` an
+        // admin deliberately turned on; a batch with no schedule behind it (the
+        // admin's send-to-all) always honours the opt-out.
+        $honoursOptOut = $schedule?->honoursOptOut() ?? true;
+
         $recipients = Newsletter::query()
             ->where('site_id', $this->siteId)
             ->whereIn('email', $this->emails)
-            ->whereNotExists(function (Builder $query): void {
-                $query->from('unsubscribes')
-                    ->whereColumn('unsubscribes.email', 'newsletters.email')
-                    ->where('unsubscribes.site_id', $this->siteId);
+            ->when($honoursOptOut, function ($query): void {
+                $query->whereNotExists(function (Builder $sub): void {
+                    $sub->from('unsubscribes')
+                        ->whereColumn('unsubscribes.email', 'newsletters.email')
+                        ->where('unsubscribes.site_id', $this->siteId);
+                });
             })
+            // toBase() keeps the soft-delete scope but skips model hydration for
+            // rows we only read four scalars from.
             ->toBase()
             ->get(['id', 'email', 'full_name', 'promotion_unsubscribe_token']);
 
@@ -174,9 +219,26 @@ class SendPromotionBatchJob implements ShouldQueue
         // this promotion within the last 24 hours (successes only), so neither
         // a job retry, a duplicate schedule, nor a cross-midnight re-run ever
         // re-sends a delivered address.
-        $alreadySent = array_flip(
-            PromotionEmailHistory::sentWithinDayAmong($this->siteId, $recipients->pluck('email')->all()),
-        );
+        //
+        // PROMOTION ONLY. `promotion_email_histories` is that stream's own
+        // record — it is what the after-verification offer dedups against too —
+        // and reading it for a subscribe, verify or custom send would skip
+        // everyone who happened to receive the site's promotion today. The
+        // other templates are deduped by the schedule's own cooldown below,
+        // which is keyed by template.
+        $alreadySent = $sendsPromotion
+            ? array_flip(PromotionEmailHistory::sentWithinDayAmong($this->siteId, $recipients->pluck('email')->all()))
+            : [];
+
+        // Subscribe and verify are rendered from the subscriber's OWN tokens,
+        // which the lean query above deliberately does not hydrate. One extra
+        // query per batch, and only for the templates that need it.
+        $subscribers = $sendsPromotion || $templateKey === EmailSchedule::TEMPLATE_CUSTOM
+            ? collect()
+            : Newsletter::query()
+                ->whereIn('id', $recipients->pluck('id')->all())
+                ->get()
+                ->keyBy('email');
 
         // Resolve the transport for this schedule's saved provider: the .env SMTP
         // mailer (default) or a stored SendGrid key. If a SendGrid key was chosen
@@ -206,8 +268,11 @@ class SendPromotionBatchJob implements ShouldQueue
         $context = null;
 
         if ($this->scheduleId !== null) {
-            $schedule = EmailSchedule::find($this->scheduleId);
             $this->recipientIds = $recipients->pluck('id', 'email')->map(static fn ($id): int => (int) $id)->all();
+            // A Custom HTML schedule may send from its own address; every other
+            // template keeps the transport's authenticated mailbox. The history
+            // records whichever actually carried the message.
+            $fromAddress = $schedule?->fromAddressFor($fromAddress) ?? $fromAddress;
             $context = ScheduleSendContext::for(
                 $schedule,
                 $this->scheduleId,
@@ -218,9 +283,11 @@ class SendPromotionBatchJob implements ShouldQueue
                 $fromAddress,
             );
 
+            // Rested per TEMPLATE: an address that received this site's
+            // promotion is not resting against its custom campaign.
             foreach (ScheduleSendHistory::restingAmong(
                 $this->siteId,
-                EmailSchedule::TEMPLATE_PROMOTION,
+                $context->template,
                 $schedule?->cooldownDays() ?? EmailSchedule::MIN_COOLDOWN_DAYS,
                 $recipients->pluck('email')->all(),
             ) as $resting) {
@@ -268,9 +335,29 @@ class SendPromotionBatchJob implements ShouldQueue
                 try {
                     // From = the authenticated .env mailbox with the template's
                     // from_name as display name, so the SMTP server accepts it.
-                    $mailable = $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
-                        ->usingFromAddress($fromAddress);
-                    $pacer->send($mailer, $email, $mailable);
+                    // (A Custom HTML schedule's own address, where it set one —
+                    // $fromAddress already resolved that above.)
+                    $mailable = $sendsPromotion
+                        ? $promotions->mailFor($site, $template, $email, (string) $recipient->promotion_unsubscribe_token, $recipient->full_name)
+                        : $resolver?->build(
+                            // Non-null whenever the template is not the
+                            // promotion one: $templateKey came from it.
+                            $schedule,
+                            $site,
+                            $email,
+                            $subscribers->get($email),
+                            // The subscriber's own opt-out, which custom HTML
+                            // carries in its footer and its headers. The same
+                            // page and the same token the stored templates
+                            // link to, built the same way
+                            // ({@see SitePromotionEmail::unsubscribeUrl()}) —
+                            // which cannot be called here, because a custom
+                            // schedule has no template row.
+                            $site->frontendBaseUrl() . '/unsubscribe/' . trim((string) $recipient->promotion_unsubscribe_token),
+                            Unsubscribe::oneClickUrl((string) $recipient->promotion_unsubscribe_token),
+                        );
+
+                    $pacer->send($mailer, $email, $mailable->usingFromAddress($fromAddress));
                     $attempts[$email] = PromotionEmailHistory::STATUS_SUCCESS;
                     $sent++;
                 } catch (Throwable $e) {
@@ -433,7 +520,12 @@ class SendPromotionBatchJob implements ShouldQueue
         }
 
         try {
-            PromotionEmailHistory::recordAttempts($this->siteId, $attempts, $errors);
+            // The promotion stream's own 24h record. A subscribe, verify or
+            // custom send is NOT part of it — writing there would make the next
+            // promotion run skip everyone this batch reached.
+            if ($context === null || $context->template === EmailSchedule::TEMPLATE_PROMOTION) {
+                PromotionEmailHistory::recordAttempts($this->siteId, $attempts, $errors);
+            }
 
             if ($context !== null) {
                 $rows = [];

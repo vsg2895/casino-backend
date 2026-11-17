@@ -9,7 +9,7 @@ use App\Models\ScheduleSendHistory;
 
 /**
  * What a schedule batch writes on every history row: which schedule, which
- * list, and which email config carried the message.
+ * list, which TEMPLATE, and which email config carried the message.
  *
  * Resolved ONCE per batch — the credential's name is one query — and stamped
  * onto each row as plain text, so the history stays readable after a schedule
@@ -26,6 +26,16 @@ final readonly class ScheduleSendContext
         public ?int $credentialId,
         public string $credentialLabel,
         public ?string $fromAddress,
+        /**
+         * WHICH email went out. Defaulted to the promotion template so a
+         * caller written before schedules could choose one — and an in-flight
+         * job from before this deploy — records exactly what it always did.
+         *
+         * It is also the key the cooldown rests an address against, so a site
+         * running a promotion schedule and a custom one does not have the
+         * first silently suppress the second.
+         */
+        public string $template = EmailSchedule::TEMPLATE_PROMOTION,
     ) {}
 
     public static function for(
@@ -46,6 +56,9 @@ final readonly class ScheduleSendContext
             $credentialId,
             mb_substr(EmailSchedule::credentialLabel($provider, $credentialId), 0, 160),
             $fromAddress,
+            // A batch whose schedule row has since been deleted still records
+            // the promotion template, which is what it was sending.
+            $schedule?->templateKey() ?? EmailSchedule::TEMPLATE_PROMOTION,
         );
     }
 
@@ -64,7 +77,7 @@ final readonly class ScheduleSendContext
             'audience'          => $this->audience,
             'recipient_id'      => $recipientId,
             'email'             => $email,
-            'template'          => EmailSchedule::TEMPLATE_PROMOTION,
+            'template'          => $this->template,
             'provider'          => $this->provider,
             'credential_id'     => $this->credentialId,
             'credential_label'  => $this->credentialLabel,

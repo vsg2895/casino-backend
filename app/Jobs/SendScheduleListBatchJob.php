@@ -10,8 +10,11 @@ use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\ScheduleSendHistory;
 use App\Models\Site;
+use App\Models\WarmupEmail;
 use App\Services\Mail\PromotionMailerFactory;
+use App\Services\Mail\ScheduleMailResolver;
 use App\Services\PromotionEmailService;
+use App\Services\ScheduleRecipientService;
 use App\Support\Mail\PacedDelivery;
 use App\Support\Mail\ScheduleSendContext;
 use App\Support\Mail\SendingAccount;
@@ -95,9 +98,38 @@ class SendScheduleListBatchJob implements ShouldQueue
         }
 
         $site = Site::find($this->siteId);
-        $template = $site?->promotionEmail ?? $site?->promotionEmailOrDefault();
 
-        if ($site === null || $template === null || ! $template->active) {
+        if ($site === null) {
+            return;
+        }
+
+        // Read BEFORE the template gate: which email this batch is sending is
+        // the schedule's to say, and until 2026-11-17 the answer was always the
+        // promotion template.
+        $schedule = EmailSchedule::find($this->scheduleId);
+        $sendsCustom = $schedule?->usesCustomTemplate() ?? false;
+
+        // The promotion template is only resolved — and only has to be switched
+        // on — when it is the one going out. A Custom HTML schedule carries its
+        // own body and must not be gated on a template it never reads.
+        $template = $sendsCustom ? null : ($site->promotionEmail ?? $site->promotionEmailOrDefault());
+
+        // The renderer for a Custom HTML send, from the container rather than
+        // injected into handle(): existing tests call that method directly with
+        // exactly two arguments, and the promotion path they cover never needs
+        // this. Built only when it is actually used.
+        $resolver = $sendsCustom ? app(ScheduleMailResolver::class) : null;
+
+        if ($sendsCustom) {
+            if ($schedule?->customContent() === null) {
+                Log::warning('Schedule list batch skipped: custom email has no subject or body', [
+                    'schedule_id' => $this->scheduleId,
+                    'audience'    => $this->audience,
+                ]);
+
+                return;
+            }
+        } elseif ($template === null || ! $template->active) {
             return;
         }
 
@@ -124,7 +156,10 @@ class SendScheduleListBatchJob implements ShouldQueue
             return;
         }
 
-        $schedule = EmailSchedule::find($this->scheduleId);
+        // The address the history records is the one the messages actually go
+        // out as — the transport's, or a Custom HTML schedule's own.
+        $fromAddress = $schedule?->fromAddressFor($resolved->fromAddress) ?? $resolved->fromAddress;
+
         $context = ScheduleSendContext::for(
             $schedule,
             $this->scheduleId,
@@ -132,15 +167,37 @@ class SendScheduleListBatchJob implements ShouldQueue
             $this->audience,
             $this->provider,
             $this->credentialId,
-            $resolved->fromAddress,
+            $fromAddress,
         );
 
+        // Rested per TEMPLATE, not per site: an address that received this
+        // site's promotion is not resting against its custom campaign, and the
+        // admin set a cooldown for the campaign they configured.
         $resting = array_flip(ScheduleSendHistory::restingAmong(
             $this->siteId,
-            EmailSchedule::TEMPLATE_PROMOTION,
+            $context->template,
             $schedule?->cooldownDays() ?? EmailSchedule::MIN_COOLDOWN_DAYS,
             $recipients->pluck('email')->all(),
         ));
+
+        /*
+         * Anyone who opted out of THIS SITE, on any list and through any
+         * template.
+         *
+         * A Custom Receivers address has its own `unsubscribed_at`, which the
+         * query above already honours — but that is the LIST's opt-out. This is
+         * the SITE's: someone who unsubscribed from a newsletter of this site
+         * must not then be mailed by the same site because their address also
+         * sits on a receivers list. Until 2026-11-17 nothing checked it on this
+         * path. Warmup is included, for the same reason — a seed mailbox that
+         * opted out of a site is still an address that opted out of that site.
+         *
+         * Re-read here rather than trusted from fan-out, so an opt-out that
+         * lands while the campaign is in flight still takes effect.
+         */
+        $optedOut = ($schedule?->honoursOptOut() ?? true)
+            ? array_flip(ScheduleRecipientService::optedOutAmong($this->siteId, $recipients->pluck('email')->all()))
+            : [];
 
         $flushEvery = max(1, (int) config('promotions.history_flush_size', self::HISTORY_FLUSH_SIZE));
         $rows = [];
@@ -157,6 +214,8 @@ class SendScheduleListBatchJob implements ShouldQueue
         );
         /** @var list<int> $deferred Ids handed to a follow-up batch. */
         $deferred = [];
+        /** @var list<string> $delivered Addresses actually mailed, for the warmup stamp. */
+        $delivered = [];
         $recipients = $recipients->values();
 
         foreach ($recipients as $index => $recipient) {
@@ -171,24 +230,50 @@ class SendScheduleListBatchJob implements ShouldQueue
                 break;
             }
 
-            if (isset($resting[$email]) || ($isReceiverList && ! $this->claimDay($model, $id))) {
+            // The site's opt-out comes FIRST: before the daily claim, so an
+            // address nobody may mail does not burn its slot for the day.
+            if (isset($optedOut[$email]) || isset($resting[$email]) || ($isReceiverList && ! $this->claimDay($model, $id))) {
                 $rows[] = $context->row($email, $id, ScheduleSendHistory::STATUS_SKIPPED);
                 $skipped++;
             } else {
                 try {
-                    $mailable = $recipient instanceof CampaignReceiver
-                        ? $promotions->mailWithLinks(
-                            $site,
-                            $template,
-                            $email,
-                            $recipient->unsubscribeUrl(),
-                            $recipient->unsubscribeUrl(),
-                            $recipient->name,
-                        )
-                        : $promotions->mailFor($site, $template, $email, Newsletter::generateUnsubscribeToken());
+                    // A receiver's opt-out belongs to its OWN list, so that is
+                    // the link both templates carry. The warmup list has no
+                    // opt-out of its own (seed mailboxes), so it gets an inert
+                    // one, exactly as a warmup send of the promotion template
+                    // does.
+                    $unsubscribeUrl = $recipient instanceof CampaignReceiver
+                        ? (string) $recipient->unsubscribeUrl()
+                        : '';
 
-                    $pacer->send($resolved->mailer, $email, $mailable->usingFromAddress($resolved->fromAddress));
+                    if ($sendsCustom) {
+                        /** @var EmailSchedule $schedule — non-null: $sendsCustom came from it. */
+                        $mailable = $resolver?->build(
+                            $schedule,
+                            $site,
+                            $email,
+                            null,
+                            $unsubscribeUrl,
+                            $unsubscribeUrl,
+                        );
+                    } else {
+                        $mailable = $recipient instanceof CampaignReceiver
+                            ? $promotions->mailWithLinks(
+                                $site,
+                                $template,
+                                $email,
+                                $unsubscribeUrl,
+                                $unsubscribeUrl,
+                                $recipient->name,
+                            )
+                            : $promotions->mailFor($site, $template, $email, Newsletter::generateUnsubscribeToken());
+                    }
+
+                    // A Custom HTML schedule may send from its own address; every
+                    // other template keeps the transport's authenticated mailbox.
+                    $pacer->send($resolved->mailer, $email, $mailable->usingFromAddress($fromAddress));
                     $rows[] = $context->row($email, $id, ScheduleSendHistory::STATUS_SENT);
+                    $delivered[] = $email;
                     $sent++;
                 } catch (Throwable $e) {
                     // One bad address never aborts the batch or triggers a retry
@@ -210,12 +295,14 @@ class SendScheduleListBatchJob implements ShouldQueue
             }
         }
 
-        unset($recipients, $resting);
+        unset($recipients, $resting, $optedOut);
 
         $this->record($rows);
+        $this->stampWarmupCooldown($delivered);
 
         Log::info('Schedule list batch processed', [
             'schedule_id' => $this->scheduleId,
+            'template'    => $context->template,
             'audience'    => $this->audience,
             'sent'        => $sent,
             'failed'      => $failed,
@@ -233,6 +320,42 @@ class SendScheduleListBatchJob implements ShouldQueue
                 'schedule_id' => $this->scheduleId,
                 'audience'    => $this->audience,
                 'requeued'    => count($deferred),
+            ]);
+        }
+    }
+
+    /**
+     * Start the warmup cooldown on the seed addresses this batch just mailed.
+     *
+     * A schedule sending to the warmup list is real traffic to those mailboxes,
+     * so it has to move `warmup_emails.last_sent_at` exactly as a warmup run
+     * does ({@see \App\Jobs\SendWarmupBatchJob::markContacted()}). Without it
+     * the two features worked from different pictures of the same list: a
+     * warmup run would re-contact an address a schedule had mailed minutes
+     * earlier, which is the opposite of what a cooldown is for.
+     *
+     * DELIVERED addresses only — a failed send must not start a cooldown, or a
+     * permanently broken address is retried once every N days forever instead
+     * of on the next run.
+     *
+     * Best effort: the mail is already out, and losing the stamp only makes
+     * these addresses eligible again sooner. It must never fail a sent batch.
+     *
+     * @param  list<string>  $delivered
+     */
+    private function stampWarmupCooldown(array $delivered): void
+    {
+        if ($delivered === [] || $this->audience !== EmailSchedule::AUDIENCE_WARMUP) {
+            return;
+        }
+
+        try {
+            WarmupEmail::markContacted($delivered);
+        } catch (Throwable $e) {
+            Log::warning('Could not stamp warmup cooldown after a schedule send', [
+                'schedule_id' => $this->scheduleId,
+                'addresses'   => count($delivered),
+                'error'       => $e->getMessage(),
             ]);
         }
     }

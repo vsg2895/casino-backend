@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\Mail\CustomEmailContent;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -49,8 +50,55 @@ class EmailSchedule extends Model
         self::AUDIENCE_WARMUP             => 'Warmup',
     ];
 
-    /** The template every schedule sends: the site's promotion email. */
+    /*
+     * WHICH email a schedule sends.
+     *
+     * The first three are the site's own stored templates — the same keys
+     * {@see \App\Services\Mail\EmailTemplateCatalog} uses, so one template
+     * means one string in the schedule, the send history, the warmup history
+     * and the admin dropdowns alike.
+     *
+     * TEMPLATE_CUSTOM has no stored row: its From pair, subject and HTML are
+     * typed into the schedule and live in the `custom_*` columns.
+     */
     public const string TEMPLATE_PROMOTION = 'promotion';
+    public const string TEMPLATE_SUBSCRIBE = 'subscribe';
+    public const string TEMPLATE_VERIFY = 'verify';
+    public const string TEMPLATE_CUSTOM = 'custom';
+
+    /** @var list<string> */
+    public const array TEMPLATES = [
+        self::TEMPLATE_PROMOTION,
+        self::TEMPLATE_SUBSCRIBE,
+        self::TEMPLATE_VERIFY,
+        self::TEMPLATE_CUSTOM,
+    ];
+
+    /** Human labels, for the admin and for refusal messages. */
+    public const array TEMPLATE_LABELS = [
+        self::TEMPLATE_PROMOTION => 'Promotion email',
+        self::TEMPLATE_SUBSCRIBE => 'Subscription email',
+        self::TEMPLATE_VERIFY    => 'Verify email',
+        self::TEMPLATE_CUSTOM    => 'Custom HTML',
+    ];
+
+    /**
+     * Templates that may ONLY be sent to the site's own newsletters.
+     *
+     * Both are about the recipient's own subscriber record: the verify email
+     * carries a confirmation link resolved from that subscriber's token, and
+     * the subscription email welcomes someone who just confirmed. A Custom
+     * Receivers or warmup address has no such record, so the link would resolve
+     * to nothing — which is exactly why warmup dropped the verify template in
+     * 2026-11. Enforced in StoreEmailScheduleRequest, where an admin gets a
+     * reason rather than a dead link.
+     *
+     * @var list<string>
+     */
+    public const array SUBSCRIBER_ONLY_TEMPLATES = [
+        self::TEMPLATE_SUBSCRIBE,
+        self::TEMPLATE_VERIFY,
+    ];
 
     /** Bounds on the count per run and on the cooldown, shared by request and UI. */
     public const int MAX_LIMIT = 100000;
@@ -99,9 +147,16 @@ class EmailSchedule extends Model
     protected $fillable = [
         'site_id',
         'name',
+        'template',
+        // Custom HTML only; null for every stored-template schedule.
+        'custom_from_name',
+        'custom_from_address',
+        'custom_subject',
+        'custom_html',
         'audience',
         'limit',
         'cooldown_days',
+        'include_unsubscribed',
         'frequency',
         'time',
         'day_of_week',
@@ -115,8 +170,9 @@ class EmailSchedule extends Model
     protected function casts(): array
     {
         return [
-            'limit'         => 'integer',
-            'cooldown_days' => 'integer',
+            'limit'                => 'integer',
+            'cooldown_days'        => 'integer',
+            'include_unsubscribed' => 'boolean',
             'day_of_week'     => 'integer',
             'day_of_month'    => 'integer',
             'sendgrid_key_id' => 'integer',
@@ -177,6 +233,114 @@ class EmailSchedule extends Model
     }
 
     /**
+     * Which email this schedule sends, defaulting to the promotion template.
+     *
+     * The default is what makes every schedule written before this column
+     * existed — and every client that does not send the field — behave exactly
+     * as it always has.
+     */
+    public function templateKey(): string
+    {
+        return in_array($this->template, self::TEMPLATES, true) ? (string) $this->template : self::TEMPLATE_PROMOTION;
+    }
+
+    /** This schedule's template, in words. */
+    public function templateLabel(): string
+    {
+        return self::TEMPLATE_LABELS[$this->templateKey()] ?? $this->templateKey();
+    }
+
+    /** Whether this schedule carries its own HTML rather than a stored template. */
+    public function usesCustomTemplate(): bool
+    {
+        return $this->templateKey() === self::TEMPLATE_CUSTOM;
+    }
+
+    /**
+     * The typed subject + HTML of a Custom HTML schedule, or null for any other
+     * template — and for a custom one that is missing either half, which is a
+     * schedule that must send nothing rather than an empty email.
+     */
+    public function customContent(): ?CustomEmailContent
+    {
+        if (! $this->usesCustomTemplate()) {
+            return null;
+        }
+
+        return CustomEmailContent::make($this->custom_subject, $this->custom_html);
+    }
+
+    /**
+     * The display name on a Custom HTML send, or null to leave the transport's.
+     */
+    public function customFromName(): ?string
+    {
+        $name = is_string($this->custom_from_name) ? trim($this->custom_from_name) : '';
+
+        return $name === '' ? null : $name;
+    }
+
+    /**
+     * The From ADDRESS a Custom HTML schedule sends as, or null to keep the
+     * transport's authenticated mailbox.
+     *
+     * Deliberately the admin's to choose, because a custom campaign is often
+     * the one that needs its own sender. It is also the one setting here that
+     * can silently destroy deliverability: a From domain the sending account is
+     * not authorised for fails SPF/DKIM alignment, and the message is filtered
+     * rather than bounced — "sends, no error, never arrives". The admin form
+     * says so beside the field; nothing here can verify it.
+     */
+    public function customFromAddress(): ?string
+    {
+        $address = is_string($this->custom_from_address) ? trim($this->custom_from_address) : '';
+
+        return $address === '' ? null : $address;
+    }
+
+    /**
+     * The address this schedule's messages are sent from: the custom one when
+     * it has it, otherwise the transport's own (the authenticated mailbox).
+     */
+    public function fromAddressFor(?string $transportAddress): ?string
+    {
+        return ($this->usesCustomTemplate() ? $this->customFromAddress() : null) ?? $transportAddress;
+    }
+
+    /**
+     * Whether the template this schedule sends is switched on for its site.
+     *
+     * Custom HTML has no stored row to switch off — the schedule's own `active`
+     * flag is its only gate.
+     */
+    public function templateActiveFor(Site $site): bool
+    {
+        return match ($this->templateKey()) {
+            self::TEMPLATE_SUBSCRIBE => (bool) $site->emailTemplateOrDefault()->active,
+            self::TEMPLATE_VERIFY    => (bool) $site->verifyEmailOrDefault()->active,
+            self::TEMPLATE_CUSTOM    => true,
+            default                  => (bool) $site->promotionEmailOrDefault()->active,
+        };
+    }
+
+    /**
+     * Why this schedule's template would send nothing for its site, in words
+     * an admin can act on — or null when it is ready to send.
+     */
+    public function templateBlocker(Site $site): ?string
+    {
+        if ($this->usesCustomTemplate() && $this->customContent() === null) {
+            return 'This schedule sends custom HTML but has no subject or body saved. Edit it and fill both in.';
+        }
+
+        if (! $this->templateActiveFor($site)) {
+            return "The {$this->templateLabel()} for {$site->name} is switched off, so nothing would be sent.";
+        }
+
+        return null;
+    }
+
+    /**
      * The receiver list model for a list audience, or null for newsletters.
      *
      * @return class-string<Model>|null
@@ -212,6 +376,30 @@ class EmailSchedule extends Model
     public function cooldownDays(): int
     {
         return max(self::MIN_COOLDOWN_DAYS, min((int) ($this->cooldown_days ?? 1), self::MAX_COOLDOWN_DAYS));
+    }
+
+    /**
+     * Whether this schedule skips the site's opt-out list.
+     *
+     * FALSE for every schedule unless an admin deliberately turned it on, and
+     * false for every row written before the column existed. When it is false —
+     * which is the whole network, by default — an address that unsubscribed
+     * from this site through ANY template receives nothing from this site
+     * again, on any audience: its own subscribers, a Custom Receivers list, or
+     * warmup. See {@see \App\Models\Unsubscribe::hasAny()}.
+     */
+    public function includesUnsubscribed(): bool
+    {
+        return (bool) $this->include_unsubscribed;
+    }
+
+    /**
+     * Whether this schedule must honour the site's opt-out list — the inverse,
+     * spelled out because that is how every caller reads it.
+     */
+    public function honoursOptOut(): bool
+    {
+        return ! $this->includesUnsubscribed();
     }
 
     /**

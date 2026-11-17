@@ -19,12 +19,29 @@ class EmailScheduleResource extends JsonResource
             'site_id'       => $this->site_id,
             'site'          => new SiteResource($this->whenLoaded('site')),
             'name'          => $this->name,
+            // WHICH email this schedule sends, and the Custom HTML fields —
+            // null for every stored-template schedule, because the request
+            // clears them when the template changes.
+            'template'            => $this->templateKey(),
+            'template_label'      => $this->templateLabel(),
+            'custom_from_name'    => $this->custom_from_name,
+            'custom_from_address' => $this->custom_from_address,
+            'custom_subject'      => $this->custom_subject,
+            'custom_html'         => $this->custom_html,
             // Which list, how many per run, and the rest period. The retired
             // date_filter / specific_date columns are not exposed.
             'audience'      => $this->audienceKey(),
             'limit'         => $this->limit,
             'cooldown_days' => $this->cooldownDays(),
+            // Off for every schedule unless an admin deliberately turned it on.
+            'include_unsubscribed' => $this->includesUnsubscribed(),
             // Non-null when the schedule cannot send (a legacy row with no count).
+            //
+            // Deliberately NOT extended with templateBlocker(): that one asks
+            // whether the site's template is switched on, and the …OrDefault()
+            // behind it is a firstOrCreate — one query, and possibly one INSERT,
+            // per row of a 50-row listing. It is answered where it is actually
+            // needed instead, by the run action, which deals in one schedule.
             'blocked_reason' => $this->runBlocker(),
             'frequency'     => $this->frequency,
             'time'          => substr((string) $this->time, 0, 5),

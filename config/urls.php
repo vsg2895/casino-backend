@@ -38,5 +38,9 @@ return [
         'fsozbet'         => env('SITE_URL_FSOZBET', 'https://fsozbet.com'),
         'netbetus'        => env('SITE_URL_NETBETUS', 'https://netbetus.com'),
         'centrebetting'   => env('SITE_URL_CENTREBETTING', 'https://centrebetting.com'),
+        'luckystreakly'   => env('SITE_URL_LUCKYSTREAKLY', 'https://luckystreakly.com'),
+        'microgamblin'    => env('SITE_URL_MICROGAMBLIN', 'https://microgamblin.com'),
+        'bettingbetway'   => env('SITE_URL_BETTINGBETWAY', 'https://bettingbetway.com'),
+        'affliliate'      => env('SITE_URL_AFFLILIATE', 'https://affliliate.com'),
     ],
 ];

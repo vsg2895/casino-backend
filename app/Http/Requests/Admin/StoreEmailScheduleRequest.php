@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests\Admin;
 
 use App\Models\EmailSchedule;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -23,6 +24,12 @@ class StoreEmailScheduleRequest extends FormRequest
             'site_id'       => ['required', 'integer', 'exists:sites,id'],
             'name'          => ['nullable', 'string', 'max:120'],
 
+            // WHICH email: one of the site's stored templates, or the
+            // operator's own HTML typed below. Absent means the promotion
+            // template, which is what every schedule sent before the choice
+            // existed — see prepareForValidation().
+            'template'      => ['required', Rule::in(EmailSchedule::TEMPLATES)],
+
             // WHICH list: the site's newsletters, a Custom Receivers list, or warmup.
             'audience'      => ['required', Rule::in(EmailSchedule::AUDIENCES)],
             // How many addresses one run takes, newest first.
@@ -33,6 +40,10 @@ class StoreEmailScheduleRequest extends FormRequest
                 'min:' . EmailSchedule::MIN_COOLDOWN_DAYS,
                 'max:' . EmailSchedule::MAX_COOLDOWN_DAYS,
             ],
+
+            // Whether this schedule may mail addresses that opted out of its
+            // site. Absent means NO, which is what every schedule does.
+            'include_unsubscribed' => ['sometimes', 'boolean'],
 
             'frequency'     => ['required', Rule::in(EmailSchedule::FREQUENCIES)],
             'time'          => ['required', 'date_format:H:i'],
@@ -67,8 +78,84 @@ class StoreEmailScheduleRequest extends FormRequest
                 Rule::exists('mailgun_keys', 'id')->where('status', 'active'),
             ],
 
+            // ── Custom HTML only ──────────────────────────────────────────
+            // Required together, because half of them is an email that cannot
+            // be sent; forced to null for every other template in
+            // prepareForValidation(), so switching template cannot leave a
+            // stale body behind to be sent by accident.
+            'custom_from_name'    => [
+                'nullable',
+                'required_if:template,' . EmailSchedule::TEMPLATE_CUSTOM,
+                'string', 'max:120',
+            ],
+            // A real address, and the ONE field here that can quietly destroy
+            // deliverability: a domain the sending account is not authorised
+            // for fails SPF/DKIM alignment and is filtered rather than bounced.
+            // Nothing server-side can verify that, so the admin form says it.
+            'custom_from_address' => [
+                'nullable',
+                'required_if:template,' . EmailSchedule::TEMPLATE_CUSTOM,
+                'email:rfc', 'max:255',
+            ],
+            'custom_subject'      => [
+                'nullable',
+                'required_if:template,' . EmailSchedule::TEMPLATE_CUSTOM,
+                'string', 'max:' . self::maxSubjectLength(),
+            ],
+            // Byte-bounded in withValidator(): `max` on a string counts
+            // CHARACTERS, and an HTML body is measured in bytes on the wire.
+            'custom_html'         => [
+                'nullable',
+                'required_if:template,' . EmailSchedule::TEMPLATE_CUSTOM,
+                'string',
+            ],
+
             'active'        => ['sometimes', 'boolean'],
         ];
+    }
+
+    /**
+     * Cross-field rules that read better as one sentence than as a rule
+     * string: the byte ceiling on the HTML, and the two templates that only
+     * make sense for the site's own subscribers.
+     */
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            $template = $this->input('template');
+
+            if ($template === EmailSchedule::TEMPLATE_CUSTOM) {
+                $html = $this->input('custom_html');
+                $maxBytes = (int) config('promotions.custom.max_html_bytes', 500_000);
+
+                if (is_string($html) && strlen($html) > $maxBytes) {
+                    $validator->errors()->add('custom_html', sprintf(
+                        'The HTML is %s KB; the limit is %s KB.',
+                        number_format(strlen($html) / 1000, 1),
+                        number_format($maxBytes / 1000),
+                    ));
+                }
+            }
+
+            if (
+                in_array($template, EmailSchedule::SUBSCRIBER_ONLY_TEMPLATES, true)
+                && $this->input('audience') !== EmailSchedule::AUDIENCE_NEWSLETTERS
+            ) {
+                $label = EmailSchedule::TEMPLATE_LABELS[$template] ?? $template;
+
+                $validator->errors()->add('template', sprintf(
+                    'The %s is about a subscriber\'s own record — its link is resolved from their token — so it can '
+                    . 'only be sent to Newsletters. Choose that list, or send the promotion email or custom HTML instead.',
+                    $label,
+                ));
+            }
+        });
+    }
+
+    /** Subject ceiling, shared with the admin form's counter. */
+    private static function maxSubjectLength(): int
+    {
+        return (int) config('promotions.custom.max_subject_length', 255);
     }
 
     /** @return array<string, string> */
@@ -79,6 +166,13 @@ class StoreEmailScheduleRequest extends FormRequest
             'sendgrid_key_id.exists'      => 'The selected SendGrid key is not available (inactive or removed).',
             'mailgun_key_id.required_if'  => 'Select a Mailgun key to send through.',
             'mailgun_key_id.exists'       => 'The selected Mailgun key is not available (inactive or removed).',
+            'template.required'           => 'Choose which email this schedule sends.',
+            'template.in'                 => 'That template cannot be sent by a schedule.',
+            'custom_from_name.required_if'    => 'Enter the name the custom email is sent from.',
+            'custom_from_address.required_if' => 'Enter the address the custom email is sent from.',
+            'custom_from_address.email'       => 'Enter a valid From address for the custom email.',
+            'custom_subject.required_if'      => 'Enter a subject for the custom email.',
+            'custom_html.required_if'         => 'Paste the HTML for the custom email.',
             'limit.required'              => 'Set how many emails one run sends.',
             'cooldown_days.required'      => 'Set how many days an address rests after receiving this email.',
         ];
@@ -95,7 +189,24 @@ class StoreEmailScheduleRequest extends FormRequest
             ? $this->provider
             : EmailSchedule::PROVIDER_SMTP;
 
+        // The template defaults to the promotion email: what every schedule
+        // sent before the choice existed, and what a client that predates the
+        // field still means.
+        $template = in_array($this->template, EmailSchedule::TEMPLATES, true)
+            ? $this->template
+            : EmailSchedule::TEMPLATE_PROMOTION;
+
+        $isCustom = $template === EmailSchedule::TEMPLATE_CUSTOM;
+
         $this->merge([
+            'template'        => $template,
+            // Only the custom template keeps its own content. Switching away
+            // clears it, so a stored template send can never carry a body the
+            // admin stopped meaning to send.
+            'custom_from_name'    => $isCustom ? $this->custom_from_name : null,
+            'custom_from_address' => $isCustom ? $this->custom_from_address : null,
+            'custom_subject'      => $isCustom ? $this->custom_subject : null,
+            'custom_html'         => $isCustom ? $this->custom_html : null,
             'audience'        => $this->audience ?? EmailSchedule::AUDIENCE_NEWSLETTERS,
             'day_of_week'     => $this->frequency === EmailSchedule::FREQ_WEEKLY ? $this->day_of_week : null,
             'day_of_month'    => $this->frequency === EmailSchedule::FREQ_MONTHLY ? $this->day_of_month : null,

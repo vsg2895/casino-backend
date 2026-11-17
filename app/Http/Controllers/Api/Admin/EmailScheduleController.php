@@ -146,8 +146,12 @@ class EmailScheduleController extends Controller
             return $this->refuse('This schedule has no site attached.');
         }
 
-        if (! $site->promotionEmailOrDefault()->active) {
-            return $this->refuse("The promotion email for {$site->name} is switched off, so nothing would be sent.");
+        // Whichever template this schedule sends has to be able to send: the
+        // site's stored one switched on, or a custom schedule's own body saved.
+        $templateBlocker = $schedule->templateBlocker($site);
+
+        if ($templateBlocker !== null) {
+            return $this->refuse($templateBlocker);
         }
 
         if ($schedule->runBlocker() !== null) {
