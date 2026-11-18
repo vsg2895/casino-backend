@@ -42,5 +42,7 @@ return [
         'microgamblin'    => env('SITE_URL_MICROGAMBLIN', 'https://microgamblin.com'),
         'bettingbetway'   => env('SITE_URL_BETTINGBETWAY', 'https://bettingbetway.com'),
         'affliliate'      => env('SITE_URL_AFFLILIATE', 'https://affliliate.com'),
+        'slottering'      => env('SITE_URL_SLOTTERING', 'https://slottering.com'),
+        'bonanzasmile'    => env('SITE_URL_BONANZASMILE', 'https://bonanzasmile.com'),
     ],
 ];
