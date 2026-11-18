@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Exceptions\PromotionMailerException;
 use App\Models\CampaignReceiver;
+use App\Models\Contracts\TokenAddressable;
 use App\Models\EmailSchedule;
 use App\Models\Newsletter;
 use App\Models\ScheduleSendHistory;
@@ -44,10 +45,17 @@ use Throwable;
  *     campaign) → `skipped`;
  *  3. send through the schedule's provider → `sent` or `failed`.
  *
- * Receivers get THEIR list's unsubscribe link, so an opt-out lands where the
- * list will honour it. The warmup list has no opt-out of its own (it is seed
- * mailboxes), so its message carries an inert link, exactly as a warmup send
- * of the promotion template does.
+ * Every address gets ITS OWN list's unsubscribe link, so an opt-out lands
+ * where the list will honour it. Warmup used to be the exception — a seed
+ * mailbox was assumed never to unsubscribe, so its message carried an inert
+ * link — and since 2026-12 it carries a real one like the rest.
+ *
+ * That is also what lets this job send the SUBSCRIPTION template, not just the
+ * promotion and custom ones: it is built from the recipient's own token, and
+ * every global list now has one, so its opt-out resolves to the list that
+ * mailed them. The VERIFY template remains newsletters-only
+ * ({@see \App\Models\EmailSchedule::SUBSCRIBER_ONLY_TEMPLATES}) — an
+ * operator-entered address has no opt-in claim to confirm.
  *
  * Outcomes are flushed to `schedule_send_histories` every `history_flush_size`
  * attempts, so a worker killed mid-batch leaves at most one window unrecorded.
@@ -107,24 +115,46 @@ class SendScheduleListBatchJob implements ShouldQueue
         // the schedule's to say, and until 2026-11-17 the answer was always the
         // promotion template.
         $schedule = EmailSchedule::find($this->scheduleId);
+        $templateKey = $schedule?->templateKey() ?? EmailSchedule::TEMPLATE_PROMOTION;
         $sendsCustom = $schedule?->usesCustomTemplate() ?? false;
+
+        // Whether this batch is rendered by the resolver (subscribe, verify or
+        // custom) or by the inline promotion path below. Since 2026-12 the
+        // first two reach this job too: every global list carries its own
+        // token, so both templates can be built for a receiver.
+        $usesResolver = ScheduleMailResolver::handles($templateKey);
 
         // The promotion template is only resolved — and only has to be switched
         // on — when it is the one going out. A Custom HTML schedule carries its
-        // own body and must not be gated on a template it never reads.
-        $template = $sendsCustom ? null : ($site->promotionEmail ?? $site->promotionEmailOrDefault());
+        // own body, and subscribe/verify read their own per-site templates, so
+        // none of them may be gated on a template they never read.
+        $template = $usesResolver ? null : ($site->promotionEmail ?? $site->promotionEmailOrDefault());
 
-        // The renderer for a Custom HTML send, from the container rather than
+        // The renderer for a non-promotion send, from the container rather than
         // injected into handle(): existing tests call that method directly with
         // exactly two arguments, and the promotion path they cover never needs
         // this. Built only when it is actually used.
-        $resolver = $sendsCustom ? app(ScheduleMailResolver::class) : null;
+        $resolver = $usesResolver ? app(ScheduleMailResolver::class) : null;
 
         if ($sendsCustom) {
             if ($schedule?->customContent() === null) {
                 Log::warning('Schedule list batch skipped: custom email has no subject or body', [
                     'schedule_id' => $this->scheduleId,
                     'audience'    => $this->audience,
+                ]);
+
+                return;
+            }
+        } elseif ($usesResolver) {
+            // Subscribe and verify render the site's own template for that
+            // stream. A switched-off template must stop the batch here, for the
+            // same reason the promotion one does: it would otherwise send a
+            // message the operator has already turned off.
+            if ($schedule !== null && ! $schedule->templateActiveFor($site)) {
+                Log::warning('Schedule list batch skipped: the template it sends is switched off', [
+                    'schedule_id' => $this->scheduleId,
+                    'audience'    => $this->audience,
+                    'template'    => $templateKey,
                 ]);
 
                 return;
@@ -237,34 +267,52 @@ class SendScheduleListBatchJob implements ShouldQueue
                 $skipped++;
             } else {
                 try {
-                    // A receiver's opt-out belongs to its OWN list, so that is
-                    // the link both templates carry. The warmup list has no
-                    // opt-out of its own (seed mailboxes), so it gets an inert
-                    // one, exactly as a warmup send of the promotion template
-                    // does.
-                    $unsubscribeUrl = $recipient instanceof CampaignReceiver
-                        ? (string) $recipient->unsubscribeUrl()
+                    // An address's opt-out belongs to the list it is actually
+                    // on, so that is the link every template carries. Warmup
+                    // used to be the exception — its message carried an INERT
+                    // link, on the view that a seed mailbox never unsubscribes
+                    // — and since 2026-12 it is not: the list has its own token
+                    // and its own endpoint, so this is a working opt-out for
+                    // every audience.
+                    if ($recipient instanceof TokenAddressable) {
+                        // Covers a row that predates its list's token column and
+                        // has not been backfilled yet — it gets one now rather
+                        // than a link ending in nothing.
+                        $recipient->ensureUnsubscribeToken();
+                    }
+
+                    $unsubscribeUrl = $recipient instanceof TokenAddressable
+                        ? $recipient->unsubscribeUrl()
                         : '';
 
-                    if ($sendsCustom) {
-                        /** @var EmailSchedule $schedule — non-null: $sendsCustom came from it. */
+                    if ($usesResolver) {
+                        /** @var EmailSchedule $schedule — non-null: $usesResolver came from it. */
                         $mailable = $resolver?->build(
                             $schedule,
                             $site,
                             $email,
-                            null,
+                            // The row itself, so subscribe and verify are built
+                            // from THIS address's token. Custom HTML ignores it.
+                            $recipient instanceof TokenAddressable ? $recipient : null,
                             $unsubscribeUrl,
                             $unsubscribeUrl,
                         );
                     } else {
-                        $mailable = $recipient instanceof CampaignReceiver
+                        // Every audience this job serves is token-addressed, so
+                        // the promotion email carries a real opt-out too —
+                        // warmup included, which until 2026-12 was given a
+                        // throwaway token and therefore a dead link. The
+                        // `mailFor` fallback stays for a list that somehow
+                        // reaches here without one: a send with no working
+                        // unsubscribe is worse than an inert one.
+                        $mailable = $recipient instanceof TokenAddressable
                             ? $promotions->mailWithLinks(
                                 $site,
                                 $template,
                                 $email,
                                 $unsubscribeUrl,
                                 $unsubscribeUrl,
-                                $recipient->name,
+                                $recipient->recipientName(),
                             )
                             : $promotions->mailFor($site, $template, $email, Newsletter::generateUnsubscribeToken());
                     }

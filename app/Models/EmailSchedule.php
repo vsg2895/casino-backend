@@ -83,22 +83,28 @@ class EmailSchedule extends Model
     ];
 
     /**
-     * Templates that may ONLY be sent to the site's own newsletters.
+     * Templates only the `newsletters` audience may be sent, enforced in
+     * {@see \App\Http\Requests\Admin\StoreEmailScheduleRequest}.
      *
-     * Both are about the recipient's own subscriber record: the verify email
-     * carries a confirmation link resolved from that subscriber's token, and
-     * the subscription email welcomes someone who just confirmed. A Custom
-     * Receivers or warmup address has no such record, so the link would resolve
-     * to nothing — which is exactly why warmup dropped the verify template in
-     * 2026-11. Enforced in StoreEmailScheduleRequest, where an admin gets a
-     * reason rather than a dead link.
+     * Just the verify email, and for one reason: it asks the recipient to
+     * CONFIRM an address they submitted themselves, and the button is resolved
+     * from their subscriber row. Every address on a global list was entered by
+     * an operator who already has it — there is no opt-in claim to confirm, so
+     * the button would have nothing to do.
+     *
+     * TEMPLATE_SUBSCRIBE is deliberately NOT in here any more. It was until
+     * 2026-12, because it too is built from the recipient's own token and only
+     * a subscriber had one. Every global list now carries its own
+     * ({@see \App\Models\Contracts\TokenAddressable}), so a welcome message to
+     * a Custom Receivers or warmup address carries a working opt-out for the
+     * list that mailed them, and the restriction had no reason left to exist.
+     *
+     * What gates a send either way is whether the template is switched ON for
+     * the site — see {@see templateActiveFor()} and {@see templateBlocker()}.
      *
      * @var list<string>
      */
-    public const array SUBSCRIBER_ONLY_TEMPLATES = [
-        self::TEMPLATE_SUBSCRIBE,
-        self::TEMPLATE_VERIFY,
-    ];
+    public const array SUBSCRIBER_ONLY_TEMPLATES = [self::TEMPLATE_VERIFY];
 
     /** Bounds on the count per run and on the cooldown, shared by request and UI. */
     public const int MAX_LIMIT = 100000;

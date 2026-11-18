@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\HasUnsubscribeToken;
+use App\Models\Contracts\TokenAddressable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -32,13 +34,40 @@ use Illuminate\Support\Carbon;
  * {@see \App\Jobs\SendWarmupBatchJob}. Selection reads the column rather than the
  * log because it is one indexed value on the row already being scanned.
  */
-class WarmupEmail extends Model
+class WarmupEmail extends Model implements TokenAddressable
 {
+    use HasUnsubscribeToken;
+
     protected $fillable = ['email'];
 
     protected function casts(): array
     {
-        return ['last_sent_at' => 'datetime'];
+        return [
+            'last_sent_at'    => 'datetime',
+            'unsubscribed_at' => 'datetime',
+        ];
+    }
+
+    /** A bearer credential, exactly as on the receiver lists and newsletters. */
+    protected $hidden = ['unsubscribe_token'];
+
+    /**
+     * Public route prefix of this list's opt-out links.
+     *
+     * Its own path rather than the receivers' one: the token lookup is per
+     * table, and a warmup opt-out must not be written to the Custom Receivers
+     * suppression list — these are seed mailboxes, a separate pool from the
+     * people on those lists.
+     */
+    public static function unsubscribePath(): string
+    {
+        return 'warmup-unsubscribe';
+    }
+
+    /** The list stores no name, so a message to it is greeted impersonally. */
+    public function recipientName(): ?string
+    {
+        return null;
     }
 
     /** Every recorded delivery attempt for this address, newest first. */
@@ -72,6 +101,20 @@ class WarmupEmail extends Model
     public function scopeRecent(Builder $query): Builder
     {
         return $query->orderByDesc('created_at')->orderByDesc('id');
+    }
+
+    /**
+     * Sendable: never unsubscribed.
+     *
+     * New in 2026-12 with the list's own opt-out link. Every selection path
+     * composes it — the warmup run, the schedule audience and the counts beside
+     * them — because an address that opted out and still appears in a count is
+     * a number the operator cannot act on. Named and shaped exactly like
+     * {@see CampaignReceiver::scopeSendable()}.
+     */
+    public function scopeSendable(Builder $query): Builder
+    {
+        return $query->whereNull('unsubscribed_at');
     }
 
     /**

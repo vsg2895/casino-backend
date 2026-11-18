@@ -233,10 +233,16 @@ class ScheduleRecipientService
      */
     private function list(string $model): Builder
     {
-        $query = $model::query();
+        // Every global list is sendable-scoped: warmup gained its own opt-out
+        // in 2026-12 and honours it here exactly as the receiver lists do.
+        $query = $model::query()->sendable();
 
+        // The rest is the receiver lists' own predicate: the shared suppression
+        // list and the one-email-per-address-per-day claim. Warmup has neither
+        // — seed mailboxes are not on the suppression list, and warmup paces
+        // itself with `last_sent_at`.
         if (is_subclass_of($model, CampaignReceiver::class)) {
-            $query->sendable()->notSuppressed()->notClaimedToday();
+            $query->notSuppressed()->notClaimedToday();
         }
 
         return $query;

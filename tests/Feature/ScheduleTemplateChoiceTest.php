@@ -359,26 +359,72 @@ class ScheduleTemplateChoiceTest extends TestCase
     }
 
     /**
-     * Subscribe and verify are rendered from the recipient's own subscriber
-     * row, which a Custom Receivers or warmup address does not have — so the
-     * API refuses the pair rather than mailing a dead confirmation link.
+     * The SUBSCRIPTION template may be paired with every audience; the VERIFY
+     * template may not.
+     *
+     * Both were refused on anything but Newsletters until 2026-12, because both
+     * are rendered from the recipient's own token and a Custom Receivers or
+     * warmup address had none. Every global list now carries one, so the
+     * welcome message's opt-out resolves to the list that mailed them and the
+     * pair is valid.
+     *
+     * Verify stays newsletters-only for a reason tokens do not fix: it asks the
+     * recipient to confirm an address they submitted, and every address on a
+     * global list was entered by an operator who already has it. There is no
+     * claim to confirm, so the button would have nothing to do.
+     *
+     * {@see \Tests\Feature\ListMemberTokensTest} is what proves the links the
+     * accepted pairs produce actually resolve.
      */
-    public function test_subscriber_only_templates_are_refused_for_a_list_audience(): void
+    public function test_subscribe_reaches_every_audience_and_verify_only_newsletters(): void
     {
         $this->actingAsAdmin();
         [$site] = $this->siteWithKey();
 
-        foreach ([EmailSchedule::TEMPLATE_SUBSCRIBE, EmailSchedule::TEMPLATE_VERIFY] as $template) {
-            $this->postJson('/api/v1/admin/schedules', [
-                'site_id'       => $site->id,
-                'template'      => $template,
-                'audience'      => EmailSchedule::AUDIENCE_MAILGUN_RECEIVERS,
-                'limit'         => 100,
-                'cooldown_days' => 1,
-                'frequency'     => EmailSchedule::FREQ_DAILY,
-                'time'          => '03:00',
-                'provider'      => EmailSchedule::PROVIDER_SMTP,
-            ])->assertStatus(422)->assertJsonValidationErrors(['template']);
+        $lists = [
+            EmailSchedule::AUDIENCE_MAILGUN_RECEIVERS,
+            EmailSchedule::AUDIENCE_SENDGRID_RECEIVERS,
+            EmailSchedule::AUDIENCE_WARMUP,
+        ];
+
+        foreach ([EmailSchedule::AUDIENCE_NEWSLETTERS, ...$lists] as $audience) {
+            $this->postJson('/api/v1/admin/schedules', $this->payload($site, EmailSchedule::TEMPLATE_SUBSCRIBE, $audience))
+                ->assertCreated();
+
+            $this->assertDatabaseHas('email_schedules', [
+                'site_id'  => $site->id,
+                'template' => EmailSchedule::TEMPLATE_SUBSCRIBE,
+                'audience' => $audience,
+            ]);
         }
+
+        $this->postJson('/api/v1/admin/schedules', $this->payload($site, EmailSchedule::TEMPLATE_VERIFY, EmailSchedule::AUDIENCE_NEWSLETTERS))
+            ->assertCreated();
+
+        foreach ($lists as $audience) {
+            $this->postJson('/api/v1/admin/schedules', $this->payload($site, EmailSchedule::TEMPLATE_VERIFY, $audience))
+                ->assertStatus(422)
+                ->assertJsonValidationErrors('audience');
+
+            $this->assertDatabaseMissing('email_schedules', [
+                'template' => EmailSchedule::TEMPLATE_VERIFY,
+                'audience' => $audience,
+            ]);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function payload(Site $site, string $template, string $audience): array
+    {
+        return [
+            'site_id'       => $site->id,
+            'template'      => $template,
+            'audience'      => $audience,
+            'limit'         => 100,
+            'cooldown_days' => 1,
+            'frequency'     => EmailSchedule::FREQ_DAILY,
+            'time'          => '03:00',
+            'provider'      => EmailSchedule::PROVIDER_SMTP,
+        ];
     }
 }

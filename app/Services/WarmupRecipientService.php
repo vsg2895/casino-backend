@@ -62,7 +62,7 @@ class WarmupRecipientService
     /** Total addresses on the list, i.e. the cap the admin's input is validated against. */
     public function available(): int
     {
-        return WarmupEmail::query()->count();
+        return WarmupEmail::query()->sendable()->count();
     }
 
     /**
@@ -87,7 +87,11 @@ class WarmupRecipientService
      */
     private function selection(?int $cooldownDays): Builder
     {
-        return WarmupEmail::query()->notContactedWithin($cooldownDays);
+        // `sendable()` excludes anyone who used the opt-out link the list
+        // gained in 2026-12. It sits here, in the one definition of the
+        // eligible set, so the count beside the form and the run itself can
+        // never disagree about who is left.
+        return WarmupEmail::query()->sendable()->notContactedWithin($cooldownDays);
     }
 
     /**

@@ -139,6 +139,11 @@ app/
 │                      CmsPage, SocialLink,
 │                      Newsletter, NewsletterBasedOnPhone, Unsubscribe, EmailSchedule,
 │                      SendgridKey, MailgunKey, TwilioConfig, SmsTemplate, WarmupEmail, …
+│                      Contracts/TokenAddressable — a row on a GLOBAL list that owns its
+│                      opt-out credential (MailgunReceiver, SendgridReceiver, WarmupEmail)
+│                      — opt-out only, no verify link: an operator-entered address has
+│                      no opt-in claim to confirm. Its LISTS constant is what the backfill
+│                      seeder iterates. Concerns/HasUnsubscribeToken implements it
 ├── Services/          CmsPage, PromotionEmail, SubscriptionEmail, VerifyEmail,
 │                      PostVerificationPromotionEmail, Revalidation, ScheduleRecipient,
 │                      PhoneRecipient, WarmupRecipient, NewsletterImport, PhoneImport,

@@ -72,10 +72,15 @@ class WarmupImportService
 
         $now = Carbon::now();
         $rows = array_map(
+            // The token is set HERE, not by the model's `creating` hook: a bulk
+            // insertOrIgnore fires no model events, so an imported address
+            // would otherwise be mailable with no way to unsubscribe. The same
+            // reason MailgunReceiverImportService sets it inline.
             static fn (string $email): array => [
-                'email'      => $email,
-                'created_at' => $now,
-                'updated_at' => $now,
+                'email'             => $email,
+                'unsubscribe_token' => WarmupEmail::newToken(),
+                'created_at'        => $now,
+                'updated_at'        => $now,
             ],
             $batch,
         );

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\HasUnsubscribeToken;
+use App\Models\Contracts\TokenAddressable;
 use App\Support\Mail\ReceiverSource;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -27,8 +29,9 @@ use Illuminate\Support\Str;
  * A subclass names its own tables through the three statics at the bottom.
  * Nothing else about a list is configurable, on purpose.
  */
-abstract class CampaignReceiver extends Model
+abstract class CampaignReceiver extends Model implements TokenAddressable
 {
+    use HasUnsubscribeToken;
     use SoftDeletes;
 
     public const string SOURCE_IMPORT = 'import';
@@ -68,17 +71,14 @@ abstract class CampaignReceiver extends Model
         ];
     }
 
-    protected static function booted(): void
-    {
-        // Generated here rather than in the controller so EVERY creation path —
-        // manual form, spreadsheet import, factory, tinker — gets a token. A row
-        // without one could be mailed but never unsubscribed from.
-        static::creating(function (self $receiver): void {
-            if ((string) $receiver->unsubscribe_token === '') {
-                $receiver->unsubscribe_token = self::newToken();
-            }
-        });
-    }
+    /**
+     * The token is a bearer credential — whoever holds it can unsubscribe that
+     * person — so it is hidden from every array/JSON cast, the same way the
+     * newsletter tokens are. {@see \App\Http\Resources\MailgunReceiverResource}
+     * omits it as well; this is the backstop for anything that serialises a
+     * model directly.
+     */
+    protected $hidden = ['unsubscribe_token'];
 
     /**
      * Normalise on write, so the unique index actually means "one person".
@@ -93,19 +93,9 @@ abstract class CampaignReceiver extends Model
         );
     }
 
-    /** 64 hex chars — matches the newsletter token width and column length. */
-    public static function newToken(): string
-    {
-        return bin2hex(random_bytes(32));
-    }
-
-    /** Absolute, token-addressed, and unguessable — see newToken(). */
-    public function unsubscribeUrl(): string
-    {
-        return rtrim((string) config('app.url'), '/')
-            . '/api/v1/' . static::unsubscribePath() . '/'
-            . $this->unsubscribe_token;
-    }
+    // newToken(), unsubscribeUrl(), oneClickUrl() and the token's
+    // `creating` hook now live in HasUnsubscribeToken, unchanged, so the warmup
+    // list gets the same behaviour rather than a second copy of it.
 
     /**
      * The list an operator names on the command line: `mailgun` or `sendgrid`.

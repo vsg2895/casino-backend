@@ -23,6 +23,11 @@ class WarmupEmailResource extends JsonResource
             // the admin cannot tell why an address was skipped by a run.
             'last_sent_at' => $this->last_sent_at,
 
+            // The list gained its own opt-out link in 2026-12. Null = still on
+            // the list; a timestamp means this address used it, and every
+            // selection path has excluded it since.
+            'unsubscribed_at' => $this->unsubscribed_at,
+
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

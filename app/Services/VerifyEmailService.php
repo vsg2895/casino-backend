@@ -42,19 +42,37 @@ class VerifyEmailService
     {
         $template = $site->verifyEmailOrDefault();
 
+        // The verify LINK uses the subscription token — VerifyController
+        // resolves the subscriber by `unsubscribe_token`.
+        $verifyToken = $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_SUBSCRIPTION);
+        // The unsubscribe link uses the verify template's OWN token, so an
+        // opt-out from this email is attributed to the "verify" stream.
+        $unsubToken = $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_VERIFY);
+
         return $this->build(
             $site,
             $template,
             $newsletter->email,
-            // The verify LINK uses the subscription token — VerifyController
-            // resolves the subscriber by `unsubscribe_token`.
-            $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_SUBSCRIPTION),
+            $template->verifyUrl($site, $verifyToken),
+            $template->unsubscribeUrl($site, $unsubToken),
+            Unsubscribe::siteOneClickUrl($site, $unsubToken),
             $newsletter->full_name,
-            // The unsubscribe link uses the verify template's OWN token, so an
-            // opt-out from this email is attributed to the "verify" stream.
-            $newsletter->unsubscribeTokenFor(Unsubscribe::TYPE_VERIFY),
         );
     }
+
+    /*
+     * There is deliberately no mailForListMember() beside the above.
+     *
+     * This template asks the recipient to CONFIRM an address they submitted
+     * themselves. Every row on a global list was entered by an operator who
+     * already has the address, so there is no claim to confirm and nothing for
+     * the button to do — which is why the verify template stays newsletters-only
+     * ({@see \App\Models\EmailSchedule::SUBSCRIBER_ONLY_TEMPLATES}) and why
+     * {@see \App\Models\Contracts\TokenAddressable} carries an opt-out link and
+     * no verify link. Compare {@see SubscriptionEmailService}, which DOES have
+     * one: a welcome message is about the list that mailed them, so it is
+     * meaningful on any audience.
+     */
 
     /**
      * Mailable for a (possibly unsaved) template — powers the admin preview and
@@ -70,32 +88,38 @@ class VerifyEmailService
         // Realistic (random, well-formed) sample tokens so the preview's verify
         // and unsubscribe links look like real ones — not a string of zeros. The
         // two links carry independent tokens in a real send, so use two here too.
+        $verifyToken = Newsletter::generateUnsubscribeToken();
+        $unsubToken = Newsletter::generateUnsubscribeToken();
+
         return $this->build(
             $site,
             $template,
             $sampleEmail,
-            Newsletter::generateUnsubscribeToken(),
+            $template->verifyUrl($site, $verifyToken),
+            $template->unsubscribeUrl($site, $unsubToken),
+            Unsubscribe::siteOneClickUrl($site, $unsubToken),
             $sampleName,
-            Newsletter::generateUnsubscribeToken(),
         );
     }
 
     /**
-     * @param  string       $token             The subscription token — credential for the verify LINK.
-     * @param  string|null  $unsubscribeToken  The verify template's own token for the unsubscribe LINK;
-     *                                          falls back to $token when absent (preview convenience).
+     * The one renderer behind all three entry points.
+     *
+     * It takes the three links already BUILT rather than tokens, because the
+     * callers resolve them differently: a subscriber's come from the site's
+     * template and carry a separate token per stream, a list member's come from
+     * their own list and share one. Passing tokens meant passing the rule for
+     * interpreting them as well.
      */
     private function build(
         Site $site,
         SiteVerifyEmail $template,
         string $email,
-        string $token,
+        string $verifyUrl,
+        string $unsubscribeUrl,
+        string $oneClickUrl,
         ?string $fullName = null,
-        ?string $unsubscribeToken = null,
     ): VerifyEmailMail {
-        $unsubToken = $unsubscribeToken ?? $token;
-        $unsubscribeUrl = $template->unsubscribeUrl($site, $unsubToken);
-        $verifyUrl = $template->verifyUrl($site, $token);
         $context = $this->context($site, $email, $unsubscribeUrl, $verifyUrl);
 
         return new VerifyEmailMail(
@@ -107,16 +131,17 @@ class VerifyEmailService
             // One-click uses the unsubscribe token too, so a native "Unsubscribe"
             // is attributed to the verify stream just like the in-body link.
             //
-            // Built unconditionally, even when the body link is hidden: removing
-            // the link is a layout choice and must not change how anyone actually
-            // unsubscribes.
+            // Passed in unconditionally, even when the body link is hidden:
+            // removing the link is a layout choice and must not change how
+            // anyone actually unsubscribes.
             //
-            // Served from the SITE's domain — the only stream that does. A
-            // verification email asks the recipient to trust a link, so advertising
-            // a header on an unrelated API host works against it. The endpoint
-            // behind it is the same one every other stream uses; see
-            // {@see Unsubscribe::siteOneClickUrl()}.
-            oneClickUrl: Unsubscribe::siteOneClickUrl($site, $unsubToken),
+            // For a SUBSCRIBER the caller serves it from the site's own domain —
+            // the only stream that does. A verification email asks the recipient
+            // to trust a link, so advertising a header on an unrelated API host
+            // works against it; see {@see Unsubscribe::siteOneClickUrl()}. A
+            // list member's comes from their list's own route instead, which is
+            // the only place their token resolves.
+            oneClickUrl: $oneClickUrl,
             greeting: EmailGreeting::line($fullName),
             // Whether the footer link block is rendered. Coalesced on the model so
             // an unsaved preview template and a legacy row both mean "shown".

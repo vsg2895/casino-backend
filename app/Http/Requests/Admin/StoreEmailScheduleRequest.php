@@ -116,8 +116,8 @@ class StoreEmailScheduleRequest extends FormRequest
 
     /**
      * Cross-field rules that read better as one sentence than as a rule
-     * string: the byte ceiling on the HTML, and the two templates that only
-     * make sense for the site's own subscribers.
+     * string: the byte ceiling on the HTML, and the one template that only
+     * makes sense for the site's own subscribers.
      */
     public function withValidator(Validator $validator): void
     {
@@ -137,16 +137,23 @@ class StoreEmailScheduleRequest extends FormRequest
                 }
             }
 
+            // The verify email is the one template a global list cannot be
+            // sent: it asks for confirmation of an address the recipient
+            // submitted, and nobody on an operator-built list submitted one.
+            // Refused at save time so the schedule cannot exist in a shape the
+            // send path would have to throw on.
+            //
+            // The subscription email used to be refused here too, because its
+            // opt-out link was resolved from a subscriber's own token. Every
+            // global list now carries its own, so that pair is valid — see
+            // EmailSchedule::SUBSCRIBER_ONLY_TEMPLATES.
             if (
                 in_array($template, EmailSchedule::SUBSCRIBER_ONLY_TEMPLATES, true)
                 && $this->input('audience') !== EmailSchedule::AUDIENCE_NEWSLETTERS
             ) {
-                $label = EmailSchedule::TEMPLATE_LABELS[$template] ?? $template;
-
-                $validator->errors()->add('template', sprintf(
-                    'The %s is about a subscriber\'s own record — its link is resolved from their token — so it can '
-                    . 'only be sent to Newsletters. Choose that list, or send the promotion email or custom HTML instead.',
-                    $label,
+                $validator->errors()->add('audience', sprintf(
+                    'The %s can only be sent to Newsletters — the addresses on a global list have nothing to confirm.',
+                    EmailSchedule::TEMPLATE_LABELS[$template] ?? $template,
                 ));
             }
         });

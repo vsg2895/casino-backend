@@ -69,6 +69,7 @@ use App\Http\Controllers\Api\Public\MailgunUnsubscribeController;
 use App\Http\Controllers\Api\Public\MailgunWebhookController;
 use App\Http\Controllers\Api\Public\SendgridUnsubscribeController;
 use App\Http\Controllers\Api\Public\SendgridWebhookController;
+use App\Http\Controllers\Api\Public\WarmupUnsubscribeController;
 use App\Http\Controllers\Api\Public\NavigationController as PublicNavigationController;
 use App\Http\Controllers\Api\Public\RedirectController as PublicRedirectController;
 use App\Http\Controllers\Api\Public\NewsletterController as PublicNewsletterController;
@@ -650,6 +651,17 @@ Route::prefix('v1')->group(function () {
     Route::get('sendgrid-unsubscribe/{token}', [SendgridUnsubscribeController::class, 'show'])
         ->middleware('throttle:60,1');
     Route::post('sendgrid-unsubscribe/{token}/confirm', [SendgridUnsubscribeController::class, 'confirm'])
+        ->middleware('throttle:60,1');
+
+    // Warmup unsubscribe — the same three routes again, against the warmup
+    // list. Its own path because a warmup opt-out is NOT written to the Custom
+    // Receivers suppression list: seed mailboxes are a separate pool. See
+    // WarmupUnsubscribeController.
+    Route::post('warmup-unsubscribe/{token}', [WarmupUnsubscribeController::class, 'oneClick'])
+        ->middleware('throttle:60,1');
+    Route::get('warmup-unsubscribe/{token}', [WarmupUnsubscribeController::class, 'show'])
+        ->middleware('throttle:60,1');
+    Route::post('warmup-unsubscribe/{token}/confirm', [WarmupUnsubscribeController::class, 'confirm'])
         ->middleware('throttle:60,1');
 
     // Mailgun delivery events. Public by necessity — Mailgun sends no bearer
