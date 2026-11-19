@@ -44,5 +44,6 @@ return [
         'affliliate'      => env('SITE_URL_AFFLILIATE', 'https://affliliate.com'),
         'slottering'      => env('SITE_URL_SLOTTERING', 'https://slottering.com'),
         'bonanzasmile'    => env('SITE_URL_BONANZASMILE', 'https://bonanzasmile.com'),
+        'gladjackpot'     => env('SITE_URL_GLADJACKPOT', 'https://gladjackpot.com'),
     ],
 ];

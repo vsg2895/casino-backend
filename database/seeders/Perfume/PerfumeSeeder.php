@@ -47,7 +47,7 @@ class PerfumeSeeder extends Seeder
 
     private const string EMAIL = 'info@bigglowday.com';
 
-    private const string ADDRESS = '742 Evergreen Terrace, Springfield, IL 62704, United States';
+    private const string ADDRESS = '1842 Oakridge Drive, Columbus, OH 43214, United States';
 
     public function run(): void
     {
@@ -76,7 +76,7 @@ class PerfumeSeeder extends Seeder
             // Tokens in braces are filled from the settings; a sentence whose
             // token is empty is dropped by the storefront.
             'topbar_sale_text'         => 'Sale — up to {sale_percent}% off',
-            'hero_eyebrow'             => 'Original fragrances · Springfield, IL',
+            'hero_eyebrow'             => 'Original fragrances · Columbus, OH',
             // *…* marks the italic accent clause.
             'hero_title'               => 'Perfume for her, for him, and for *no one in particular.*',
             'hero_text'                => 'Designer and niche houses in one place. Order a 2 ml sample first, then decide on the full bottle.',
@@ -283,7 +283,7 @@ class PerfumeSeeder extends Seeder
 
         $services = [
             ['Only originals', 'Every bottle comes from official distributors, with batch code and paperwork on request.', 'Authenticity policy →', '/info/authenticity-policy'],
-            ['Delivery across the United States', 'Springfield: {delivery_local_time}, free from {delivery_free_from}. Everywhere else: {delivery_national_time} by post.', 'Delivery and payment →', '/info/delivery-and-payment'],
+            ['Delivery across the United States', 'Columbus: {delivery_local_time}, free from {delivery_free_from}. Everywhere else: {delivery_national_time} by post.', 'Delivery and payment →', '/info/delivery-and-payment'],
             // No URL: the bonus system is not built, so the card has no page to lead to.
             ['Bonus points', 'Earn {bonus_percent}% back on every order and spend it on the next one.', 'How the bonus system works →', null],
         ];
