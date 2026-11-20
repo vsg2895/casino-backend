@@ -269,10 +269,12 @@ class SendPromotionBatchJob implements ShouldQueue
 
         if ($this->scheduleId !== null) {
             $this->recipientIds = $recipients->pluck('id', 'email')->map(static fn ($id): int => (int) $id)->all();
-            // A Custom HTML schedule may send from its own address; every other
-            // template keeps the transport's authenticated mailbox. The history
-            // records whichever actually carried the message.
-            $fromAddress = $schedule?->fromAddressFor($fromAddress) ?? $fromAddress;
+            // Who owns the From: a Custom HTML schedule's own address, the
+            // transport's authenticated mailbox on an .env transport, or the
+            // SITE'S TEMPLATE address on a stored per-site credential. The
+            // history records whichever actually carried the message — see
+            // EmailSchedule::fromAddressFor().
+            $fromAddress = $schedule?->fromAddressFor($fromAddress, $site) ?? $fromAddress;
             $context = ScheduleSendContext::for(
                 $schedule,
                 $this->scheduleId,

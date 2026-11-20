@@ -305,12 +305,79 @@ class EmailSchedule extends Model
     }
 
     /**
-     * The address this schedule's messages are sent from: the custom one when
-     * it has it, otherwise the transport's own (the authenticated mailbox).
+     * Whether this schedule sends through a transport configured in `.env`
+     * rather than through a stored per-site credential.
+     *
+     * It decides who owns the From address. An env transport authenticates ONE
+     * mailbox for the whole installation, so `MAIL_FROM_ADDRESS` is the only
+     * address it may legitimately send as; a stored SendGrid key or Mailgun
+     * credential is set up per site, with its own authenticated domain, and the
+     * site's template From is the address that belongs on it.
      */
-    public function fromAddressFor(?string $transportAddress): ?string
+    public function usesEnvTransport(): bool
     {
-        return ($this->usesCustomTemplate() ? $this->customFromAddress() : null) ?? $transportAddress;
+        return in_array($this->provider, [self::PROVIDER_SMTP, self::PROVIDER_SENDGRID_ENV], true);
+    }
+
+    /**
+     * The From address of the per-site template this schedule sends, or null
+     * when the template has none saved.
+     *
+     * Mirrors {@see templateActiveFor()} — same four branches, same per-site
+     * rows, so a template's sender and its on/off switch are never read from
+     * two different places. Custom HTML has no stored row: its address is
+     * {@see customFromAddress()}.
+     */
+    public function templateFromAddressFor(Site $site): ?string
+    {
+        $address = match ($this->templateKey()) {
+            self::TEMPLATE_SUBSCRIBE => $site->emailTemplateOrDefault()->from_email,
+            self::TEMPLATE_VERIFY    => $site->verifyEmailOrDefault()->from_email,
+            self::TEMPLATE_CUSTOM    => $this->customFromAddress(),
+            default                  => $site->promotionEmailOrDefault()->from_email,
+        };
+
+        $address = is_string($address) ? trim($address) : '';
+
+        return $address === '' ? null : $address;
+    }
+
+    /**
+     * The address this schedule's messages are sent from.
+     *
+     * THREE RULES, in this order:
+     *
+     *  1. Custom HTML sends from its own typed address when it has one. It has
+     *     no per-site template row to take one from.
+     *  2. An ENV transport (.env SMTP, .env SendGrid key) sends from
+     *     `MAIL_FROM_ADDRESS` and nothing else. One authenticated mailbox
+     *     serves every site on the installation, and a From it is not
+     *     authorised for fails SPF/DKIM alignment — the message is then
+     *     filtered rather than bounced, which looks like "sends, no error,
+     *     never arrives".
+     *  3. Otherwise the TEMPLATE'S OWN From wins. This is the case the method
+     *     got wrong until 2026-11-19: it returned the transport address for
+     *     every template, so a schedule sending Goldenspinhq's subscription
+     *     email through that site's stored SendGrid key still went out as the
+     *     installation-wide `MAIL_FROM_ADDRESS` — a different brand's address
+     *     in the From of a mail whose body, logo and footer were
+     *     Goldenspinhq's.
+     *
+     * `$site` is optional only so the signature stays usable from a context
+     * that has no site resolved; without it rule 3 cannot apply and the
+     * transport address is used, which is the old behaviour.
+     */
+    public function fromAddressFor(?string $transportAddress, ?Site $site = null): ?string
+    {
+        if ($this->usesCustomTemplate()) {
+            return $this->customFromAddress() ?? $transportAddress;
+        }
+
+        if ($this->usesEnvTransport() || $site === null) {
+            return $transportAddress;
+        }
+
+        return $this->templateFromAddressFor($site) ?? $transportAddress;
     }
 
     /**

@@ -187,8 +187,10 @@ class SendScheduleListBatchJob implements ShouldQueue
         }
 
         // The address the history records is the one the messages actually go
-        // out as — the transport's, or a Custom HTML schedule's own.
-        $fromAddress = $schedule?->fromAddressFor($resolved->fromAddress) ?? $resolved->fromAddress;
+        // out as: a Custom HTML schedule's own, the transport's authenticated
+        // mailbox on an .env transport, or the SITE'S TEMPLATE address on a
+        // stored per-site credential — see EmailSchedule::fromAddressFor().
+        $fromAddress = $schedule?->fromAddressFor($resolved->fromAddress, $site) ?? $resolved->fromAddress;
 
         $context = ScheduleSendContext::for(
             $schedule,
