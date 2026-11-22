@@ -150,6 +150,54 @@ class ScheduleAudienceTest extends TestCase
         $this->assertDatabaseHas('schedule_send_histories', ['email' => 'claimed@example.com', 'status' => 'skipped']);
     }
 
+    /**
+     * A schedule mailing a Custom Receivers list writes that list's OWN send
+     * state, not just the schedule history.
+     *
+     * Until 2026-11-22 it did not, and the consequences were two:
+     *
+     *   - "Last sent" and "Sent" stayed empty in the admin Receivers table
+     *     however many times a schedule ran, so the screen said an address had
+     *     never been contacted while the schedule history said it had;
+     *   - the LIST'S own cooldown reads exactly those columns, so the "Run
+     *     now" button on the credential screen would re-mail an address a
+     *     schedule had contacted minutes earlier.
+     *
+     * The receiver-run path has always stamped them; this pins that both
+     * senders now do.
+     */
+    public function test_a_receiver_audience_stamps_last_sent_and_the_sent_counter(): void
+    {
+        Mail::fake();
+        [$site] = $this->siteWithKey();
+        $key = SendgridKey::create(['name' => 'Main key', 'api_key' => 'SG.test-key-value-long-enough', 'status' => 'active']);
+        $receiver = $this->receiver(SendgridReceiver::class, 'person@example.com');
+        $receiver->forceFill(['sent_count' => 2, 'last_error' => 'an old failure'])->save();
+        $schedule = $this->schedule($site, EmailSchedule::AUDIENCE_SENDGRID_RECEIVERS, [
+            'provider' => EmailSchedule::PROVIDER_SENDGRID, 'sendgrid_key_id' => $key->id,
+        ]);
+
+        $this->runBatch(new SendScheduleListBatchJob(
+            $schedule->id, $site->id, EmailSchedule::AUDIENCE_SENDGRID_RECEIVERS, [$receiver->id],
+            EmailSchedule::PROVIDER_SENDGRID, $key->id,
+        ));
+
+        $fresh = $receiver->fresh();
+        $this->assertNotNull($fresh?->last_sent_at);
+        $this->assertSame(3, (int) $fresh?->sent_count, 'the counter advances rather than being reset');
+        $this->assertNull($fresh?->last_error, 'a successful send clears the previous failure');
+    }
+
+    /*
+     * There is deliberately no companion test for the FAILED path. The
+     * guarantee — a failed send starts no cooldown, or a permanently broken
+     * address is retried once every N days forever — holds because
+     * `$deliveredIds[]` is appended on the success branch only, two lines
+     * below the send. Exercising it would mean binding a mailer that throws
+     * through PromotionMailerFactory, since Mail::fake() never fails, and that
+     * scaffolding would test the mock rather than the rule.
+     */
+
     public function test_the_cooldown_is_per_site_and_template_across_schedules(): void
     {
         [$site] = $this->siteWithKey();

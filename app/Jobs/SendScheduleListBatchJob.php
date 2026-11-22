@@ -246,8 +246,10 @@ class SendScheduleListBatchJob implements ShouldQueue
         );
         /** @var list<int> $deferred Ids handed to a follow-up batch. */
         $deferred = [];
-        /** @var list<string> $delivered Addresses actually mailed, for the warmup stamp. */
+        /** @var list<string> $delivered Addresses actually mailed, for the send stamp. */
         $delivered = [];
+        /** @var list<int> $deliveredIds The same rows, by id — what a receiver list is keyed on. */
+        $deliveredIds = [];
         $recipients = $recipients->values();
 
         foreach ($recipients as $index => $recipient) {
@@ -324,6 +326,7 @@ class SendScheduleListBatchJob implements ShouldQueue
                     $pacer->send($resolved->mailer, $email, $mailable->usingFromAddress($fromAddress));
                     $rows[] = $context->row($email, $id, ScheduleSendHistory::STATUS_SENT);
                     $delivered[] = $email;
+                    $deliveredIds[] = (int) $id;
                     $sent++;
                 } catch (Throwable $e) {
                     // One bad address never aborts the batch or triggers a retry
@@ -348,7 +351,7 @@ class SendScheduleListBatchJob implements ShouldQueue
         unset($recipients, $resting, $optedOut);
 
         $this->record($rows);
-        $this->stampWarmupCooldown($delivered);
+        $this->stampSendState($delivered, $deliveredIds);
 
         Log::info('Schedule list batch processed', [
             'schedule_id' => $this->scheduleId,
@@ -375,35 +378,75 @@ class SendScheduleListBatchJob implements ShouldQueue
     }
 
     /**
-     * Start the warmup cooldown on the seed addresses this batch just mailed.
+     * Record that this batch mailed these rows, on the LIST ITSELF.
      *
-     * A schedule sending to the warmup list is real traffic to those mailboxes,
-     * so it has to move `warmup_emails.last_sent_at` exactly as a warmup run
-     * does ({@see \App\Jobs\SendWarmupBatchJob::markContacted()}). Without it
-     * the two features worked from different pictures of the same list: a
-     * warmup run would re-contact an address a schedule had mailed minutes
-     * earlier, which is the opposite of what a cooldown is for.
+     * Every audience this job serves keeps its own send state, and it is what
+     * the list's own cooldown and its admin columns read:
      *
-     * DELIVERED addresses only — a failed send must not start a cooldown, or a
+     *   warmup   → `warmup_emails.last_sent_at`
+     *   receivers→ `last_sent_at`, `sent_count`, and `last_error` cleared, on
+     *              `mailgun_receivers` / `sendgrid_receivers`
+     *
+     * UNTIL 2026-11-22 ONLY WARMUP WAS STAMPED. A schedule sending to a Custom
+     * Receivers list left "Last sent" and "Sent" empty in the admin however
+     * many times it ran, and the list's own cooldown — which reads exactly
+     * those columns — never engaged, so the "Run now" button on the credential
+     * screen would re-mail an address a schedule had contacted minutes
+     * earlier. The receiver-run path has always stamped them
+     * ({@see \App\Services\ReceiverCampaignSender}); this is the same write,
+     * from the other sender.
+     *
+     * DELIVERED ROWS ONLY — a failed send must not start a cooldown, or a
      * permanently broken address is retried once every N days forever instead
-     * of on the next run.
+     * of on the next run. The failure is already in the schedule history with
+     * its error text, so nothing is lost by leaving `last_error` alone here.
      *
      * Best effort: the mail is already out, and losing the stamp only makes
      * these addresses eligible again sooner. It must never fail a sent batch.
      *
-     * @param  list<string>  $delivered
+     * @param  list<string>  $delivered    Addresses mailed — what warmup keys on.
+     * @param  list<int>     $deliveredIds The same rows by id — what a receiver list keys on.
      */
-    private function stampWarmupCooldown(array $delivered): void
+    private function stampSendState(array $delivered, array $deliveredIds): void
     {
-        if ($delivered === [] || $this->audience !== EmailSchedule::AUDIENCE_WARMUP) {
+        if ($delivered === []) {
             return;
         }
 
         try {
-            WarmupEmail::markContacted($delivered);
+            if ($this->audience === EmailSchedule::AUDIENCE_WARMUP) {
+                WarmupEmail::markContacted($delivered);
+
+                return;
+            }
+
+            $model = EmailSchedule::modelForAudience($this->audience);
+
+            if ($model === null || $deliveredIds === []) {
+                return;
+            }
+
+            /*
+             * By ID, not by email. A list may legitimately hold the same
+             * address twice (two imports, two source labels), and only the row
+             * this batch actually mailed should be stamped — updating by email
+             * would rest a row no message was sent to.
+             *
+             * `sent_count + 1` in SQL rather than read-modify-write: two
+             * batches of one schedule run concurrently.
+             */
+            DB::table((new $model())->getTable())
+                ->whereIn('id', $deliveredIds)
+                ->update([
+                    'last_sent_at' => now(),
+                    'sent_count'   => DB::raw('sent_count + 1'),
+                    'last_error'   => null,
+                    'updated_at'   => now(),
+                ]);
         } catch (Throwable $e) {
-            Log::warning('Could not stamp warmup cooldown after a schedule send', [
+            Log::warning('Could not stamp list send state after a schedule send', [
                 'schedule_id' => $this->scheduleId,
+                'audience'    => $this->audience,
                 'addresses'   => count($delivered),
                 'error'       => $e->getMessage(),
             ]);
