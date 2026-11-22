@@ -425,12 +425,39 @@ class SiteContentTest extends TestCase
 
     // ── Migrations ──────────────────────────────────────────────────────────
 
+    /** The first of the Part A migrations, in filename order. */
+    private const string FIRST_PART_A_MIGRATION = '2026_12_04_100000_create_casino_site_contents_table.php';
+
+    /** How many migrations exist at or after $first, by filename order. */
+    private function migrationsSince(string $first): int
+    {
+        $names = array_map(
+            static fn (string $path): string => basename($path),
+            glob(database_path('migrations/*.php')) ?: [],
+        );
+        sort($names);
+
+        return count(array_filter($names, static fn (string $name): bool => $name >= $first));
+    }
+
     public function test_the_part_a_migrations_roll_back_and_reapply_and_move_existing_site_texts(): void
     {
         [$site] = $this->site();
         $casino = $this->casinoOn($site);
 
-        $this->artisan('migrate:rollback', ['--step' => 5])->assertSuccessful();
+        /*
+         * COUNTED, not hardcoded. This was `--step => 5`, which meant "the five
+         * migrations after the Part A set" on the day it was written and broke
+         * the moment a sixth was added — 2026_12_05 add_unsubscribe_token did
+         * it, and the rollback then stopped one short, leaving
+         * `casino_site_contents` in place and this test red for reasons that
+         * had nothing to do with it.
+         *
+         * Every migration from the first Part A file to the newest, by
+         * filename order, which is the order Laravel runs them in.
+         */
+        $this->artisan('migrate:rollback', ['--step' => $this->migrationsSince(self::FIRST_PART_A_MIGRATION)])
+            ->assertSuccessful();
         $this->assertFalse(Schema::hasTable('casino_site_contents'));
         $this->assertFalse(Schema::hasColumn('special_offers', 'meta_title'));
 

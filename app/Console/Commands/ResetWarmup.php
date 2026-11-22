@@ -44,7 +44,7 @@ use Throwable;
  * ── Why it refuses while a run is in flight ─────────────────────────────────
  *
  * A warmup run holds a lock for its whole fan-out and its batches keep writing
- * history rows for minutes afterwards. Wiping the table underneath them would
+ * history rows for minutes afterward. Wiping the table underneath them would
  * leave the run half-recorded and `last_sent_at` stamped for addresses whose
  * history row had just been deleted — the two columns are meant to agree. So a
  * held lock aborts the command and says to press Stop first.

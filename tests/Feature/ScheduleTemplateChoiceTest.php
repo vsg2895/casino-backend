@@ -49,6 +49,110 @@ class ScheduleTemplateChoiceTest extends TestCase
         ]);
     }
 
+    /**
+     * WHO OWNS THE FROM ADDRESS.
+     *
+     * Until 2026-11-19 the answer was always "the transport" — every template
+     * on every provider went out as the installation-wide
+     * `MAIL_FROM_ADDRESS`. A schedule sending one site's subscription email
+     * through that site's own stored SendGrid key therefore carried ANOTHER
+     * brand's address in the From, above a body, logo and footer that were the
+     * first site's.
+     *
+     * The rule now has three branches and this pins all of them.
+     */
+    public function test_a_stored_credential_sends_from_the_templates_own_address(): void
+    {
+        [$site] = $this->siteWithKey();
+        $site->emailTemplateOrDefault()->update(['from_email' => 'hello@thissite.test']);
+        $site->verifyEmailOrDefault()->update(['from_email' => 'verify@thissite.test']);
+        $site->promotionEmailOrDefault()->update(['from_email' => 'offers@thissite.test']);
+
+        $transport = 'shared@installation.test';
+
+        $subscribe = $this->schedule($site, [
+            'template' => EmailSchedule::TEMPLATE_SUBSCRIBE,
+            'provider' => EmailSchedule::PROVIDER_SENDGRID,
+        ]);
+        $verify = $this->schedule($site, [
+            'template' => EmailSchedule::TEMPLATE_VERIFY,
+            'provider' => EmailSchedule::PROVIDER_MAILGUN,
+        ]);
+        $promotion = $this->schedule($site, [
+            'template' => EmailSchedule::TEMPLATE_PROMOTION,
+            'provider' => EmailSchedule::PROVIDER_SENDGRID,
+        ]);
+
+        $this->assertSame('hello@thissite.test', $subscribe->fromAddressFor($transport, $site));
+        $this->assertSame('verify@thissite.test', $verify->fromAddressFor($transport, $site));
+        $this->assertSame('offers@thissite.test', $promotion->fromAddressFor($transport, $site));
+    }
+
+    /**
+     * An .env transport authenticates ONE mailbox for the whole installation,
+     * so `MAIL_FROM_ADDRESS` is the only address it may send as: a From it is
+     * not authorised for fails SPF/DKIM alignment and the message is filtered
+     * rather than bounced.
+     */
+    public function test_an_env_transport_keeps_the_installation_address(): void
+    {
+        [$site] = $this->siteWithKey();
+        $site->emailTemplateOrDefault()->update(['from_email' => 'hello@thissite.test']);
+
+        $transport = 'shared@installation.test';
+
+        foreach ([EmailSchedule::PROVIDER_SMTP, EmailSchedule::PROVIDER_SENDGRID_ENV] as $provider) {
+            $schedule = $this->schedule($site, [
+                'template' => EmailSchedule::TEMPLATE_SUBSCRIBE,
+                'provider' => $provider,
+            ]);
+
+            $this->assertSame($transport, $schedule->fromAddressFor($transport, $site), $provider);
+        }
+    }
+
+    /**
+     * Custom HTML has no per-site template row to take an address from, so its
+     * own typed one wins — on every provider, which is the one branch that did
+     * work before and must keep working.
+     */
+    public function test_custom_html_still_sends_from_its_own_address(): void
+    {
+        [$site] = $this->siteWithKey();
+        $site->emailTemplateOrDefault()->update(['from_email' => 'hello@thissite.test']);
+
+        $schedule = $this->customSchedule($site, ['provider' => EmailSchedule::PROVIDER_SENDGRID]);
+
+        $this->assertSame('offers@example.com', $schedule->fromAddressFor('shared@installation.test', $site));
+
+        // With none typed, it falls back to the transport rather than to some
+        // other template's address — it is not sending any of them.
+        $blank = $this->customSchedule($site, [
+            'provider'            => EmailSchedule::PROVIDER_SENDGRID,
+            'custom_from_address' => null,
+        ]);
+
+        $this->assertSame('shared@installation.test', $blank->fromAddressFor('shared@installation.test', $site));
+    }
+
+    /**
+     * A template with no address saved falls back to the transport. Better a
+     * deliverable address than an empty From, which most providers reject
+     * outright.
+     */
+    public function test_a_template_without_an_address_falls_back_to_the_transport(): void
+    {
+        [$site] = $this->siteWithKey();
+        $site->emailTemplateOrDefault()->update(['from_email' => '']);
+
+        $schedule = $this->schedule($site, [
+            'template' => EmailSchedule::TEMPLATE_SUBSCRIBE,
+            'provider' => EmailSchedule::PROVIDER_SENDGRID,
+        ]);
+
+        $this->assertSame('shared@installation.test', $schedule->fromAddressFor('shared@installation.test', $site));
+    }
+
     /** @param array<string, mixed> $attrs */
     private function customSchedule(Site $site, array $attrs = []): EmailSchedule
     {

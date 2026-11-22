@@ -190,8 +190,16 @@ class ScheduleAudienceTest extends TestCase
 
         Mail::assertSent(PromotionEmail::class, fn (PromotionEmail $mail): bool => $mail->hasTo('seed@example.com'));
         $this->assertDatabaseHas('schedule_send_histories', ['email' => 'seed@example.com', 'audience' => 'warmup', 'status' => 'sent']);
-        // The warmup list's own state is the warmup feature's — untouched.
-        $this->assertNull($seed->fresh()->last_sent_at);
+        /*
+         * The warmup cooldown STARTS, and this assertion used to be its
+         * opposite. Until SendScheduleListBatchJob::stampWarmupCooldown()
+         * (2026-11-17) a schedule mailing the warmup list left
+         * `warmup_emails.last_sent_at` alone, so the two features worked from
+         * different pictures of one list and a warmup run would re-contact an
+         * address a schedule had mailed minutes earlier. The send is real
+         * traffic to that mailbox either way, so it has to rest it either way.
+         */
+        $this->assertNotNull($seed->fresh()->last_sent_at);
     }
 
     public function test_a_newsletter_batch_from_a_schedule_writes_history_and_honours_the_cooldown(): void
