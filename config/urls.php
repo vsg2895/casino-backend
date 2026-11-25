@@ -47,5 +47,13 @@ return [
         'gladjackpot'     => env('SITE_URL_GLADJACKPOT', 'https://gladjackpot.com'),
         'luckycatsmile'   => env('SITE_URL_LUCKYCATSMILE', 'https://luckycatsmile.com'),
         'spinsunny'       => env('SITE_URL_SPINSUNNY', 'https://spinsunny.com'),
+        'starspinly'      => env('SITE_URL_STARSPINLY', 'https://starspinly.com'),
+        'rollofjoy'       => env('SITE_URL_ROLLOFJOY', 'https://rollofjoy.com'),
+        'bigbrightday'    => env('SITE_URL_BIGBRIGHTDAY', 'https://bigbrightday.com'),
+        'goodnewsdrop'    => env('SITE_URL_GOODNEWSDROP', 'https://goodnewsdrop.com'),
+        'avantlinks'      => env('SITE_URL_AVANTLINKS', 'https://avantlinks.com'),
+        'baccardrooms'    => env('SITE_URL_BACCARDROOMS', 'https://baccardrooms.com'),
+        'linkshareasale'  => env('SITE_URL_LINKSHAREASALE', 'https://linkshareasale.com'),
+        'microupier'      => env('SITE_URL_MICROUPIER', 'https://microupier.com'),
     ],
 ];
