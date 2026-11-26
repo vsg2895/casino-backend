@@ -36,6 +36,13 @@ final class VisitorIpResolver
      * of all — a client can simply send one and have it prepended.
      */
     private const array VENDOR_HEADERS = [
+        /*
+         * FIRST, and it has to be: everything below it is rewritten by
+         * Cloudflare when the API is reached at its public hostname. The site's
+         * Next.js server is the last component that saw the visitor directly,
+         * so it states the address here and nothing in the path alters it.
+         */
+        'X-Visitor-IP'     => SpecialOfferVisitIp::SITE_REPORTED,
         'CF-Connecting-IP' => 'cf_connecting_ip',
         'True-Client-IP'   => 'true_client_ip',
         'X-Real-IP'        => 'x_real_ip',
@@ -44,6 +51,7 @@ final class VisitorIpResolver
 
     /** Headers captured verbatim for the audit trail, interpreted or not. */
     private const array AUDIT_HEADERS = [
+        'X-Visitor-IP',
         'CF-Connecting-IP',
         'CF-IPCountry',
         'True-Client-IP',
@@ -155,7 +163,7 @@ final class VisitorIpResolver
      */
     private function choosePrimary(array $candidates, ?string $remoteAddr): ?string
     {
-        foreach (['cf_connecting_ip', 'true_client_ip', 'x_real_ip', 'x_forwarded_for', 'x_client_ip', 'forwarded'] as $type) {
+        foreach ([SpecialOfferVisitIp::SITE_REPORTED, 'cf_connecting_ip', 'true_client_ip', 'x_real_ip', 'x_forwarded_for', 'x_client_ip', 'forwarded'] as $type) {
             if (isset($candidates[$type])) {
                 return $candidates[$type];
             }

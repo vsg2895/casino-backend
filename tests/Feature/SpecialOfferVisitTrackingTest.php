@@ -225,6 +225,49 @@ class SpecialOfferVisitTrackingTest extends TestCase
         $this->assertSame('GB', SpecialOfferVisitIp::where('ip', '203.0.113.7')->firstOrFail()->country_code);
     }
 
+    public function test_site_reported_visitor_ip_beats_the_cloudflare_header(): void
+    {
+        $offer = $this->offer('special-offers');
+
+        /*
+         * THE REGRESSION THIS PINS, found in production on 2026-11-27.
+         *
+         * The site's Next.js server proxies the browser's beacon to this API
+         * at its PUBLIC hostname, which is behind Cloudflare — so Cloudflare
+         * rewrites CF-Connecting-IP with the calling server's own address on
+         * the way in. Every visitor was recorded as the hosting provider's IP
+         * in the datacentre's city. X-Visitor-IP is the header nothing in that
+         * path claims, so it has to outrank the one that gets rewritten.
+         */
+        $this->track($this->payload($offer), [
+            'REMOTE_ADDR'           => '172.68.1.1',       // Cloudflare edge
+            'HTTP_CF_CONNECTING_IP' => '147.93.132.205',   // the Next.js host
+            'HTTP_X_VISITOR_IP'     => '203.0.113.77',     // the real visitor
+        ])->assertStatus(201);
+
+        $visit = SpecialOfferVisit::firstOrFail();
+
+        $this->assertSame('203.0.113.77', $visit->primary_ip);
+        $this->assertSame(
+            'site_reported',
+            SpecialOfferVisitIp::where('ip', '203.0.113.77')->firstOrFail()->type
+        );
+    }
+
+    public function test_site_reported_header_is_ignored_from_an_untrusted_caller(): void
+    {
+        $offer = $this->offer('special-offers');
+
+        // Not one of our proxies, so nothing it claims about the caller counts.
+        $this->track($this->payload($offer), [
+            'REMOTE_ADDR'       => '8.8.8.8',
+            'HTTP_X_VISITOR_IP' => '203.0.113.77',
+        ])->assertStatus(201);
+
+        $this->assertSame('8.8.8.8', SpecialOfferVisit::firstOrFail()->primary_ip);
+        $this->assertDatabaseMissing('special_offer_visit_ips', ['ip' => '203.0.113.77']);
+    }
+
     // ── bots and dedup ──────────────────────────────────────────────────────
 
     public function test_bots_are_not_recorded(): void

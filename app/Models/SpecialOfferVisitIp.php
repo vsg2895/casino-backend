@@ -22,8 +22,25 @@ class SpecialOfferVisitIp extends Model
 {
     use HasFactory;
 
+    /**
+     * THE SITE'S OWN REPORT of who called it, and the only address in here
+     * that survives the round trip through Cloudflare.
+     *
+     * The public API is reached at its public hostname, which is behind
+     * Cloudflare — so Cloudflare rewrites `CF-Connecting-IP` on the way in and
+     * every visitor was recorded as the Next.js server itself. A header
+     * Cloudflare does not touch is the only way through.
+     *
+     * It is believed because the caller is authenticated: nothing reaches this
+     * endpoint without the site's `X-Site-Key`, which only that site's server
+     * holds. Anyone holding the key could claim any address — but anyone
+     * holding the key IS the site, and could post whatever they liked anyway.
+     */
+    public const string SITE_REPORTED = 'site_reported';
+
     /** Header-derived types, in the order primary_ip resolution prefers them. */
     public const array SERVER_TYPES = [
+        self::SITE_REPORTED,
         'cf_connecting_ip',
         'true_client_ip',
         'x_real_ip',
