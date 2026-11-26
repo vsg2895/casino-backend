@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\Admin\SitePromotionEmailController;
 use App\Http\Controllers\Api\Admin\VerificationPromotionEmailController;
 use App\Http\Controllers\Api\Admin\SocialLinkController as AdminSocialLinkController;
 use App\Http\Controllers\Api\Admin\SpecialOfferController as AdminSpecialOfferController;
+use App\Http\Controllers\Api\Admin\SpecialOfferVisitController as AdminSpecialOfferVisitController;
 use App\Http\Controllers\Api\Admin\EmailValidationCheckController;
 use App\Http\Controllers\Api\Admin\EmailValidationLogController;
 use App\Http\Controllers\Api\Admin\EmailValidationStatsController;
@@ -77,6 +78,7 @@ use App\Http\Controllers\Api\Public\SiteFeatureController;
 use App\Http\Controllers\Api\Public\SocialLinkController as PublicSocialLinkController;
 use App\Http\Controllers\Api\Public\SearchController as PublicSearchController;
 use App\Http\Controllers\Api\Public\SpecialOfferController as PublicSpecialOfferController;
+use App\Http\Controllers\Api\Public\SpecialOfferVisitController;
 use App\Http\Controllers\Api\Public\UnsubscribeController as PublicUnsubscribeController;
 use App\Http\Controllers\Api\Public\VerifyController as PublicVerifyController;
 use Illuminate\Support\Facades\Route;
@@ -387,6 +389,25 @@ Route::prefix('v1')->group(function () {
         Route::get('special-offers/{specialOffer}/site-contents', [SiteContentController::class, 'offerIndex']);
         Route::put('special-offers/{specialOffer}/site-contents/{site}', [SiteContentController::class, 'offerUpdate']);
         Route::delete('special-offers/{specialOffer}/site-contents/{site}', [SiteContentController::class, 'offerDestroy']);
+
+        /*
+         * SPECIAL OFFERS VISITORS IP INFO — read-only.
+         *
+         * `count`, `stats` and `resolve-geo` are declared BEFORE the resource
+         * route, or `{specialOfferVisit}` swallows each of them as an id. The
+         * route-ordering rule in backend/CLAUDE.md exists because of exactly
+         * this shape.
+         *
+         * No update, no destroy: the table is an audit record. The only write
+         * is re-resolving geography, which replaces a provider's opinion and
+         * never the observation it was made about.
+         */
+        Route::get('special-offer-visits/count',   [AdminSpecialOfferVisitController::class, 'count']);
+        Route::get('special-offer-visits/stats',   [AdminSpecialOfferVisitController::class, 'stats']);
+        Route::post('special-offer-visits/resolve-geo', [AdminSpecialOfferVisitController::class, 'resolveGeo']);
+        Route::get('special-offer-visits',         [AdminSpecialOfferVisitController::class, 'index']);
+        Route::get('special-offer-visits/{specialOfferVisit}', [AdminSpecialOfferVisitController::class, 'show'])
+            ->name('admin.special-offer-visits.show');
 
         // Newsletter
         Route::get('newsletters', [AdminNewsletterController::class, 'index']);
@@ -730,6 +751,40 @@ Route::prefix('v1')->group(function () {
 
         Route::get('special-offers',          [PublicSpecialOfferController::class, 'index']);
         Route::get('special-offers/{slug}',   [PublicSpecialOfferController::class, 'show']);
+
+        /*
+         * SPECIAL OFFER VISITOR TRACKING. Two phases: the first is written
+         * from the request and always lands, the second adds what the page
+         * could establish about its own connection and is allowed never to
+         * arrive. See SpecialOfferVisitRecorder for why they are split.
+         *
+         * THROTTLED EXPLICITLY, because nothing else would. verify.site does
+         * not rate-limit — the root CLAUDE.md is blunt about it: "A new public
+         * write endpoint therefore gets no limit unless you add one." These
+         * are open write endpoints reachable by anyone holding a site key, so
+         * an unlimited one is an invitation to fill the table.
+         *
+         * 30/min is roughly one offer page every two seconds sustained, which
+         * is far above real reading and far below useful abuse. Phase 2 gets
+         * the same budget: it is one follow-up per phase-1 call.
+         */
+        Route::post('special-offer-visits', [SpecialOfferVisitController::class, 'store'])
+            ->middleware('throttle:30,1');
+        Route::post('special-offer-visits/{visitUuid}/client-ips', [SpecialOfferVisitController::class, 'storeClientIps'])
+            ->middleware('throttle:30,1');
+
+        /*
+         * The address as this server sees it. Exists so a site can point an
+         * IPv4-only or IPv6-only subdomain at the API and have the browser
+         * reveal which families it actually has — the difference between the
+         * two is the honest, visitor-visible version of the question the
+         * WebRTC leak used to answer.
+         *
+         * Inside verify.site like everything else here, so it is not a free
+         * public echo service for anyone who finds it.
+         */
+        Route::get('ip', [SpecialOfferVisitController::class, 'ip'])
+            ->middleware('throttle:60,1');
 
         // Header and footer menus in one response — the layout renders both on
         // every page. Empty means "use the links in code".

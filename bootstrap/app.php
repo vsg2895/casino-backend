@@ -13,7 +13,14 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->trustProxies(at: '*');
+        /*
+         * Trust only the proxies this platform actually runs behind — the
+         * local nginx and, when enabled, Cloudflare's published ranges. See
+         * config/proxies.php for why `at: '*'` was wrong: it let any caller
+         * forge their own address with a header, which both corrupts visitor
+         * records and defeats every `throttle:` limit in routes/api.php.
+         */
+        $middleware->trustProxies(at: \App\Support\TrustedProxies::list());
         $middleware->alias([
             'verify.site' => \App\Http\Middleware\VerifySiteAccess::class,
             'auth'        => \App\Http\Middleware\Authenticate::class,

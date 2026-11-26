@@ -341,4 +341,59 @@ class SpecialOffer extends Model
     {
         return $this->expires_at !== null && $this->expires_at->isBefore(now()->startOfDay());
     }
+
+    /**
+     * The slug of the category that IS the Special Offers section.
+     *
+     * A literal rather than config: changing it would silently redefine which
+     * offers the public listing and this tracking agree to call a special
+     * offer, and those two must never disagree. BonusCategorySeeder creates it
+     * at position 0.
+     */
+    public const string SPECIAL_OFFERS_SLUG = 'special-offers';
+
+    /**
+     * Whether this offer belongs on the Special Offers page.
+     *
+     * UNCATEGORISED COUNTS, and that is the whole subtlety. The admin's own
+     * helper text promises it — "Uncategorised offers still show on the
+     * Special Offers page — they just have no section on the home page"
+     * (admin/src/components/SpecialOfferFormFields.vue) — so an offer with no
+     * category is a special offer that simply has no home-page section. Code
+     * that tests `bonus_category_id === $specialOffersId` quietly excludes
+     * every uncategorised offer and under-reports the busiest page on the site.
+     *
+     * Expressed once here and once as scopeSpecialOffers() below, so a query
+     * and a single-model check can never drift apart.
+     */
+    public function isSpecialOffer(): bool
+    {
+        if ($this->bonus_category_id === null) {
+            return true;
+        }
+
+        return $this->bonusCategory?->slug === self::SPECIAL_OFFERS_SLUG;
+    }
+
+    /**
+     * The query form of isSpecialOffer(): uncategorised offers, plus those
+     * filed under the Special Offers category.
+     *
+     * `whereNull` sits OUTSIDE the nested closure's orWhereHas on purpose —
+     * grouped, so that a caller chaining further `where`s cannot have its own
+     * condition swallowed by the `or`.
+     */
+    public function scopeSpecialOffers(Builder $query): Builder
+    {
+        return $query->where(static function (Builder $q): void {
+            $q->whereNull('special_offers.bonus_category_id')
+                ->orWhereHas('bonusCategory', static fn (Builder $c): Builder => $c->where('bonus_categories.slug', self::SPECIAL_OFFERS_SLUG));
+        });
+    }
+
+    /** Visits recorded on this offer's page. See SpecialOfferVisit. */
+    public function visits(): HasMany
+    {
+        return $this->hasMany(SpecialOfferVisit::class);
+    }
 }
