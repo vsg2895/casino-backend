@@ -143,13 +143,21 @@ final class SpecialOfferVisitRecorder
         return $visit;
     }
 
-    /** Queue geography for a visit, unless the visitor did not consent to it. */
+    /**
+     * Queue geography for a visit.
+     *
+     * NO LONGER GATED ON CONSENT (2026-11-27, at the site owner's direction).
+     * It used to return early unless the visitor had answered "all", which
+     * meant a tracked visit with no country — the record without the part that
+     * makes it useful. The lawful basis stated in the Privacy Policy is now
+     * legitimate interest rather than consent, and the answer the visitor gave
+     * is still stored on the row either way.
+     *
+     * A visitor sending Global Privacy Control never reaches here at all: the
+     * tracker declines to report them in the first place.
+     */
     public function dispatchGeo(SpecialOfferVisit $visit): void
     {
-        if ($visit->consent !== 'all') {
-            return;
-        }
-
         ResolveVisitGeoInfo::dispatch($visit->id);
     }
 

@@ -424,14 +424,46 @@ class SpecialOfferVisitTrackingTest extends TestCase
         Queue::assertPushed(ResolveVisitGeoInfo::class);
     }
 
-    public function test_geo_job_is_not_queued_without_consent(): void
+    public function test_geo_is_queued_even_without_consent(): void
     {
+        /*
+         * CHANGED 2026-11-27 at the site owner's direction. This used to assert
+         * the opposite: no geo lookup unless the visitor answered "all". The
+         * basis stated in the Privacy Policy is now legitimate interest rather
+         * than consent, so the visit is resolved either way and the answer the
+         * visitor gave is kept on the row instead of deciding the outcome.
+         *
+         * A visitor sending Global Privacy Control never reaches this endpoint:
+         * OfferVisitTracker declines to report them in the browser.
+         */
         Queue::fake();
         $offer = $this->offer('special-offers');
 
         $this->track($this->payload($offer, ['consent' => 'necessary']))->assertStatus(201);
 
-        Queue::assertNotPushed(ResolveVisitGeoInfo::class);
+        Queue::assertPushed(ResolveVisitGeoInfo::class);
+        $this->assertSame('necessary', SpecialOfferVisit::firstOrFail()->consent);
+    }
+
+    public function test_a_visit_with_no_consent_answer_is_still_recorded(): void
+    {
+        $offer = $this->offer('special-offers');
+        $payload = $this->payload($offer);
+        unset($payload['consent']);
+
+        $this->track($payload, ['REMOTE_ADDR' => '203.0.113.50'])->assertStatus(201);
+
+        $visit = SpecialOfferVisit::firstOrFail();
+        $this->assertNull($visit->consent);
+        $this->assertSame('203.0.113.50', $visit->primary_ip);
+
+        // Phase 2 must work for them too, or the IPv4/IPv6 columns stay empty
+        // for every visitor who never touched the banner.
+        $this->phaseTwo($payload['visit_uuid'], ['client_ipv4' => '198.51.100.10'])->assertNoContent();
+        $this->assertDatabaseHas('special_offer_visit_ips', [
+            'ip'     => '198.51.100.10',
+            'source' => 'client_reported',
+        ]);
     }
 
     public function test_private_addresses_are_never_sent_to_a_geo_provider(): void

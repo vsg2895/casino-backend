@@ -85,10 +85,9 @@ class SpecialOfferVisitController extends Controller
             return response()->noContent();
         }
 
-        if ($visit->consent !== 'all') {
-            return response()->noContent();
-        }
-
+        // Phase 2 is no longer gated on consent either — see
+        // SpecialOfferVisitRecorder::dispatchGeo() for the reasoning and the
+        // one exception (Global Privacy Control, enforced in the browser).
         $this->recorder->addClientIps($visit, $request->validated());
 
         return response()->noContent();
